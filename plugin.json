@@ -1,7 +1,7 @@
 {
   "name": "agy-hud",
-  "version": "0.1.6",
+  "version": "0.1.10",
   "description": "Premium HUD for Antigravity CLI",
-  "entry": "index.js",
-  "hooks": "hooks/step_hooks.json"
+  "hooks": "hooks/step_hooks.json",
+  "mcpServers": "mcp_config.json"
 }

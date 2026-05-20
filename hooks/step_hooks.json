@@ -1,11 +1,28 @@
 {
-  "version": "1.0",
+  "version": 3,
   "hooks": {
-    "on_step_complete": {
-      "command": "/opt/homebrew/bin/node /Users/c/agy-hud/src/index.mjs --update"
-    },
-    "on_conversation_start": {
-      "command": "/opt/homebrew/bin/node /Users/c/agy-hud/src/index.mjs --update"
+    "agy-hud-update": {
+      "PostToolUse": [
+        {
+          "matcher": ".*",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "node ./test_install_env/src/index.mjs --update"
+            }
+          ]
+        }
+      ],
+      "PostInvocation": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "node ./test_install_env/src/index.mjs --update"
+            }
+          ]
+        }
+      ]
     }
   }
 }

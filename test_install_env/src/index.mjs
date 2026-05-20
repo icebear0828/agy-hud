@@ -1,13 +1,18 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { fileURLToPath } from 'url';
 import { getSessionState } from './parser.mjs';
 import { renderHUD } from './renderer.mjs';
 import { loadConfig } from './config.mjs';
 import { getGitInfo } from './git.mjs';
 
-const BASE_DIR = '/Users/c/.gemini/antigravity-cli';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const BASE_DIR = path.join(os.homedir(), '.gemini', 'antigravity-cli');
 const BRAIN_DIR = path.join(BASE_DIR, 'brain');
-const PROJECT_DIR = '/Users/c/agy-hud';
+const PROJECT_DIR = path.resolve(__dirname, '..', '..');
 
 function getLatestConversationId() {
   try {
@@ -23,7 +28,7 @@ function getLatestConversationId() {
 async function main() {
   const config = loadConfig(PROJECT_DIR);
   const isUpdate = process.argv.includes('--update');
-  const convId = process.env.ANTIGRAVITY_CONVERSATION_ID || '074fc1f4-cbbf-47f5-b9d9-cd552ec1a2fd';
+  const convId = process.env.ANTIGRAVITY_CONVERSATION_ID || getLatestConversationId();
   const cacheFile = path.join(PROJECT_DIR, 'state.json');
 
   if (!convId) {
