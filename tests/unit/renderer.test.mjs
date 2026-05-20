@@ -96,6 +96,23 @@ test('renderHUD should explain quota fetch and auth failures', () => {
   );
 });
 
+test('renderHUD should explain quota fetch timeouts without hiding the HUD', () => {
+  const state = { steps: 0, branch: 'main' };
+  const agyData = {
+    context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
+  };
+  const timedOut = [];
+  Object.defineProperty(timedOut, 'unavailableReason', {
+    value: 'quota_fetch_timeout',
+    enumerable: false
+  });
+
+  const output = renderHUD(state, agyData, { display: { useNerdFonts: false } }, timedOut);
+
+  assert.match(output, /AGY-HUD/);
+  assert.match(output, /quota fetch timed out/);
+});
+
 test('renderHUD should render Nerd Font icons when enabled', () => {
   const state = { steps: 0, branch: 'main' };
   const agyData = {

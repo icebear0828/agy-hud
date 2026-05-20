@@ -179,6 +179,7 @@ function renderHUD(state, agyData, config, quotaData) {
       not_logged_in: 'not logged into Antigravity',
       auth_failed: 'Antigravity auth failed',
       quota_fetch_failed: 'quota fetch failed',
+      quota_fetch_timeout: 'quota fetch timed out',
     };
     const reason = reasonMessages[quotaData.unavailableReason] || quotaData.unavailableReason;
     quotaLines = `\n${dividerLine}\n  ${yellow}Quota unavailable:${reset} ${gray}${reason}${reset}\n${dividerLine}`;

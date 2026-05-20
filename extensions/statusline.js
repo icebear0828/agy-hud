@@ -18,9 +18,15 @@ function getSettingsPath() {
   return path.join(os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
 }
 
+function getWindowsShellNodePath(nodePath) {
+  return nodePath
+    .replace(/^C:\\Program Files\\/i, 'C:\\Progra~1\\')
+    .replace(/^C:\\Program Files \(x86\)\\/i, 'C:\\Progra~2\\');
+}
+
 function createStatusLineCommand(hudScriptPath, nodePath = process.execPath || 'node', platform = process.platform) {
   if (platform === 'win32') {
-    return `node "${hudScriptPath}"`;
+    return `${getWindowsShellNodePath(nodePath)} "${hudScriptPath}"`;
   }
   return `"${nodePath}" "${hudScriptPath}"`;
 }
@@ -49,6 +55,7 @@ function configureStatusLine(baseDir = __dirname) {
 
 module.exports = {
   createStatusLineCommand,
+  getWindowsShellNodePath,
   configureStatusLine,
   getSettingsPath,
 };

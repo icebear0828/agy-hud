@@ -8,6 +8,14 @@ const { renderHUD } = require('../renderer.js');
 const { loadConfig } = require('../config.js');
 const { getQuota } = require('../quota.js');
 
+const DEFAULT_QUOTA_TIMEOUT_MS = 800;
+
+function getQuotaTimeoutMs() {
+  const raw = Number(process.env.AGY_HUD_QUOTA_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 0) return raw;
+  return DEFAULT_QUOTA_TIMEOUT_MS;
+}
+
 async function main() {
   const stdinData = [];
   
@@ -42,7 +50,7 @@ async function main() {
       const [state, config, quotaData] = await Promise.all([
         getSessionState(transcriptPath, stats.size),
         loadConfig(),
-        getQuota().catch(() => []),
+        getQuota({ timeoutMs: getQuotaTimeoutMs() }).catch(() => []),
       ]);
       
       const hudOutput = renderHUD(state, agyData, config, quotaData);

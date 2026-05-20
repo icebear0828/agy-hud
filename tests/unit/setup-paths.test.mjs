@@ -27,7 +27,7 @@ test('setup.ps1 configures statusLine to the relocated HUD binary', () => {
   assert.doesNotMatch(setupScript, /Set-Content \$SettingsFile/);
 });
 
-test('Windows statusLine command uses PATH node to avoid cmd.exe Program Files quoting', () => {
+test('Windows statusLine command avoids Program Files quoting and PATH lookup', () => {
   const command = createStatusLineCommand(
     'C:\\Users\\30435\\.gemini\\antigravity-cli\\agy-hud-runtime\\extensions\\bin\\agy-hud.js',
     'C:\\Program Files\\nodejs\\node.exe',
@@ -36,9 +36,10 @@ test('Windows statusLine command uses PATH node to avoid cmd.exe Program Files q
 
   assert.equal(
     command,
-    'node "C:\\Users\\30435\\.gemini\\antigravity-cli\\agy-hud-runtime\\extensions\\bin\\agy-hud.js"'
+    'C:\\Progra~1\\nodejs\\node.exe "C:\\Users\\30435\\.gemini\\antigravity-cli\\agy-hud-runtime\\extensions\\bin\\agy-hud.js"'
   );
   assert.doesNotMatch(command, /C:\\Program Files/);
+  assert.doesNotMatch(command, /^node /);
 });
 
 test('remote install hook writes a Windows-safe statusLine command', () => {
@@ -46,6 +47,14 @@ test('remote install hook writes a Windows-safe statusLine command', () => {
   const command = hooks.post_invocation_hooks[0].command;
 
   assert.match(command, /process\.platform==='win32'/);
-  assert.equal(command.includes(`'node \\"'+hud+'\\"'`), true);
-  assert.doesNotMatch(command, /const cmd='\\\\"'\+process\.execPath/);
+  assert.match(command, /Progra~1/);
+  assert.doesNotMatch(command, /'node \\\\"'\+hud\+'\\\\"'/);
+});
+
+test('remote install hook self-updates the installed hook file', () => {
+  const hooks = JSON.parse(fs.readFileSync(path.join(projectRoot, 'hooks', 'hooks.json'), 'utf8'));
+  const command = hooks.post_invocation_hooks[0].command;
+
+  assert.match(command, /plugins','agy-hud','hooks\.json/);
+  assert.match(command, /copyFileSync/);
 });

@@ -34,7 +34,8 @@ const TOKEN_CANDIDATES = [
 ].filter(Boolean);
 
 const CACHE_PATH = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
+const MAX_CACHE_AGE_MS = 60 * 1000;
 
 // ─── Runtime User-Agent ───────────────────────────────────────────────────────
 // Read version from our own package.json and detect OS/arch at runtime.
@@ -150,11 +151,12 @@ function buildHeaders(accessToken) {
  * @param {string} endpoint
  * @returns {Promise<string>}
  */
-async function fetchProjectId(accessToken, endpoint) {
+async function fetchProjectId(accessToken, endpoint, options = {}) {
   try {
     const r = await fetch(`${endpoint}/v1internal:loadCodeAssist`, {
       method: 'POST',
       headers: buildHeaders(accessToken),
+      signal: options.signal,
       body: JSON.stringify({ metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } }),
     });
     if (r.ok) {
@@ -178,36 +180,56 @@ async function fetchProjectId(accessToken, endpoint) {
 /**
  * Fetch quota data from the cloud API.
  * @param {string} accessToken
+ * @param {{ timeoutMs?: number, signal?: AbortSignal }} [options]
  * @returns {Promise<ModelQuota[]>}
  */
-async function fetchQuotaFromCloud(accessToken) {
+async function fetchQuotaFromCloud(accessToken, options = {}) {
   let sawAuthFailure = false;
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 0;
+  const controller = timeoutMs > 0 ? new AbortController() : null;
+  const timeout = controller
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+  const signal = controller?.signal || options.signal;
+  if (timeout && typeof timeout.unref === 'function') timeout.unref();
 
-  for (const endpoint of ENDPOINTS) {
-    try {
-      const projectId = await fetchProjectId(accessToken, endpoint);
-      const r = await fetch(`${endpoint}/v1internal:fetchAvailableModels`, {
-        method: 'POST',
-        headers: buildHeaders(accessToken),
-        body: JSON.stringify({ project: projectId }),
-      });
-      if (!r.ok) {
-        if (r.status === 401 || r.status === 403) sawAuthFailure = true;
-        continue;
+  try {
+    for (const endpoint of ENDPOINTS) {
+      try {
+        if (signal?.aborted) return createUnavailableQuotaResult('quota_fetch_timeout');
+        const projectId = await fetchProjectId(accessToken, endpoint, { signal });
+        if (signal?.aborted) return createUnavailableQuotaResult('quota_fetch_timeout');
+        const r = await fetch(`${endpoint}/v1internal:fetchAvailableModels`, {
+          method: 'POST',
+          headers: buildHeaders(accessToken),
+          signal,
+          body: JSON.stringify({ project: projectId }),
+        });
+        if (!r.ok) {
+          if (r.status === 401 || r.status === 403) sawAuthFailure = true;
+          continue;
+        }
+        const data = await r.json();
+        const models = data.models || {};
+        return normalizeQuotaModels(models);
+      } catch {
+        if (signal?.aborted) return createUnavailableQuotaResult('quota_fetch_timeout');
+        /* try next endpoint */
       }
-      const data = await r.json();
-      const models = data.models || {};
-      return normalizeQuotaModels(models);
-    } catch { /* try next endpoint */ }
+    }
+    return createUnavailableQuotaResult(sawAuthFailure ? 'auth_failed' : 'quota_fetch_failed');
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
-  return createUnavailableQuotaResult(sawAuthFailure ? 'auth_failed' : 'quota_fetch_failed');
 }
 
-function isCachePayloadFresh(raw) {
+function isCachePayloadFresh(raw, now = Date.now()) {
   return raw &&
     raw.version === CACHE_VERSION &&
+    raw.createdAt &&
+    now - raw.createdAt <= MAX_CACHE_AGE_MS &&
     raw.expiresAt &&
-    Date.now() < raw.expiresAt &&
+    now < raw.expiresAt &&
     Array.isArray(raw.data);
 }
 
@@ -226,11 +248,11 @@ function readCache() {
 }
 
 /**
- * Write quota cache. Expires at the earliest resetTime among all buckets.
+ * Compute cache expiry from reset times, capped by the freshness window.
  * @param {ModelQuota[]} data
+ * @param {number} [now]
  */
-function writeCache(data) {
-  // Find earliest resetTime
+function computeQuotaCacheExpiresAt(data, now = Date.now()) {
   let earliest = Infinity;
   for (const m of data) {
     if (m.resetTime) {
@@ -238,10 +260,20 @@ function writeCache(data) {
       if (t < earliest) earliest = t;
     }
   }
-  // If no resetTime found, cache for 5 minutes
-  const expiresAt = isFinite(earliest) ? earliest : Date.now() + 5 * 60 * 1000;
+  const maxFreshUntil = now + MAX_CACHE_AGE_MS;
+  return isFinite(earliest) ? Math.min(earliest, maxFreshUntil) : maxFreshUntil;
+}
+
+/**
+ * Write quota cache. Short-capped because remaining quota can be consumed
+ * long before the provider reset window.
+ * @param {ModelQuota[]} data
+ */
+function writeCache(data) {
+  const createdAt = Date.now();
+  const expiresAt = computeQuotaCacheExpiresAt(data, createdAt);
   try {
-    fs.writeFileSync(CACHE_PATH, JSON.stringify({ version: CACHE_VERSION, expiresAt, data }));
+    fs.writeFileSync(CACHE_PATH, JSON.stringify({ version: CACHE_VERSION, createdAt, expiresAt, data }));
   } catch { /* ignore write errors */ }
 }
 
@@ -249,14 +281,14 @@ function writeCache(data) {
  * Get quota data (cached or fresh).
  * @returns {Promise<ModelQuota[]>}
  */
-async function getQuota() {
+async function getQuota(options = {}) {
   const cached = readCache();
   if (cached) return cached;
 
   const tok = readToken();
   if (!tok) return createUnavailableQuotaResult('not_logged_in');
 
-  const fresh = await fetchQuotaFromCloud(tok.accessToken);
+  const fresh = await fetchQuotaFromCloud(tok.accessToken, options);
   if (fresh.length > 0) writeCache(fresh);
   return fresh;
 }
@@ -266,5 +298,7 @@ module.exports = {
   fetchQuotaFromCloud,
   normalizeQuotaModels,
   isCachePayloadFresh,
+  computeQuotaCacheExpiresAt,
   createUnavailableQuotaResult,
+  MAX_CACHE_AGE_MS,
 };

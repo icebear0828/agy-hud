@@ -28,11 +28,14 @@ if (Test-Path $SettingsFile) {
     $Settings = Get-Content $SettingsFile -Raw | ConvertFrom-Json
     
     # Standardize path for JSON
+    $ShellNodePath = $NodePath.Source `
+        -replace '^C:\\Program Files\\', 'C:\Progra~1\' `
+        -replace '^C:\\Program Files \(x86\)\\', 'C:\Progra~2\'
     $EscapedHudScriptPath = $HudScriptPath -replace '\\', '\\'
     
     $Settings.statusLine = @{
         type = "command"
-        command = "node `"$EscapedHudScriptPath`""
+        command = "$ShellNodePath `"$EscapedHudScriptPath`""
     }
 
     $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)

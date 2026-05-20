@@ -6,7 +6,9 @@ const {
   fetchQuotaFromCloud,
   normalizeQuotaModels,
   isCachePayloadFresh,
-  createUnavailableQuotaResult
+  createUnavailableQuotaResult,
+  computeQuotaCacheExpiresAt,
+  MAX_CACHE_AGE_MS
 } = quotaModule;
 
 test('normalizeQuotaModels treats quota buckets without remainingFraction as exhausted', () => {
@@ -55,6 +57,37 @@ test('isCachePayloadFresh rejects old unversioned cache payloads', () => {
   );
 });
 
+test('isCachePayloadFresh rejects entries older than the max cache age', () => {
+  const now = Date.now();
+
+  assert.equal(
+    isCachePayloadFresh(
+      {
+        version: 3,
+        createdAt: now - MAX_CACHE_AGE_MS - 1,
+        expiresAt: now + 60_000,
+        data: []
+      },
+      now
+    ),
+    false
+  );
+});
+
+test('computeQuotaCacheExpiresAt caps future reset times to the freshness window', () => {
+  const now = Date.now();
+  const expiresAt = computeQuotaCacheExpiresAt(
+    [
+      {
+        resetTime: new Date(now + 4 * 60 * 60 * 1000).toISOString()
+      }
+    ],
+    now
+  );
+
+  assert.equal(expiresAt, now + MAX_CACHE_AGE_MS);
+});
+
 test('createUnavailableQuotaResult keeps the quota array empty with a diagnostic reason', () => {
   const quotas = createUnavailableQuotaResult('not_logged_in');
 
@@ -101,6 +134,29 @@ test('fetchQuotaFromCloud returns a fetch diagnostic for transport failures', as
 
     assert.equal(quotas.length, 0);
     assert.equal(quotas.unavailableReason, 'quota_fetch_failed');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchQuotaFromCloud returns a timeout diagnostic when quota fetch stalls', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options = {}) => new Promise((resolve, reject) => {
+    const signal = options.signal;
+    if (signal?.aborted) {
+      reject(new DOMException('aborted', 'AbortError'));
+      return;
+    }
+    signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+  });
+
+  try {
+    const startedAt = Date.now();
+    const quotas = await fetchQuotaFromCloud('token', { timeoutMs: 10 });
+
+    assert.equal(quotas.length, 0);
+    assert.equal(quotas.unavailableReason, 'quota_fetch_timeout');
+    assert.equal(Date.now() - startedAt < 500, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
