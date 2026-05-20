@@ -108,3 +108,54 @@ if (!s.statusLine || s.statusLine.command !== cmd) {
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
   fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2));
 }
+
+// Windows: read all agy/antigravity tokens from Credential Manager (DPAPI-encrypted,
+// only accessible in the interactive user session — so the hook does it and writes a
+// short-lived temp file that the background quota refresh subprocess can read).
+if (isWin) {
+  try {
+    const tokenTempPath = path.join(os.tmpdir(), 'agy-hud-token.json');
+    const ps = [
+      'Add-Type -Language CSharp -TypeDefinition @"',
+      'using System; using System.Runtime.InteropServices; using System.Text;',
+      'public class WC {',
+      '  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]',
+      '  public struct CRED { public uint Flags,Type; public string Target,Comment;',
+      '    public long LastWritten; public uint BlobSize; public IntPtr Blob;',
+      '    public uint Persist,AttrCount; public IntPtr Attrs; public string Alias,User; }',
+      '  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]',
+      '  public static extern bool CredEnumerate(string f,int fl,out uint n,out IntPtr p);',
+      '  [DllImport("advapi32.dll")] public static extern void CredFree(IntPtr p);',
+      '}',
+      '"@',
+      '$blobs=@()',
+      'foreach($prefix in @("antigravity","agy","Antigravity","antigravity-cli")) {',
+      '  $n=0;$p=[IntPtr]::Zero',
+      '  if([WC]::CredEnumerate($prefix+"*",0,[ref]$n,[ref]$p)){',
+      '    for($i=0;$i -lt $n;$i++){',
+      '      $ptr=[Runtime.InteropServices.Marshal]::ReadIntPtr($p,$i*[IntPtr]::Size)',
+      '      $c=[Runtime.InteropServices.Marshal]::PtrToStructure($ptr,[type][WC+CRED])',
+      '      if($c.BlobSize -gt 0){',
+      '        $bytes=New-Object byte[] $c.BlobSize',
+      '        [Runtime.InteropServices.Marshal]::Copy($c.Blob,$bytes,0,$c.BlobSize)',
+      '        $blobs+=[Text.Encoding]::Unicode.GetString($bytes)',
+      '      }',
+      '    }',
+      '    [WC]::CredFree($p)',
+      '  }',
+      '}',
+      'if($blobs.Count -gt 0){$blobs|ConvertTo-Json -Compress}else{Write-Output "[]"}',
+    ].join('\n');
+    const raw = cp.execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps],
+      { encoding: 'utf8', timeout: 8000 });
+    const parsed = JSON.parse(raw.trim() || '[]');
+    const blobList = Array.isArray(parsed) ? parsed : [parsed];
+    const tokens = blobList
+      .map(b => { try { return JSON.parse(b); } catch { return null; } })
+      .filter(t => t && t.token && t.token.access_token)
+      .map(t => ({ accessToken: t.token.access_token, expiry: t.token.expiry || null }));
+    if (tokens.length > 0) {
+      fs.writeFileSync(tokenTempPath, JSON.stringify({ tokens, writtenAt: Date.now() }), 'utf8');
+    }
+  } catch { /* best-effort — quota shows 'not logged in' if this fails */ }
+}

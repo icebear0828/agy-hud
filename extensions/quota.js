@@ -19,9 +19,12 @@ const { getAntigravityRoots } = require('./paths.js');
 // ─── Cross-platform token discovery ──────────────────────────────────────────
 // agy stores its OAuth token in different locations depending on the environment.
 // We search in priority order; first readable file wins.
-const TOKEN_CANDIDATES = getAntigravityRoots().map(root =>
-  path.join(root, 'antigravity-oauth-token')
-);
+// Includes both antigravity-cli (standard) and jetski-standalone (older installs)
+// token filenames, each under all known app-data roots.
+const TOKEN_CANDIDATES = [
+  ...getAntigravityRoots().map(root => path.join(root, 'antigravity-oauth-token')),
+  path.join(os.homedir(), '.gemini', 'jetski-standalone-oauth-token'),
+];
 
 const CACHE_PATH = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
 const CACHE_VERSION = 2;
@@ -104,11 +107,27 @@ function createUnavailableQuotaResult(reason) {
  * @returns {{ accessToken: string } | null}
  */
 function readToken() {
+  // Windows: hook writes Credential Manager tokens to a temp file (5 min TTL).
+  // Multiple accounts are stored as an array — caller tries each in order.
+  if (process.platform === 'win32') {
+    try {
+      const tmp = path.join(os.tmpdir(), 'agy-hud-token.json');
+      const raw = JSON.parse(fs.readFileSync(tmp, 'utf8'));
+      const ttl = 5 * 60 * 1000;
+      if (raw.writtenAt && Date.now() - raw.writtenAt < ttl && Array.isArray(raw.tokens)) {
+        const valid = raw.tokens.filter(t => t && t.accessToken);
+        if (valid.length > 0) return { accessToken: valid[0].accessToken, all: valid };
+      }
+    } catch { /* fall through to file candidates */ }
+  }
+
   for (const candidate of TOKEN_CANDIDATES) {
     try {
       const raw = JSON.parse(fs.readFileSync(candidate, 'utf8'));
-      const token = raw.token;
-      if (token && token.access_token) return { accessToken: token.access_token };
+      // antigravity-cli format: { token: { access_token } }
+      if (raw.token && raw.token.access_token) return { accessToken: raw.token.access_token };
+      // jetski-standalone format: { access_token } (flat)
+      if (raw.access_token) return { accessToken: raw.access_token };
     } catch { /* try next */ }
   }
   return null;
@@ -273,7 +292,10 @@ async function getQuota() {
   const tok = readToken();
   if (!tok) return createUnavailableQuotaResult('not_logged_in');
 
-  const payload = readCachePayload(tok.accessToken);
+  // For multi-account (Windows Credential Manager), use the primary token for
+  // cache keying but fall back to alternates if the primary has no cache.
+  const payload = readCachePayload(tok.accessToken) ||
+    (tok.all && tok.all.slice(1).reduce((acc, t) => acc || readCachePayload(t.accessToken), null));
   const isFresh = payload && isCachePayloadFresh(payload);
 
   if (!isFresh) {
