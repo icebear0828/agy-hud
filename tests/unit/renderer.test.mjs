@@ -53,6 +53,49 @@ test('renderHUD should correctly layout quotas in two aligned columns', () => {
   assert.match(output, /~3h47m/);
 });
 
+test('renderHUD should explain when quota is unavailable because auth is missing', () => {
+  const state = { steps: 0, branch: 'main' };
+  const agyData = {
+    context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
+  };
+  const quotaData = [];
+  Object.defineProperty(quotaData, 'unavailableReason', {
+    value: 'not_logged_in',
+    enumerable: false
+  });
+
+  const output = renderHUD(state, agyData, { display: { useNerdFonts: false } }, quotaData);
+
+  assert.match(output, /Quota unavailable/);
+  assert.match(output, /not logged into Antigravity/);
+});
+
+test('renderHUD should explain quota fetch and auth failures', () => {
+  const state = { steps: 0, branch: 'main' };
+  const agyData = {
+    context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
+  };
+  const authFailed = [];
+  Object.defineProperty(authFailed, 'unavailableReason', {
+    value: 'auth_failed',
+    enumerable: false
+  });
+  const fetchFailed = [];
+  Object.defineProperty(fetchFailed, 'unavailableReason', {
+    value: 'quota_fetch_failed',
+    enumerable: false
+  });
+
+  assert.match(
+    renderHUD(state, agyData, { display: { useNerdFonts: false } }, authFailed),
+    /Antigravity auth failed/
+  );
+  assert.match(
+    renderHUD(state, agyData, { display: { useNerdFonts: false } }, fetchFailed),
+    /quota fetch failed/
+  );
+});
+
 test('renderHUD should render Nerd Font icons when enabled', () => {
   const state = { steps: 0, branch: 'main' };
   const agyData = {

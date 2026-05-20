@@ -10,10 +10,16 @@ echo "🚀 Starting agy-hud installation..."
 # 1. Detect paths
 NODE_PATH=$(which node)
 PROJECT_DIR=$(pwd)
+HUD_SCRIPT="$PROJECT_DIR/extensions/bin/agy-hud.js"
 SETTINGS_FILE="$HOME/.gemini/antigravity-cli/settings.json"
 
 if [ -z "$NODE_PATH" ]; then
   echo "❌ Error: Node.js not found in PATH."
+  exit 1
+fi
+
+if [ ! -f "$HUD_SCRIPT" ]; then
+  echo "❌ Error: HUD script not found at $HUD_SCRIPT"
   exit 1
 fi
 
@@ -30,7 +36,7 @@ if [ -f "$SETTINGS_FILE" ]; then
     const settings = JSON.parse(fs.readFileSync('$SETTINGS_FILE', 'utf8'));
     settings.statusLine = {
       type: 'command',
-      command: '\"$NODE_PATH\" \"$PROJECT_DIR/bin/agy-hud.js\"'
+      command: '\"$NODE_PATH\" \"$HUD_SCRIPT\"'
     };
     fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(settings, null, 2));
   "
@@ -40,4 +46,4 @@ fi
 
 echo "✅ Installation complete!"
 echo "✨ Please restart your Antigravity CLI to see the HUD."
-echo "💡 You can customize colors in agy-hud.config.json"
+echo "💡 You can customize colors in extensions/agy-hud.config.json"

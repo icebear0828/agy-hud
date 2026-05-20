@@ -173,6 +173,15 @@ function renderHUD(state, agyData, config, quotaData) {
 
     const dividerLine = `  ${gray}${'─'.repeat(75)}${reset}`;
     quotaLines = `\n${dividerLine}\n` + rows.join('\n') + `\n${dividerLine}`;
+  } else if (quotaData && quotaData.unavailableReason) {
+    const dividerLine = `  ${gray}${'─'.repeat(75)}${reset}`;
+    const reasonMessages = {
+      not_logged_in: 'not logged into Antigravity',
+      auth_failed: 'Antigravity auth failed',
+      quota_fetch_failed: 'quota fetch failed',
+    };
+    const reason = reasonMessages[quotaData.unavailableReason] || quotaData.unavailableReason;
+    quotaLines = `\n${dividerLine}\n  ${yellow}Quota unavailable:${reset} ${gray}${reason}${reset}\n${dividerLine}`;
   }
 
   return `\n${line1}\n${line2}${quotaLines}\n`;

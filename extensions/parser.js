@@ -38,7 +38,10 @@ async function getSessionState(transcriptPath, fileSize) {
   }
 
   try {
-    const gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
+    const gitBranch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
     branch = gitBranch;
   } catch (e) {
     // Not a git repo or git not found

@@ -6,10 +6,15 @@ Write-Host "🚀 Starting agy-hud installation for Windows..." -ForegroundColor 
 # 1. Detect paths
 $NodePath = Get-Command node -ErrorAction SilentlyContinue
 $ProjectDir = Get-Location
+$HudScriptPath = Join-Path $ProjectDir.Path "extensions\bin\agy-hud.js"
 $SettingsFile = "$env:USERPROFILE\.gemini\antigravity-cli\settings.json"
 
 if (-not $NodePath) {
     Write-Error "❌ Node.js not found in PATH."
+}
+
+if (-not (Test-Path $HudScriptPath)) {
+    Write-Error "❌ HUD script not found at $HudScriptPath"
 }
 
 # 2. Official Plugin Installation
@@ -24,11 +29,11 @@ if (Test-Path $SettingsFile) {
     
     # Standardize path for JSON
     $EscapedNodePath = $NodePath.Source -replace '\\', '\\'
-    $EscapedProjectDir = $ProjectDir.Path -replace '\\', '\\'
+    $EscapedHudScriptPath = $HudScriptPath -replace '\\', '\\'
     
     $Settings.statusLine = @{
         type = "command"
-        command = "`"$EscapedNodePath`" `"$EscapedProjectDir\bin\agy-hud.js`""
+        command = "`"$EscapedNodePath`" `"$EscapedHudScriptPath`""
     }
 
     $Settings | ConvertTo-Json -Depth 10 | Set-Content $SettingsFile

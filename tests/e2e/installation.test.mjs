@@ -67,6 +67,7 @@ test('E2E: Official agy plugin installation from remote URL', async (t) => {
   const port = 8082;
   await new Promise(resolve => server.listen(port, resolve));
   const url = `http://localhost:${port}/agy-hud.zip`;
+  let tempWork = null;
 
   try {
     console.log(`🔌 Spawning agy plugin install from ${url}`);
@@ -115,7 +116,65 @@ test('E2E: Official agy plugin installation from remote URL', async (t) => {
     console.log('✅ Installation Successful!');
     assert.strictEqual(exitCode, 0);
     assert.match(stdout, /\[ok\]/);
+    assert.match(stdout, /hooks\s+: 1 processed/);
+
+    const installedHooksPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'plugins', 'agy-hud', 'hooks.json');
+    const installedHooks = JSON.parse(fs.readFileSync(installedHooksPath, 'utf8'));
+    const hookCommand = installedHooks.post_invocation_hooks[0].command;
+    assert.doesNotMatch(hookCommand, /extensions\/install-statusline\.js/);
+
+    tempWork = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-hook-'));
+    const tempHome = path.join(tempWork, 'home');
+    const tempRuntime = path.join(tempWork, 'runtime');
+    const sourceRepo = path.join(tempWork, 'source');
+    const tempSettingsDir = path.join(tempHome, '.gemini', 'antigravity-cli');
+    fs.mkdirSync(tempSettingsDir, { recursive: true });
+    fs.mkdirSync(sourceRepo, { recursive: true });
+    fs.writeFileSync(path.join(tempSettingsDir, 'settings.json'), '{}');
+
+    const writeSourceHud = (label) => {
+      const sourceHudDir = path.join(sourceRepo, 'extensions', 'bin');
+      fs.mkdirSync(sourceHudDir, { recursive: true });
+      fs.writeFileSync(path.join(sourceHudDir, 'agy-hud.js'), `process.stdout.write("AGY-HUD-${label}");\n`);
+    };
+    const commitSource = (message) => {
+      execSync('git add .', { cwd: sourceRepo, stdio: 'ignore' });
+      execSync(`git -c user.name=agy-hud-test -c user.email=agy-hud-test@example.com commit -m "${message}"`, {
+        cwd: sourceRepo,
+        stdio: 'ignore',
+      });
+    };
+    const runHook = async () => {
+      const hookExit = spawn(hookCommand, {
+        shell: true,
+        env: {
+          ...process.env,
+          HOME: tempHome,
+          USERPROFILE: tempHome,
+          AGY_HUD_RUNTIME_DIR: tempRuntime,
+          AGY_HUD_REPO_URL: sourceRepo,
+        },
+      });
+      const hookCode = await new Promise(resolve => hookExit.on('close', resolve));
+      assert.strictEqual(hookCode, 0);
+    };
+
+    writeSourceHud('v1');
+    execSync('git init', { cwd: sourceRepo, stdio: 'ignore' });
+    commitSource('init');
+    await runHook();
+
+    const tempSettings = JSON.parse(fs.readFileSync(path.join(tempSettingsDir, 'settings.json'), 'utf8'));
+    assert.equal(tempSettings.statusLine.type, 'command');
+    assert.match(tempSettings.statusLine.command, /extensions[/\\]bin[/\\]agy-hud\.js/);
+    assert.match(execSync(tempSettings.statusLine.command).toString(), /AGY-HUD-v1/);
+
+    writeSourceHud('v2');
+    commitSource('update runtime');
+    await runHook();
+    assert.match(execSync(tempSettings.statusLine.command).toString(), /AGY-HUD-v2/);
   } finally {
+    if (tempWork) fs.rmSync(tempWork, { recursive: true, force: true });
     server.close();
     console.log('🛑 Server closed');
   }

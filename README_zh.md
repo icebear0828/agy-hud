@@ -17,6 +17,8 @@
 agy plugin install https://github.com/icebear0828/agy-hud/releases/latest/download/agy-hud.zip
 ```
 
+远程安装会安装 `post_invocation` hook。hook 运行时会把 runtime 克隆或更新到 agy app data 目录，并自动配置 `settings.json` 的 `statusLine`。
+
 ### 手动克隆安装 (开发用)
 ```bash
 git clone https://github.com/icebear0828/agy-hud.git
@@ -25,7 +27,7 @@ cd agy-hud
 ```
 
 ## ⚙️ 配置
-编辑 `agy-hud.config.json` 来进行个性化定制：
+编辑项目根目录的 `agy-hud.config.json`，或默认配置 `extensions/agy-hud.config.json` 来进行个性化定制：
 - `theme`: 不同状态的颜色。
 - `display`: 开关 Token 进度条、面包屑路径或 Git 分支显示。
 - `thresholds`: 设置上下文消耗的警告/严重阈值。

@@ -17,6 +17,7 @@ mkdir -p release_tmp
 cp plugin.json package.json README.md gemini-extension.json release_tmp/
 [ -d extensions ] && cp -r extensions release_tmp/ || true
 [ -d skills ] && cp -r skills release_tmp/ || true
+[ -d hooks ] && cp -r hooks release_tmp/ || true
 
 cd release_tmp
 rm -f ../agy-hud.zip

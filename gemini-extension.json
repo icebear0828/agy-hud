@@ -12,6 +12,8 @@
       "extensions/quota.js",
       "extensions/config.js",
       "extensions/git.js",
+      "extensions/statusline.js",
+      "extensions/install-statusline.js",
       "extensions/agy-hud.config.json"
     ],
     "skills": ["skills/*.md"]

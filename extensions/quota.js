@@ -34,6 +34,7 @@ const TOKEN_CANDIDATES = [
 ].filter(Boolean);
 
 const CACHE_PATH = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
+const CACHE_VERSION = 2;
 
 // ─── Runtime User-Agent ───────────────────────────────────────────────────────
 // Read version from our own package.json and detect OS/arch at runtime.
@@ -72,6 +73,44 @@ const INTERESTING_MODEL_IDS = [
   'claude-opus-4-6-thinking',// Claude Opus 4.6
   'gpt-oss-120b-medium',     // GPT-OSS 120B
 ];
+
+function normalizeRemainingFraction(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+/**
+ * Normalize the fetchAvailableModels response to the HUD quota shape.
+ * agy usage treats quotaInfo objects without remainingFraction as exhausted.
+ * @param {Object<string, Object>} models
+ * @returns {ModelQuota[]}
+ */
+function normalizeQuotaModels(models) {
+  const results = [];
+  for (const id of INTERESTING_MODEL_IDS) {
+    const m = models[id];
+    if (!m || !m.quotaInfo) continue;
+    const qi = m.quotaInfo;
+    results.push({
+      id,
+      displayName: m.displayName || id,
+      remainingFraction: normalizeRemainingFraction(qi.remainingFraction),
+      resetTime: qi.resetTime || null,
+    });
+  }
+  return results;
+}
+
+function createUnavailableQuotaResult(reason) {
+  const result = [];
+  Object.defineProperty(result, 'unavailableReason', {
+    value: reason,
+    enumerable: false,
+  });
+  return result;
+}
 
 /**
  * @returns {{ accessToken: string } | null}
@@ -142,6 +181,8 @@ async function fetchProjectId(accessToken, endpoint) {
  * @returns {Promise<ModelQuota[]>}
  */
 async function fetchQuotaFromCloud(accessToken) {
+  let sawAuthFailure = false;
+
   for (const endpoint of ENDPOINTS) {
     try {
       const projectId = await fetchProjectId(accessToken, endpoint);
@@ -150,28 +191,24 @@ async function fetchQuotaFromCloud(accessToken) {
         headers: buildHeaders(accessToken),
         body: JSON.stringify({ project: projectId }),
       });
-      if (!r.ok) continue;
+      if (!r.ok) {
+        if (r.status === 401 || r.status === 403) sawAuthFailure = true;
+        continue;
+      }
       const data = await r.json();
       const models = data.models || {};
-
-      const results = [];
-      for (const id of INTERESTING_MODEL_IDS) {
-        const m = models[id];
-        if (!m || !m.quotaInfo) continue;
-        const qi = m.quotaInfo;
-        // Skip models without remainingFraction (means unlimited / no quota tracked)
-        if (qi.remainingFraction === undefined) continue;
-        results.push({
-          id,
-          displayName: m.displayName || id,
-          remainingFraction: qi.remainingFraction,
-          resetTime: qi.resetTime || null,
-        });
-      }
-      return results;
+      return normalizeQuotaModels(models);
     } catch { /* try next endpoint */ }
   }
-  return [];
+  return createUnavailableQuotaResult(sawAuthFailure ? 'auth_failed' : 'quota_fetch_failed');
+}
+
+function isCachePayloadFresh(raw) {
+  return raw &&
+    raw.version === CACHE_VERSION &&
+    raw.expiresAt &&
+    Date.now() < raw.expiresAt &&
+    Array.isArray(raw.data);
 }
 
 /**
@@ -181,8 +218,8 @@ async function fetchQuotaFromCloud(accessToken) {
 function readCache() {
   try {
     const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
-    if (!raw.expiresAt || Date.now() >= raw.expiresAt) return null;
-    return raw.data || null;
+    if (!isCachePayloadFresh(raw)) return null;
+    return raw.data;
   } catch {
     return null;
   }
@@ -204,7 +241,7 @@ function writeCache(data) {
   // If no resetTime found, cache for 5 minutes
   const expiresAt = isFinite(earliest) ? earliest : Date.now() + 5 * 60 * 1000;
   try {
-    fs.writeFileSync(CACHE_PATH, JSON.stringify({ expiresAt, data }));
+    fs.writeFileSync(CACHE_PATH, JSON.stringify({ version: CACHE_VERSION, expiresAt, data }));
   } catch { /* ignore write errors */ }
 }
 
@@ -217,11 +254,17 @@ async function getQuota() {
   if (cached) return cached;
 
   const tok = readToken();
-  if (!tok) return [];
+  if (!tok) return createUnavailableQuotaResult('not_logged_in');
 
   const fresh = await fetchQuotaFromCloud(tok.accessToken);
   if (fresh.length > 0) writeCache(fresh);
   return fresh;
 }
 
-module.exports = { getQuota };
+module.exports = {
+  getQuota,
+  fetchQuotaFromCloud,
+  normalizeQuotaModels,
+  isCachePayloadFresh,
+  createUnavailableQuotaResult,
+};
