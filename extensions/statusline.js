@@ -18,11 +18,17 @@ function getSettingsPath() {
   return path.join(os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
 }
 
+function createStatusLineCommand(hudScriptPath, nodePath = process.execPath || 'node', platform = process.platform) {
+  if (platform === 'win32') {
+    return `node "${hudScriptPath}"`;
+  }
+  return `"${nodePath}" "${hudScriptPath}"`;
+}
+
 function configureStatusLine(baseDir = __dirname) {
   const settingsPath = getSettingsPath();
   const hudScriptPath = path.resolve(baseDir, 'bin', 'agy-hud.js');
-  const nodePath = process.execPath || 'node';
-  const targetCommand = `"${nodePath}" "${hudScriptPath}"`;
+  const targetCommand = createStatusLineCommand(hudScriptPath);
 
   let settings = {};
   if (fs.existsSync(settingsPath)) {
@@ -42,6 +48,7 @@ function configureStatusLine(baseDir = __dirname) {
 }
 
 module.exports = {
+  createStatusLineCommand,
   configureStatusLine,
   getSettingsPath,
 };

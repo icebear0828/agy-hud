@@ -25,18 +25,18 @@ agy plugin install .
 # 3. Update settings.json
 if (Test-Path $SettingsFile) {
     Write-Host "🔧 Updating statusLine configuration..."
-    $Settings = Get-Content $SettingsFile | ConvertFrom-Json
+    $Settings = Get-Content $SettingsFile -Raw | ConvertFrom-Json
     
     # Standardize path for JSON
-    $EscapedNodePath = $NodePath.Source -replace '\\', '\\'
     $EscapedHudScriptPath = $HudScriptPath -replace '\\', '\\'
     
     $Settings.statusLine = @{
         type = "command"
-        command = "`"$EscapedNodePath`" `"$EscapedHudScriptPath`""
+        command = "node `"$EscapedHudScriptPath`""
     }
 
-    $Settings | ConvertTo-Json -Depth 10 | Set-Content $SettingsFile
+    $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($SettingsFile, ($Settings | ConvertTo-Json -Depth 10), $Utf8NoBom)
 } else {
     Write-Warning "⚠️ Antigravity settings.json not found."
 }
