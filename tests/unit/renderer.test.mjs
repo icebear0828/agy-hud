@@ -134,3 +134,51 @@ test('renderHUD should render Nerd Font icons when enabled', () => {
   assert.match(output, /󱔐/); // ctxIcon
   assert.match(output, /󰚗/); // modelIcon
 });
+
+test('renderHUD supports theme custom colors', () => {
+  const state = { steps: 5, branch: 'dev' };
+  const agyData = {
+    context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 95 }
+  };
+  const config = {
+    theme: {
+      critical: 'blue'
+    }
+  };
+  const output = renderHUD(state, agyData, config);
+  assert.match(output, /\x1b\[34m\[█+/);
+});
+
+test('renderHUD supports custom warning and critical thresholds', () => {
+  const state = { steps: 5, branch: 'dev' };
+  const agyData = {
+    context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 30 }
+  };
+  const config = {
+    thresholds: {
+      warning: 0.2,
+      critical: 0.4
+    }
+  };
+  const output = renderHUD(state, agyData, config);
+  assert.match(output, /\x1b\[33m\[█+/);
+});
+
+test('renderHUD supports custom columnWidth', () => {
+  const state = { steps: 5, branch: 'dev' };
+  const agyData = {
+    context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
+  };
+  const quotaData = [
+    { displayName: 'Gemini 3.5 Flash (High)', remainingFraction: 0.6 }
+  ];
+  const config = {
+    display: {
+      columnWidth: 45,
+      unicode: true
+    }
+  };
+  const output = renderHUD(state, agyData, config, quotaData);
+  assert.match(output, /─{91}/);
+  assert.match(output, /Gem 3\.5 Flash\(H\) {8}/);
+});

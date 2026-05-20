@@ -7,7 +7,6 @@ Write-Host "🚀 Starting agy-hud installation for Windows..." -ForegroundColor 
 $NodePath = Get-Command node -ErrorAction SilentlyContinue
 $ProjectDir = Get-Location
 $HudScriptPath = Join-Path $ProjectDir.Path "extensions\bin\agy-hud.js"
-$SettingsFile = "$env:USERPROFILE\.gemini\antigravity-cli\settings.json"
 
 if (-not $NodePath) {
     Write-Error "❌ Node.js not found in PATH."
@@ -22,23 +21,8 @@ Write-Host "🔌 Installing as an official agy plugin..." -ForegroundColor Yello
 agy plugin uninstall agy-hud | Out-Null
 agy plugin install .
 
-# 3. Update settings.json
-if (Test-Path $SettingsFile) {
-    Write-Host "🔧 Updating statusLine configuration..."
-    $Settings = Get-Content $SettingsFile -Raw | ConvertFrom-Json
-    
-    # Standardize path for JSON
-    $EscapedHudScriptPath = $HudScriptPath -replace '\\', '\\'
-    
-    $Settings.statusLine = @{
-        type = "command"
-        command = "node `"$EscapedHudScriptPath`""
-    }
-
-    $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($SettingsFile, ($Settings | ConvertTo-Json -Depth 10), $Utf8NoBom)
-} else {
-    Write-Warning "⚠️ Antigravity settings.json not found."
-}
+# 3. Update settings.json for statusLine
+Write-Host "🔧 Updating statusLine configuration..." -ForegroundColor Yellow
+node extensions/install-statusline.js
 
 Write-Host "✅ Installation complete! Please restart Antigravity CLI." -ForegroundColor Green

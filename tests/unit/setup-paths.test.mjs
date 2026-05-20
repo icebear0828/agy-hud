@@ -11,30 +11,21 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..', '..');
 
-test('setup.sh configures statusLine to the relocated HUD binary', () => {
+test('setup.sh runs install-statusline.js', () => {
   const setupScript = fs.readFileSync(path.join(projectRoot, 'setup.sh'), 'utf8');
 
-  assert.match(setupScript, /extensions\/bin\/agy-hud\.js/);
-  assert.doesNotMatch(setupScript, /\$PROJECT_DIR\/bin\/agy-hud\.js/);
+  assert.match(setupScript, /extensions\/install-statusline\.js/);
 });
 
-test('setup.sh passes paths via env vars instead of inline interpolation', () => {
-  const setupScript = fs.readFileSync(path.join(projectRoot, 'setup.sh'), 'utf8');
-
-  // Env-var-based form prevents shell injection if a path contains quotes.
-  assert.match(setupScript, /AGY_HUD_SETTINGS/);
-  assert.match(setupScript, /process\.env\.AGY_HUD_SCRIPT/);
-  // The old vulnerable inline form must be gone.
-  assert.doesNotMatch(setupScript, /JSON\.parse\(fs\.readFileSync\('\$SETTINGS_FILE'/);
-});
-
-test('setup.ps1 configures statusLine to the relocated HUD binary', () => {
+test('setup.ps1 runs install-statusline.js', () => {
   const setupScript = fs.readFileSync(path.join(projectRoot, 'setup.ps1'), 'utf8');
 
-  assert.match(setupScript, /extensions\\bin\\agy-hud\.js/);
-  assert.doesNotMatch(setupScript, /EscapedProjectDir\\bin\\agy-hud\.js/);
-  assert.match(setupScript, /UTF8Encoding\(\$false\)/);
-  assert.doesNotMatch(setupScript, /Set-Content \$SettingsFile/);
+  assert.match(setupScript, /extensions\/install-statusline\.js/);
+});
+
+test('install-statusline.js requires statusline.js and configures statusLine', () => {
+  const installScript = fs.readFileSync(path.join(projectRoot, 'extensions', 'install-statusline.js'), 'utf8');
+  assert.match(installScript, /configureStatusLine\(__dirname\)/);
 });
 
 test('Windows statusLine command points at the .cmd shim, not raw node invocation', () => {

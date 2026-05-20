@@ -22,13 +22,40 @@ function renderHUD(state, agyData, config, quotaData) {
   // ANSI escape sequences
   const reset = '\x1b[0m';
   const bold = '\x1b[1m';
-  const gray = '\x1b[90m';
-  const blue = '\x1b[34m';
-  const magenta = '\x1b[35m';
-  const yellow = '\x1b[33m';
-  const cyan = '\x1b[36m';
-  const green = '\x1b[32m';
-  const red = '\x1b[31m';
+  
+  const colors = {
+    gray: '\x1b[90m',
+    blue: '\x1b[34m',
+    magenta: '\x1b[35m',
+    yellow: '\x1b[33m',
+    cyan: '\x1b[36m',
+    green: '\x1b[32m',
+    red: '\x1b[31m',
+  };
+
+  const getThemeColor = (key, defaultColor) => {
+    const name = config?.theme?.[key] || defaultColor;
+    return colors[name] || colors[defaultColor];
+  };
+
+  const primaryColor = getThemeColor('primary', 'green');
+  const secondaryColor = getThemeColor('secondary', 'gray');
+  const warningColor = getThemeColor('warning', 'yellow');
+  const criticalColor = getThemeColor('critical', 'red');
+
+  const gray = secondaryColor;
+  const blue = colors.blue;
+  const magenta = colors.magenta;
+  const yellow = warningColor;
+  const cyan = colors.cyan;
+  const green = primaryColor;
+  const red = criticalColor;
+
+  const warnThresh = typeof config?.thresholds?.warning === 'number' ? config.thresholds.warning : 0.7;
+  const critThresh = typeof config?.thresholds?.critical === 'number' ? config.thresholds.critical : 0.9;
+
+  const columnWidth = typeof config?.display?.columnWidth === 'number' ? config.display.columnWidth : 37;
+  const nameWidth = Math.max(10, columnWidth - 21);
 
   // Box-drawing glyphs with ASCII fallback
   const glyph = unicode
@@ -116,11 +143,11 @@ function renderHUD(state, agyData, config, quotaData) {
     // Auto-color based on usage vs remaining
     let finalColor = color;
     if (isUsage) {
-      if (percent > 80) finalColor = red;
-      else if (percent > 50) finalColor = yellow;
+      if (percent > critThresh * 100) finalColor = red;
+      else if (percent > warnThresh * 100) finalColor = yellow;
     } else {
-      if (percent <= 20) finalColor = red;
-      else if (percent <= 50) finalColor = yellow;
+      if (percent <= (1 - critThresh) * 100) finalColor = red;
+      else if (percent <= (1 - warnThresh) * 100) finalColor = yellow;
       else finalColor = green;
     }
 
@@ -155,13 +182,13 @@ function renderHUD(state, agyData, config, quotaData) {
     modelStr
   ].join(divider);
 
-  // Helper to render one quota item inside a column of exactly 37 visible chars
+  // Helper to render one quota item inside a column of exactly columnWidth visible chars
   const renderQuotaColumn = (q, now) => {
     const pct = Math.round(q.remainingFraction * 100);
 
-    // 1. Name (16 chars)
+    // 1. Name
     const rawName = simplifyModelName(q.displayName || q.id);
-    const namePart = truncateAndPad(rawName, 16);
+    const namePart = truncateAndPad(rawName, nameWidth);
     const coloredName = `${cyan}${namePart}${reset}`;
 
     // 2. Bar (8 chars visible: [ + 6 bars + ])
@@ -169,7 +196,7 @@ function renderHUD(state, agyData, config, quotaData) {
 
     // 3. Percent (4 chars)
     const pctStr = `${pct}%`.padStart(4, ' ');
-    const pctColor = pct <= 10 ? red : pct <= 30 ? yellow : green;
+    const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
     const coloredPct = `${pctColor}${pctStr}${reset}`;
 
     // 4. Time (6 chars)
@@ -194,14 +221,14 @@ function renderHUD(state, agyData, config, quotaData) {
     const rows = [];
     for (let i = 0; i < cols.length; i += 2) {
       const col1 = cols[i];
-      const col2 = cols[i + 1] || ' '.repeat(37);
+      const col2 = cols[i + 1] || ' '.repeat(columnWidth);
       rows.push(`  ${col1} ${gray}${glyph.vbar}${reset} ${col2}`);
     }
 
-    const dividerLine = `  ${gray}${glyph.hbar.repeat(75)}${reset}`;
+    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
     quotaLines = `\n${dividerLine}\n` + rows.join('\n') + `\n${dividerLine}`;
   } else if (quotaData && quotaData.unavailableReason) {
-    const dividerLine = `  ${gray}${glyph.hbar.repeat(75)}${reset}`;
+    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
     const reasonMessages = {
       not_logged_in: 'not logged into Antigravity',
       auth_failed: 'Antigravity auth failed',

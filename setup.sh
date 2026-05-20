@@ -11,7 +11,6 @@ echo "🚀 Starting agy-hud installation..."
 NODE_PATH=$(which node)
 PROJECT_DIR=$(pwd)
 HUD_SCRIPT="$PROJECT_DIR/extensions/bin/agy-hud.js"
-SETTINGS_FILE="$HOME/.gemini/antigravity-cli/settings.json"
 
 if [ -z "$NODE_PATH" ]; then
   echo "❌ Error: Node.js not found in PATH."
@@ -28,24 +27,9 @@ echo "🔌 Installing as an official agy plugin..."
 agy plugin uninstall agy-hud >/dev/null 2>&1 || true
 agy plugin install .
 
-# 3. Update settings.json for statusLine — pass paths via env vars so quotes
-# or special chars in $NODE_PATH / $HUD_SCRIPT can't break the inline script.
-if [ -f "$SETTINGS_FILE" ]; then
-  echo "🔧 Updating statusLine configuration in settings.json..."
-  AGY_HUD_NODE="$NODE_PATH" AGY_HUD_SCRIPT="$HUD_SCRIPT" AGY_HUD_SETTINGS="$SETTINGS_FILE" \
-  "$NODE_PATH" -e '
-    const fs = require("fs");
-    const settingsPath = process.env.AGY_HUD_SETTINGS;
-    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-    settings.statusLine = {
-      type: "command",
-      command: `"${process.env.AGY_HUD_NODE}" "${process.env.AGY_HUD_SCRIPT}"`,
-    };
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-  '
-else
-  echo "⚠️ Warning: Antigravity settings.json not found at $SETTINGS_FILE"
-fi
+# 3. Update settings.json for statusLine
+echo "🔧 Updating statusLine configuration..."
+"$NODE_PATH" extensions/install-statusline.js
 
 echo "✅ Installation complete!"
 echo "✨ Please restart your Antigravity CLI to see the HUD."

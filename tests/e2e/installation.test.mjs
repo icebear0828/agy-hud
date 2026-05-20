@@ -6,6 +6,9 @@ import path from 'path';
 import http from 'http';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import pathsModule from '../../extensions/paths.js';
+
+const { resolveAntigravityPath } = pathsModule;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -64,8 +67,8 @@ test('E2E: Official agy plugin installation from remote URL', async (t) => {
     }
   });
 
-  const port = 8082;
-  await new Promise(resolve => server.listen(port, resolve));
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
   const url = `http://localhost:${port}/agy-hud.zip`;
   let tempWork = null;
 
@@ -118,7 +121,7 @@ test('E2E: Official agy plugin installation from remote URL', async (t) => {
     assert.match(stdout, /\[ok\]/);
     assert.match(stdout, /hooks\s+: 1 processed/);
 
-    const installedHooksPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'plugins', 'agy-hud', 'hooks.json');
+    const installedHooksPath = resolveAntigravityPath(path.join('plugins', 'agy-hud', 'hooks.json'));
     const installedHooks = JSON.parse(fs.readFileSync(installedHooksPath, 'utf8'));
     const hookCommand = installedHooks.post_invocation_hooks[0].command;
     assert.doesNotMatch(hookCommand, /extensions\/install-statusline\.js/);

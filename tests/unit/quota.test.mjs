@@ -131,4 +131,48 @@ test('readCache / writeCache respects token changes', () => {
   } catch {}
 });
 
+test('fetchQuotaFromCloud respects AGY_HUD_ENDPOINTS and AGY_HUD_INTERESTING_MODELS env overrides', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls = [];
+  globalThis.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        models: {
+          'custom-model-id-1': {
+            displayName: 'Custom Model 1',
+            quotaInfo: { remainingFraction: 0.8, resetTime: null }
+          },
+          'gemini-3-flash-agent': {
+            displayName: 'Gemini 3.5 Flash',
+            quotaInfo: { remainingFraction: 0.9, resetTime: null }
+          }
+        }
+      })
+    };
+  };
+
+  process.env.AGY_HUD_ENDPOINTS = 'https://custom-endpoint.com,https://another-endpoint.com';
+  process.env.AGY_HUD_INTERESTING_MODELS = 'custom-model-id-1';
+
+  try {
+    const quotas = await fetchQuotaFromCloud('token');
+
+    // Should fetch from the custom endpoint
+    assert.ok(requestedUrls.length > 0);
+    assert.ok(requestedUrls[0].startsWith('https://custom-endpoint.com'));
+    
+    // Should filter only interesting models specified in env var
+    assert.equal(quotas.length, 1);
+    assert.equal(quotas[0].id, 'custom-model-id-1');
+    assert.equal(quotas[0].remainingFraction, 0.8);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.AGY_HUD_ENDPOINTS;
+    delete process.env.AGY_HUD_INTERESTING_MODELS;
+  }
+});
+
 

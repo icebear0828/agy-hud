@@ -114,7 +114,7 @@ if (!s.statusLine || s.statusLine.command !== cmd) {
 // short-lived temp file that the background quota refresh subprocess can read).
 if (isWin) {
   try {
-    const tokenTempPath = path.join(os.tmpdir(), 'agy-hud-token.json');
+    const tokenTempPath = path.join(path.dirname(settingsPath), 'agy-hud-token.json');
     const ps = [
       'Add-Type -Language CSharp -TypeDefinition @"',
       'using System; using System.Runtime.InteropServices; using System.Text;',
@@ -155,7 +155,7 @@ if (isWin) {
       .filter(t => t && t.token && t.token.access_token)
       .map(t => ({ accessToken: t.token.access_token, expiry: t.token.expiry || null }));
     if (tokens.length > 0) {
-      fs.writeFileSync(tokenTempPath, JSON.stringify({ tokens, writtenAt: Date.now() }), 'utf8');
+      fs.writeFileSync(tokenTempPath, JSON.stringify({ tokens, writtenAt: Date.now() }), { encoding: 'utf8', mode: 0o600 });
     }
   } catch { /* best-effort — quota shows 'not logged in' if this fails */ }
 }
