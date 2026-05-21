@@ -137,7 +137,9 @@ function writeWindowsTokenTemp(tokens) {
   try {
     const tmp = resolveAntigravityPath('agy-hud-token.json');
     fs.mkdirSync(path.dirname(tmp), { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify({ tokens, writtenAt: Date.now() }));
+    // mode 0o600 — the file holds an OAuth access token, must match the
+    // permissions used by the bootstrap hook in hooks/inline-bootstrap.js.
+    fs.writeFileSync(tmp, JSON.stringify({ tokens, writtenAt: Date.now() }), { mode: 0o600 });
   } catch { /* best-effort cache */ }
 }
 

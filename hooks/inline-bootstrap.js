@@ -91,11 +91,17 @@ if (isWin) {
     'if exist "%ProgramFiles%\\nodejs\\node.exe" "%ProgramFiles%\\nodejs\\node.exe" "%~dp0' + scriptName + '" %*',
     '',
   ].join('\r\n');
-  try { fs.writeFileSync(shim, shimBody, 'utf8'); } catch { /* best-effort */ }
+  try {
+    let existingCmdShim = null;
+    try { existingCmdShim = fs.readFileSync(shim, 'utf8'); } catch { /* missing */ }
+    if (existingCmdShim !== shimBody) fs.writeFileSync(shim, shimBody, 'utf8');
+  } catch { /* best-effort */ }
 
   // agy 1.0.0 runs statusLine commands through `sh -c` even on Windows.
   // Install a tiny compatibility shim into agy.exe's PATH directory so the
-  // runner can launch normal Windows commands.
+  // runner can launch normal Windows commands. We deliberately stay narrow
+  // (LOCALAPPDATA\agy\bin + PATH dirs that contain agy.exe) so we don't
+  // shadow other tools' `sh` in WindowsApps / npm global / etc.
   const shShimBody = [
     '@echo off',
     'setlocal EnableExtensions',
@@ -112,23 +118,23 @@ if (isWin) {
   const agyBinDirs = [];
   if (process.env.LOCALAPPDATA) {
     agyBinDirs.push(path.join(process.env.LOCALAPPDATA, 'agy', 'bin'));
-    agyBinDirs.push(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WindowsApps'));
-  }
-  if (process.env.APPDATA) {
-    agyBinDirs.push(path.join(process.env.APPDATA, 'npm'));
-  }
-  if (process.env.USERPROFILE) {
-    agyBinDirs.push(path.join(process.env.USERPROFILE, 'App'));
   }
   for (const dir of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
     if (fs.existsSync(path.join(dir, 'agy.exe'))) agyBinDirs.push(dir);
   }
   for (const dir of [...new Set(agyBinDirs.map(d => path.resolve(d)))]) {
     try {
-      if (fs.existsSync(dir)) {
-        for (const name of ['sh.cmd', 'sh.bat']) {
-          fs.writeFileSync(path.join(dir, name), shShimBody, 'utf8');
-        }
+      if (!fs.existsSync(dir)) continue;
+      // Never shadow a real `sh.exe` (Git Bash, MSYS, busybox, …).
+      if (fs.existsSync(path.join(dir, 'sh.exe'))) continue;
+      for (const name of ['sh.cmd', 'sh.bat']) {
+        const target = path.join(dir, name);
+        let existing = null;
+        try { existing = fs.readFileSync(target, 'utf8'); } catch { /* missing */ }
+        if (existing === shShimBody) continue;
+        // Skip when something else (3rd party) already owns this name.
+        if (existing !== null) continue;
+        fs.writeFileSync(target, shShimBody, 'utf8');
       }
     } catch { /* best-effort */ }
   }

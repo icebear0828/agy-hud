@@ -49,20 +49,17 @@ function buildShShimContents() {
   ].join('\r\n');
 }
 
+// Discover directories where agy's `sh -c` lookup is likely to land. We
+// deliberately stay narrow: only `%LOCALAPPDATA%\agy\bin` (the agy installer's
+// own bin dir) plus any PATH entry that actually contains `agy.exe`. We do NOT
+// touch `%LOCALAPPDATA%\Microsoft\WindowsApps` (system-managed reparse points,
+// writes there can break App Installer aliases) or `%APPDATA%\npm` /
+// `%USERPROFILE%\App` (unrelated to agy — risk shadowing other tools' `sh`).
 function getWindowsAgyBinDirs(env = process.env) {
   const dirs = [];
 
   if (env.LOCALAPPDATA) {
     dirs.push(path.join(env.LOCALAPPDATA, 'agy', 'bin'));
-    dirs.push(path.join(env.LOCALAPPDATA, 'Microsoft', 'WindowsApps'));
-  }
-
-  if (env.APPDATA) {
-    dirs.push(path.join(env.APPDATA, 'npm'));
-  }
-
-  if (env.USERPROFILE) {
-    dirs.push(path.join(env.USERPROFILE, 'App'));
   }
 
   const pathEntries = (env.PATH || env.Path || '')
@@ -79,6 +76,9 @@ function getWindowsAgyBinDirs(env = process.env) {
   return [...new Set(dirs.map(dir => path.resolve(dir)))];
 }
 
+// Write the sh-compat shim, but never overwrite a real `sh` or another tool's
+// shim. We also skip writes when the on-disk content already matches ours so
+// the post-invocation hook doesn't churn the file every agy invocation.
 function ensureWindowsShShim(platform = process.platform, env = process.env) {
   if (platform !== 'win32') return [];
 
@@ -87,9 +87,22 @@ function ensureWindowsShShim(platform = process.platform, env = process.env) {
   for (const dir of getWindowsAgyBinDirs(env)) {
     try {
       if (!fs.existsSync(dir)) continue;
+      // If a real `sh.exe` lives here (Git Bash, MSYS, busybox, …) we MUST NOT
+      // shadow it — cmd.exe resolves .exe before .cmd/.bat on PATHEXT order
+      // for some users but not all. Skipping the dir entirely is the safe call.
+      if (fs.existsSync(path.join(dir, 'sh.exe'))) continue;
+
       for (const name of ['sh.cmd', 'sh.bat']) {
-        fs.writeFileSync(path.join(dir, name), body, 'utf8');
-        written.push(path.join(dir, name));
+        const target = path.join(dir, name);
+        // Only overwrite when the file is missing or identical to our shim.
+        // Anything else is third-party and gets left alone.
+        let existing = null;
+        try { existing = fs.readFileSync(target, 'utf8'); } catch { /* missing */ }
+        if (existing === body) continue;
+        if (existing !== null) continue;
+
+        fs.writeFileSync(target, body, 'utf8');
+        written.push(target);
       }
     } catch {
       // Best-effort: statusline still gets configured, and agy logs the failure.
@@ -111,7 +124,13 @@ function writeCmdShim(hudScriptPath, platform = process.platform) {
   const shimPath = hudScriptPath.replace(/\.js$/i, '.cmd');
   const contents = buildCmdShimContents(hudScriptPath);
   fs.mkdirSync(path.dirname(shimPath), { recursive: true });
-  fs.writeFileSync(shimPath, contents, 'utf8');
+  // Skip the write if the on-disk contents already match — the post-invocation
+  // hook runs on every agy invocation, no need to churn the file.
+  let existing = null;
+  try { existing = fs.readFileSync(shimPath, 'utf8'); } catch { /* missing */ }
+  if (existing !== contents) {
+    fs.writeFileSync(shimPath, contents, 'utf8');
+  }
   return shimPath;
 }
 
