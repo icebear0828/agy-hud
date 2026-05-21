@@ -24,10 +24,9 @@ function readWindowsCodepage() {
  * Resolution order:
  *   1. AGY_HUD_FORCE_ASCII=1   → false
  *   2. AGY_HUD_FORCE_UNICODE=1 → true
- *   3. Windows Terminal (WT_SESSION env present) → true
- *   4. Windows: codepage 65001 → true, anything else → false
- *   5. Unix: LANG/LC_ALL/LC_CTYPE contains "UTF-8" or "utf8" → true
- *   6. Default → true (modern terminals dominate)
+ *   3. Windows: codepage 65001 → true, anything else → false
+ *   4. Unix: LANG/LC_ALL/LC_CTYPE contains "UTF-8" or "utf8" → true
+ *   5. Default → true (modern terminals dominate)
  *
  * @param {object} [opts]
  * @param {NodeJS.ProcessEnv} [opts.env]      defaults to process.env
@@ -44,7 +43,6 @@ function detectUnicodeSupport(opts = {}) {
   if (env.AGY_HUD_FORCE_UNICODE === '1') return true;
 
   if (platform === 'win32') {
-    if (env.WT_SESSION) return true;
     const cp = readCodepage();
     return cp === '65001';
   }

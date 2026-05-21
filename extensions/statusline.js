@@ -33,6 +33,71 @@ function buildCmdShimContents(hudScriptPath) {
   ].join('\r\n');
 }
 
+function buildShShimContents() {
+  return [
+    '@echo off',
+    'setlocal EnableExtensions',
+    'if /I "%~1"=="-c" (',
+    '  set "CMDLINE=%~2"',
+    ') else (',
+    '  set "CMDLINE=%*"',
+    ')',
+    'set "CMDLINE=%CMDLINE:\\"="%"',
+    'cmd.exe /d /s /c "%CMDLINE%"',
+    'exit /b %ERRORLEVEL%',
+    '',
+  ].join('\r\n');
+}
+
+function getWindowsAgyBinDirs(env = process.env) {
+  const dirs = [];
+
+  if (env.LOCALAPPDATA) {
+    dirs.push(path.join(env.LOCALAPPDATA, 'agy', 'bin'));
+    dirs.push(path.join(env.LOCALAPPDATA, 'Microsoft', 'WindowsApps'));
+  }
+
+  if (env.APPDATA) {
+    dirs.push(path.join(env.APPDATA, 'npm'));
+  }
+
+  if (env.USERPROFILE) {
+    dirs.push(path.join(env.USERPROFILE, 'App'));
+  }
+
+  const pathEntries = (env.PATH || env.Path || '')
+    .split(path.delimiter)
+    .map(entry => entry.trim())
+    .filter(Boolean);
+
+  for (const dir of pathEntries) {
+    if (fs.existsSync(path.join(dir, 'agy.exe'))) {
+      dirs.push(dir);
+    }
+  }
+
+  return [...new Set(dirs.map(dir => path.resolve(dir)))];
+}
+
+function ensureWindowsShShim(platform = process.platform, env = process.env) {
+  if (platform !== 'win32') return [];
+
+  const body = buildShShimContents();
+  const written = [];
+  for (const dir of getWindowsAgyBinDirs(env)) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      for (const name of ['sh.cmd', 'sh.bat']) {
+        fs.writeFileSync(path.join(dir, name), body, 'utf8');
+        written.push(path.join(dir, name));
+      }
+    } catch {
+      // Best-effort: statusline still gets configured, and agy logs the failure.
+    }
+  }
+  return written;
+}
+
 /**
  * Write the .cmd shim next to agy-hud.js on Windows. No-op on other platforms.
  * Returns the shim path (or null if not on Windows).
@@ -71,6 +136,7 @@ function configureStatusLine(baseDir = __dirname) {
 
   // Generate the Windows .cmd shim alongside the HUD script (no-op on Unix).
   writeCmdShim(hudScriptPath);
+  ensureWindowsShShim();
 
   const targetCommand = createStatusLineCommand(hudScriptPath);
 
@@ -97,7 +163,10 @@ function configureStatusLine(baseDir = __dirname) {
 
 module.exports = {
   buildCmdShimContents,
+  buildShShimContents,
   writeCmdShim,
+  ensureWindowsShShim,
+  getWindowsAgyBinDirs,
   createStatusLineCommand,
   configureStatusLine,
   getSettingsPath,

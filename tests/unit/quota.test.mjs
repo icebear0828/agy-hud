@@ -9,7 +9,8 @@ const {
   fetchQuotaFromCloud,
   normalizeQuotaModels,
   isCachePayloadFresh,
-  createUnavailableQuotaResult
+  createUnavailableQuotaResult,
+  selectUsableTokens
 } = quotaModule;
 
 test('normalizeQuotaModels treats quota buckets without remainingFraction as unlimited (1)', () => {
@@ -65,6 +66,25 @@ test('createUnavailableQuotaResult keeps the quota array empty with a diagnostic
   assert.equal(quotas.length, 0);
   assert.equal(quotas.unavailableReason, 'not_logged_in');
   assert.deepEqual(JSON.parse(JSON.stringify(quotas)), []);
+});
+
+test('selectUsableTokens keeps Windows temp tokens until token expiry', () => {
+  const now = Date.parse('2026-05-20T20:00:00Z');
+  const oldWrittenAt = now - 60 * 60 * 1000;
+
+  const tokens = selectUsableTokens([
+    { accessToken: 'valid-with-expiry', expiry: '2026-05-20T20:10:00Z' },
+    { accessToken: 'nearly-expired', expiry: '2026-05-20T20:00:30Z' },
+    { accessToken: 'no-expiry-old-cache' },
+    { accessToken: 'no-expiry-fresh-cache' },
+  ], oldWrittenAt, now);
+
+  assert.deepEqual(tokens.map(t => t.accessToken), ['valid-with-expiry']);
+
+  const freshNoExpiry = selectUsableTokens([
+    { accessToken: 'no-expiry-fresh-cache' },
+  ], now - 1000, now);
+  assert.deepEqual(freshNoExpiry.map(t => t.accessToken), ['no-expiry-fresh-cache']);
 });
 
 test('fetchQuotaFromCloud returns an auth diagnostic for auth failures', async () => {

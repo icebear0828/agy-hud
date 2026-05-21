@@ -238,7 +238,7 @@ function renderHUD(state, agyData, config, quotaData) {
     quotaLines = `\n${dividerLine}\n  ${yellow}Quota unavailable:${reset} ${gray}${reason}${reset}\n${dividerLine}`;
   }
 
-  return `\n${line1}\n${line2}${quotaLines}\n`;
+  return `${line1}\n${line2}${quotaLines}\n`;
 }
 
 module.exports = {

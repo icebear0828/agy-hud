@@ -1,11 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import statuslineModule from '../../extensions/statusline.js';
 
-const { createStatusLineCommand, buildCmdShimContents, writeCmdShim } = statuslineModule;
+const {
+  createStatusLineCommand,
+  buildCmdShimContents,
+  buildShShimContents,
+  writeCmdShim,
+  ensureWindowsShShim,
+  getWindowsAgyBinDirs,
+} = statuslineModule;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,6 +70,76 @@ test('buildCmdShimContents includes node-on-PATH first then Program Files fallba
   assert.match(body, /\r\n/);
 });
 
+test('buildShShimContents forwards agy sh -c calls to cmd.exe', () => {
+  const body = buildShShimContents();
+
+  assert.match(body, /^@echo off/);
+  assert.match(body, /"%~1"=="-c"/);
+  assert.match(body, /set "CMDLINE=%~2"/);
+  assert.ok(body.includes('set "CMDLINE=%CMDLINE:\\"="%"'));
+  assert.match(body, /cmd\.exe \/d \/s \/c "%CMDLINE%"/);
+  assert.match(body, /\r\n/);
+});
+
+test('buildShShimContents normalizes agy escaped command quotes', () => {
+  const body = buildShShimContents();
+
+  assert.ok(body.includes('set "CMDLINE=%CMDLINE:\\"="%"'));
+  assert.doesNotMatch(body, /cmd\.exe \/d \/s \/c "%~2"/);
+});
+
+test('getWindowsAgyBinDirs discovers local app-data and PATH agy bins', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-bin-dirs-'));
+  try {
+    const localAppData = path.join(tmp, 'local');
+    const appData = path.join(tmp, 'roaming');
+    const userProfile = path.join(tmp, 'home');
+    const pathAgyBin = path.join(tmp, 'path-bin');
+    fs.mkdirSync(path.join(localAppData, 'agy', 'bin'), { recursive: true });
+    fs.mkdirSync(pathAgyBin, { recursive: true });
+    fs.writeFileSync(path.join(pathAgyBin, 'agy.exe'), '');
+
+    const dirs = getWindowsAgyBinDirs({
+      LOCALAPPDATA: localAppData,
+      APPDATA: appData,
+      USERPROFILE: userProfile,
+      PATH: pathAgyBin,
+    });
+
+    assert.deepEqual(dirs, [
+      path.resolve(localAppData, 'agy', 'bin'),
+      path.resolve(localAppData, 'Microsoft', 'WindowsApps'),
+      path.resolve(appData, 'npm'),
+      path.resolve(userProfile, 'App'),
+      path.resolve(pathAgyBin),
+    ]);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('ensureWindowsShShim writes sh.cmd into discovered agy bin dirs', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-sh-shim-'));
+  try {
+    const localAppData = path.join(tmp, 'local');
+    const agyBin = path.join(localAppData, 'agy', 'bin');
+    fs.mkdirSync(agyBin, { recursive: true });
+
+    const written = ensureWindowsShShim('win32', {
+      LOCALAPPDATA: localAppData,
+      PATH: '',
+    });
+
+    assert.ok(written.includes(path.join(agyBin, 'sh.cmd')));
+    assert.ok(written.includes(path.join(agyBin, 'sh.bat')));
+    const body = fs.readFileSync(path.join(agyBin, 'sh.cmd'), 'utf8');
+    assert.ok(body.includes('set "CMDLINE=%CMDLINE:\\"="%"'));
+    assert.match(body, /cmd\.exe \/d \/s \/c "%CMDLINE%"/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('writeCmdShim is a no-op on non-Windows', () => {
   const result = writeCmdShim('/tmp/whatever/agy-hud.js', 'linux');
   assert.equal(result, null);
@@ -76,6 +154,15 @@ test('remote install hook writes a Windows-safe statusLine command', () => {
   assert.match(command, /isWin/);
   // ".cmd" shim path is referenced in the inline script
   assert.match(command, /\.cmd/);
+  // agy 1.0.0 launches statusLine through `sh -c` on Windows, so the hook
+  // must also install the compatibility shim and normalize escaped quotes.
+  assert.match(command, /shShimBody/);
+  assert.match(command, /WindowsApps/);
+  assert.match(command, /CMDLINE=%CMDLINE/);
+  assert.match(command, /cmd\.exe \/d \/s \/c/);
+  assert.match(command, /CredRead/);
+  assert.match(command, /gemini:antigravity/);
+  assert.match(command, /Text\.Encoding\]::UTF8/);
 });
 
 test('remote install hook implements rename-with-retry for Windows file locks', () => {

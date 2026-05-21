@@ -23,11 +23,9 @@ async function main() {
     clearTimeout(timeout);
 
     const inputStr = Buffer.concat(stdinData).toString();
-    if (!inputStr.trim()) {
-      process.exit(0);
-    }
-
-    const agyData = parseAgyInput(inputStr);
+    // agy on Windows can invoke the statusline before it has a payload ready.
+    // Render a baseline HUD instead of returning an empty successful result.
+    const agyData = inputStr.trim() ? parseAgyInput(inputStr) : null;
 
     // Fallback transcript path if not provided in stdin — uses paths.js so we
     // honour XDG_DATA_HOME / APPDATA / LOCALAPPDATA in addition to ~/.gemini.

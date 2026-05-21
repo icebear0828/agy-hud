@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const { getAntigravityRoots, resolveAntigravityPath } = require('./paths.js');
 
 // ─── Cross-platform token discovery ──────────────────────────────────────────
@@ -28,6 +28,12 @@ const TOKEN_CANDIDATES = [
 
 const CACHE_PATH = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
 const CACHE_VERSION = 2;
+const WINDOWS_TOKEN_TEMP_TTL_MS = 5 * 60 * 1000;
+const WINDOWS_TOKEN_EXPIRY_SKEW_MS = 60 * 1000;
+const WINDOWS_CREDENTIAL_TARGETS = [
+  'gemini:antigravity',
+  'LegacyGeneric:target=gemini:antigravity',
+];
 
 // ─── Runtime User-Agent ───────────────────────────────────────────────────────
 // Read version from our own package.json and detect OS/arch at runtime.
@@ -103,22 +109,139 @@ function createUnavailableQuotaResult(reason) {
   return result;
 }
 
+function isUsableAccessToken(token, writtenAt = 0, now = Date.now()) {
+  if (!token || !token.accessToken) return false;
+
+  if (token.expiry) {
+    const expiresAt = new Date(token.expiry).getTime();
+    if (Number.isFinite(expiresAt)) {
+      return expiresAt - WINDOWS_TOKEN_EXPIRY_SKEW_MS > now;
+    }
+  }
+
+  return Boolean(writtenAt && now - writtenAt < WINDOWS_TOKEN_TEMP_TTL_MS);
+}
+
+function selectUsableTokens(tokens, writtenAt = 0, now = Date.now()) {
+  return (Array.isArray(tokens) ? tokens : [])
+    .filter(token => isUsableAccessToken(token, writtenAt, now));
+}
+
+function tokenResultFromTokens(tokens) {
+  if (!tokens || tokens.length === 0) return null;
+  return { accessToken: tokens[0].accessToken, all: tokens };
+}
+
+function writeWindowsTokenTemp(tokens) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return;
+  try {
+    const tmp = resolveAntigravityPath('agy-hud-token.json');
+    fs.mkdirSync(path.dirname(tmp), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify({ tokens, writtenAt: Date.now() }));
+  } catch { /* best-effort cache */ }
+}
+
+function readWindowsTokenTemp() {
+  try {
+    const tmp = resolveAntigravityPath('agy-hud-token.json');
+    const raw = JSON.parse(fs.readFileSync(tmp, 'utf8'));
+    return tokenResultFromTokens(selectUsableTokens(raw.tokens, raw.writtenAt));
+  } catch {
+    return null;
+  }
+}
+
+function buildWindowsCredentialScript() {
+  const targets = WINDOWS_CREDENTIAL_TARGETS
+    .map(target => `'${target.replace(/'/g, "''")}'`)
+    .join(',');
+
+  return [
+    '$ErrorActionPreference = "SilentlyContinue"',
+    'Add-Type -Language CSharp -TypeDefinition @"',
+    'using System; using System.Runtime.InteropServices; using System.Text;',
+    'public class WC {',
+    '  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]',
+    '  public struct CRED { public uint Flags,Type; public string Target,Comment;',
+    '    public long LastWritten; public uint BlobSize; public IntPtr Blob;',
+    '    public uint Persist,AttrCount; public IntPtr Attrs; public string Alias,User; }',
+    '  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]',
+    '  public static extern bool CredRead(string target,uint type,int reservedFlag,out IntPtr credentialPtr);',
+    '  [DllImport("advapi32.dll")] public static extern void CredFree(IntPtr p);',
+    '}',
+    '"@',
+    `$targets=@(${targets})`,
+    '$tokens=@()',
+    'foreach($target in $targets){',
+    '  $p=[IntPtr]::Zero',
+    '  if([WC]::CredRead($target,1,0,[ref]$p)){',
+    '    try {',
+    '      $c=[Runtime.InteropServices.Marshal]::PtrToStructure($p,[type][WC+CRED])',
+    '      if($c.BlobSize -gt 0){',
+    '        $bytes=New-Object byte[] $c.BlobSize',
+    '        [Runtime.InteropServices.Marshal]::Copy($c.Blob,$bytes,0,$c.BlobSize)',
+    '        foreach($enc in @([Text.Encoding]::UTF8,[Text.Encoding]::Unicode)){',
+    '          try {',
+    '            $o=$enc.GetString($bytes)|ConvertFrom-Json',
+    '            $tok=$o.token',
+    '            if($tok -and $tok.access_token){',
+    '              $tokens += [pscustomobject]@{ accessToken=$tok.access_token; expiry=$tok.expiry }',
+    '              break',
+    '            } elseif($o.access_token){',
+    '              $tokens += [pscustomobject]@{ accessToken=$o.access_token; expiry=$o.expiry }',
+    '              break',
+    '            }',
+    '          } catch {}',
+    '        }',
+    '      }',
+    '    } finally { [WC]::CredFree($p) }',
+    '  }',
+    '}',
+    '$dedup=@{}',
+    'foreach($t in $tokens){ if($t.accessToken -and -not $dedup.ContainsKey($t.accessToken)){ $dedup[$t.accessToken]=$t } }',
+    'if($dedup.Count -gt 0){ [pscustomobject]@{ tokens=@($dedup.Values) } | ConvertTo-Json -Compress -Depth 4 }',
+    'else { Write-Output "{`"tokens`":[]}" }',
+  ].join('\n');
+}
+
+function readWindowsCredentialTokens() {
+  if (process.platform !== 'win32') return null;
+
+  try {
+    const raw = execFileSync('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      buildWindowsCredentialScript(),
+    ], {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+    });
+    const parsed = JSON.parse(raw.trim() || '{"tokens":[]}');
+    const valid = selectUsableTokens(parsed.tokens, Date.now());
+    if (valid.length === 0) return null;
+    writeWindowsTokenTemp(valid);
+    return tokenResultFromTokens(valid);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * @returns {{ accessToken: string } | null}
  */
 function readToken() {
-  // Windows: hook writes Credential Manager tokens to a temp file (5 min TTL).
-  // Multiple accounts are stored as an array — caller tries each in order.
+  // Windows: agy stores its OAuth token in Credential Manager. Keep a short
+  // JSON mirror so normal statusline renders do not spawn PowerShell every time.
   if (process.platform === 'win32') {
-    try {
-      const tmp = resolveAntigravityPath('agy-hud-token.json');
-      const raw = JSON.parse(fs.readFileSync(tmp, 'utf8'));
-      const ttl = 5 * 60 * 1000;
-      if (raw.writtenAt && Date.now() - raw.writtenAt < ttl && Array.isArray(raw.tokens)) {
-        const valid = raw.tokens.filter(t => t && t.accessToken);
-        if (valid.length > 0) return { accessToken: valid[0].accessToken, all: valid };
-      }
-    } catch { /* fall through to file candidates */ }
+    const tempToken = readWindowsTokenTemp();
+    if (tempToken) return tempToken;
+
+    const credentialToken = readWindowsCredentialTokens();
+    if (credentialToken) return credentialToken;
   }
 
   for (const candidate of TOKEN_CANDIDATES) {
@@ -346,6 +469,9 @@ module.exports = {
   normalizeQuotaModels,
   isCachePayloadFresh,
   createUnavailableQuotaResult,
+  selectUsableTokens,
+  readToken,
+  readWindowsCredentialTokens,
   readCache,
   writeCache,
 };

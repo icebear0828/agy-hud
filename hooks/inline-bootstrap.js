@@ -92,6 +92,46 @@ if (isWin) {
     '',
   ].join('\r\n');
   try { fs.writeFileSync(shim, shimBody, 'utf8'); } catch { /* best-effort */ }
+
+  // agy 1.0.0 runs statusLine commands through `sh -c` even on Windows.
+  // Install a tiny compatibility shim into agy.exe's PATH directory so the
+  // runner can launch normal Windows commands.
+  const shShimBody = [
+    '@echo off',
+    'setlocal EnableExtensions',
+    'if /I "%~1"=="-c" (',
+    '  set "CMDLINE=%~2"',
+    ') else (',
+    '  set "CMDLINE=%*"',
+    ')',
+    'set "CMDLINE=%CMDLINE:\\"="%"',
+    'cmd.exe /d /s /c "%CMDLINE%"',
+    'exit /b %ERRORLEVEL%',
+    '',
+  ].join('\r\n');
+  const agyBinDirs = [];
+  if (process.env.LOCALAPPDATA) {
+    agyBinDirs.push(path.join(process.env.LOCALAPPDATA, 'agy', 'bin'));
+    agyBinDirs.push(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WindowsApps'));
+  }
+  if (process.env.APPDATA) {
+    agyBinDirs.push(path.join(process.env.APPDATA, 'npm'));
+  }
+  if (process.env.USERPROFILE) {
+    agyBinDirs.push(path.join(process.env.USERPROFILE, 'App'));
+  }
+  for (const dir of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
+    if (fs.existsSync(path.join(dir, 'agy.exe'))) agyBinDirs.push(dir);
+  }
+  for (const dir of [...new Set(agyBinDirs.map(d => path.resolve(d)))]) {
+    try {
+      if (fs.existsSync(dir)) {
+        for (const name of ['sh.cmd', 'sh.bat']) {
+          fs.writeFileSync(path.join(dir, name), shShimBody, 'utf8');
+        }
+      }
+    } catch { /* best-effort */ }
+  }
 }
 
 const cmd = isWin
@@ -116,6 +156,7 @@ if (isWin) {
   try {
     const tokenTempPath = path.join(path.dirname(settingsPath), 'agy-hud-token.json');
     const ps = [
+      '$ErrorActionPreference = "SilentlyContinue"',
       'Add-Type -Language CSharp -TypeDefinition @"',
       'using System; using System.Runtime.InteropServices; using System.Text;',
       'public class WC {',
@@ -124,36 +165,47 @@ if (isWin) {
       '    public long LastWritten; public uint BlobSize; public IntPtr Blob;',
       '    public uint Persist,AttrCount; public IntPtr Attrs; public string Alias,User; }',
       '  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)]',
-      '  public static extern bool CredEnumerate(string f,int fl,out uint n,out IntPtr p);',
+      '  public static extern bool CredRead(string target,uint type,int reservedFlag,out IntPtr credentialPtr);',
       '  [DllImport("advapi32.dll")] public static extern void CredFree(IntPtr p);',
       '}',
       '"@',
-      '$blobs=@()',
-      'foreach($prefix in @("antigravity","agy","Antigravity","antigravity-cli")) {',
-      '  $n=0;$p=[IntPtr]::Zero',
-      '  if([WC]::CredEnumerate($prefix+"*",0,[ref]$n,[ref]$p)){',
-      '    for($i=0;$i -lt $n;$i++){',
-      '      $ptr=[Runtime.InteropServices.Marshal]::ReadIntPtr($p,$i*[IntPtr]::Size)',
-      '      $c=[Runtime.InteropServices.Marshal]::PtrToStructure($ptr,[type][WC+CRED])',
+      '$targets=@("gemini:antigravity","LegacyGeneric:target=gemini:antigravity")',
+      '$tokens=@()',
+      'foreach($target in $targets){',
+      '  $p=[IntPtr]::Zero',
+      '  if([WC]::CredRead($target,1,0,[ref]$p)){',
+      '    try {',
+      '      $c=[Runtime.InteropServices.Marshal]::PtrToStructure($p,[type][WC+CRED])',
       '      if($c.BlobSize -gt 0){',
       '        $bytes=New-Object byte[] $c.BlobSize',
       '        [Runtime.InteropServices.Marshal]::Copy($c.Blob,$bytes,0,$c.BlobSize)',
-      '        $blobs+=[Text.Encoding]::Unicode.GetString($bytes)',
+      '        foreach($enc in @([Text.Encoding]::UTF8,[Text.Encoding]::Unicode)){',
+      '          try {',
+      '            $o=$enc.GetString($bytes)|ConvertFrom-Json',
+      '            $tok=$o.token',
+      '            if($tok -and $tok.access_token){',
+      '              $tokens += [pscustomobject]@{ accessToken=$tok.access_token; expiry=$tok.expiry }',
+      '              break',
+      '            } elseif($o.access_token){',
+      '              $tokens += [pscustomobject]@{ accessToken=$o.access_token; expiry=$o.expiry }',
+      '              break',
+      '            }',
+      '          } catch {}',
+      '        }',
       '      }',
-      '    }',
-      '    [WC]::CredFree($p)',
+      '    } finally { [WC]::CredFree($p) }',
       '  }',
       '}',
-      'if($blobs.Count -gt 0){$blobs|ConvertTo-Json -Compress}else{Write-Output "[]"}',
+      '$dedup=@{}',
+      'foreach($t in $tokens){ if($t.accessToken -and -not $dedup.ContainsKey($t.accessToken)){ $dedup[$t.accessToken]=$t } }',
+      'if($dedup.Count -gt 0){ [pscustomobject]@{ tokens=@($dedup.Values) } | ConvertTo-Json -Compress -Depth 4 }',
+      'else { Write-Output "{`"tokens`":[]}" }',
     ].join('\n');
     const raw = cp.execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps],
       { encoding: 'utf8', timeout: 8000 });
-    const parsed = JSON.parse(raw.trim() || '[]');
-    const blobList = Array.isArray(parsed) ? parsed : [parsed];
-    const tokens = blobList
-      .map(b => { try { return JSON.parse(b); } catch { return null; } })
-      .filter(t => t && t.token && t.token.access_token)
-      .map(t => ({ accessToken: t.token.access_token, expiry: t.token.expiry || null }));
+    const parsed = JSON.parse(raw.trim() || '{"tokens":[]}');
+    const tokens = (Array.isArray(parsed.tokens) ? parsed.tokens : [])
+      .filter(t => t && t.accessToken);
     if (tokens.length > 0) {
       fs.writeFileSync(tokenTempPath, JSON.stringify({ tokens, writtenAt: Date.now() }), { encoding: 'utf8', mode: 0o600 });
     }

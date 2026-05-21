@@ -21,7 +21,9 @@ test('renderHUD should contain branch and steps', () => {
     }
   };
 
-  const output = renderHUD(state, agyData, { display: { useNerdFonts: false } });
+  const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } });
+  assert.doesNotMatch(output, /^\n/);
+  assert.match(output, /^\x1b\[1m\x1b\[36mAGY-HUD/);
   assert.match(output, /main/);
   assert.match(output, /42/);
   assert.match(output, /15\.0k\/5\.0k/);
@@ -41,7 +43,7 @@ test('renderHUD should correctly layout quotas in two aligned columns', () => {
     { displayName: 'GPT-OSS 120B (Medium)', remainingFraction: 1.0 }
   ];
 
-  const output = renderHUD(state, agyData, { display: { useNerdFonts: false } }, quotaData);
+  const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData);
   // Verify vertical grid lines
   assert.match(output, /───/);
   // Verify simplified names
@@ -141,6 +143,9 @@ test('renderHUD supports theme custom colors', () => {
     context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 95 }
   };
   const config = {
+    display: {
+      unicode: true
+    },
     theme: {
       critical: 'blue'
     }
@@ -155,6 +160,9 @@ test('renderHUD supports custom warning and critical thresholds', () => {
     context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 30 }
   };
   const config = {
+    display: {
+      unicode: true
+    },
     thresholds: {
       warning: 0.2,
       critical: 0.4
