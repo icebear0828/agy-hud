@@ -128,6 +128,23 @@ jobs:
             exit 1
           fi
 
+      # Verify the CMD install path works on Windows. The main E2E above uses
+      # bash (Git Bash). This step tests that `powershell -ExecutionPolicy Bypass
+      # -File install.ps1` works from CMD — the pattern documented in README for
+      # Windows CMD users. Uses local file (not irm) since the branch isn't
+      # published to main yet.
+      - name: Test CMD install path (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          agy plugin uninstall agy-hud 2>nul
+          powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+          echo "" | "%USERPROFILE%\.gemini\antigravity-cli\agy-hud-runtime\runtime\bin\agy-hud.cmd"
+          if %ERRORLEVEL% neq 0 (
+            echo ::error::CMD install path failed
+            exit /b 1
+          )
+
       - name: Upload PTY artifact + report
         if: always()
         uses: actions/upload-artifact@v4
