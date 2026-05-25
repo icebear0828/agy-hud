@@ -43,7 +43,7 @@ async function main() {
         getSessionState(transcriptPath),
         loadConfig(),
         getQuota({ fast: true }).catch(() => []),
-        Promise.resolve().then(() => { try { return getCachedTier(); } catch { return null; } }),
+        getCachedTier(),
       ]);
 
       const hudOutput = renderHUD(state, agyData, config, quotaData, tierName);

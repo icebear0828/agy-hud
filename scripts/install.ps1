@@ -28,8 +28,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 
 # Step 1: stage the plugin. Uninstall first so stale files don't linger.
 Write-Host "==> Removing any existing agy-hud plugin install..."
-agy plugin uninstall agy-hud 2>$null
-# Ignore errors from uninstall (plugin may not exist)
+try { agy plugin uninstall agy-hud 2>$null } catch {}
 
 Write-Host "==> Installing plugin from $RepoUrl..."
 agy plugin install $RepoUrl
