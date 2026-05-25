@@ -360,6 +360,55 @@ function buildHeaders(accessToken) {
  * @param {string} accessToken
  * @returns {Promise<ModelQuota[]>}
  */
+/**
+ * Extract a human-readable tier name from a loadCodeAssist response.
+ * Priority: paidTier.name > first non-free allowedTier name > null
+ * @param {Object} data
+ * @returns {string|null}
+ */
+function extractTierName(data) {
+  if (data.paidTier && data.paidTier.name) return data.paidTier.name;
+  const nonFree = (data.allowedTiers || []).find(t => t.id !== 'free-tier');
+  if (nonFree && nonFree.name) return nonFree.name;
+  if (data.allowedTiers && data.allowedTiers.length > 0) return data.allowedTiers[0].name;
+  return null;
+}
+
+/**
+ * Fetch the user's subscription tier from loadCodeAssist.
+ * Returns a display string like "Google AI Pro" or null if unavailable.
+ * @param {string} accessToken
+ * @returns {Promise<string|null>}
+ */
+async function fetchTierFromCloud(accessToken) {
+  const { loadConfig } = require('./config.js');
+  const config = await loadConfig().catch(() => ({}));
+  const endpoints = process.env.AGY_HUD_ENDPOINTS
+    ? process.env.AGY_HUD_ENDPOINTS.split(',').map(s => s.trim()).filter(Boolean)
+    : (config.endpoints || DEFAULT_ENDPOINTS);
+
+  for (const endpoint of endpoints) {
+    try {
+      const r = await fetch(`${endpoint}/v1internal:loadCodeAssist`, {
+        method: 'POST',
+        headers: buildHeaders(accessToken),
+        body: JSON.stringify({
+          cloudaicompanionProject: '',
+          metadata: {
+            ideType: 'IDE_UNSPECIFIED',
+            platform: 'PLATFORM_UNSPECIFIED',
+            pluginType: 'GEMINI',
+          },
+        }),
+      });
+      if (!r.ok) continue;
+      const data = await r.json();
+      return extractTierName(data);
+    } catch { /* try next endpoint */ }
+  }
+  return null;
+}
+
 async function fetchQuotaFromCloud(accessToken) {
   let sawAuthFailure = false;
   const { loadConfig } = require('./config.js');
@@ -482,7 +531,7 @@ function readCache(tokenOrAccessToken) {
  * @param {ModelQuota[]} data
  * @param {string|Object} tokenOrAccessToken
  */
-function writeCache(data, tokenOrAccessToken) {
+function writeCache(data, tokenOrAccessToken, tier = null) {
   // Find earliest resetTime
   let earliest = Infinity;
   for (const m of data) {
@@ -501,11 +550,26 @@ function writeCache(data, tokenOrAccessToken) {
     lastRefreshed: Date.now(),
     cacheKeyHash,
     tokenHash,
+    tier: tier || null,
     data,
   };
   try {
     fs.writeFileSync(CACHE_PATH, JSON.stringify(payload));
   } catch { /* ignore write errors */ }
+}
+
+/**
+ * Read the cached tier name without requiring a token match.
+ * Tier is account-level, not token-level, so we skip token matching.
+ * @returns {string|null}
+ */
+function getCachedTier() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+    return raw.tier || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -612,9 +676,12 @@ if (process.argv.includes('--refresh')) {
     try {
       const tok = readToken();
       if (tok) {
-        const fresh = await fetchQuotaFromCloud(tok.accessToken);
+        const [fresh, tier] = await Promise.all([
+          fetchQuotaFromCloud(tok.accessToken),
+          fetchTierFromCloud(tok.accessToken),
+        ]);
         if (fresh.length > 0) {
-          writeCache(fresh, tok);
+          writeCache(fresh, tok, tier);
         }
       }
     } catch {}
@@ -624,7 +691,9 @@ if (process.argv.includes('--refresh')) {
 
 module.exports = {
   getQuota,
+  getCachedTier,
   fetchQuotaFromCloud,
+  fetchTierFromCloud,
   normalizeQuotaModels,
   isCachePayloadFresh,
   createUnavailableQuotaResult,

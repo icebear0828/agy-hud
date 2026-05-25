@@ -50,7 +50,7 @@ function simplifyModelName(name) {
  * @param {Array}  quotaData  — from quota.js getQuota()
  * @returns {string}
  */
-function renderHUD(state, agyData, config, quotaData) {
+function renderHUD(state, agyData, config, quotaData, tierName) {
   const useNerd = config?.display?.useNerdFonts === true;
   const unicode = typeof config?.display?.unicode === 'boolean'
     ? config.display.unicode
@@ -131,7 +131,7 @@ function renderHUD(state, agyData, config, quotaData) {
   const totalInput = usage.total_input_tokens || 0;
   const totalOutput = usage.total_output_tokens || 0;
   const ctxPercent = usage.used_percentage || 0;
-  const plan = agyData?.plan_tier || 'Free';
+  const plan = tierName || agyData?.plan_tier || 'Free';
   const tasks = agyData?.task_count || 0;
 
   // Extract model information

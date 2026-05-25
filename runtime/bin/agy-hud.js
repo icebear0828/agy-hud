@@ -5,7 +5,7 @@ const path = require('path');
 const { getSessionState, parseAgyInput } = require('../parser.js');
 const { renderHUD } = require('../renderer.js');
 const { loadConfig } = require('../config.js');
-const { getQuota } = require('../quota.js');
+const { getQuota, getCachedTier } = require('../quota.js');
 const { resolveAntigravityPath } = require('../paths.js');
 
 async function main() {
@@ -39,13 +39,14 @@ async function main() {
       ));
 
     try {
-      const [state, config, quotaData] = await Promise.all([
+      const [state, config, quotaData, tierName] = await Promise.all([
         getSessionState(transcriptPath),
         loadConfig(),
         getQuota({ fast: true }).catch(() => []),
+        Promise.resolve().then(() => { try { return getCachedTier(); } catch { return null; } }),
       ]);
 
-      const hudOutput = renderHUD(state, agyData, config, quotaData);
+      const hudOutput = renderHUD(state, agyData, config, quotaData, tierName);
       process.stdout.write(hudOutput);
     } catch (err) {
       // Write debug error to tmp directory
