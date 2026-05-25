@@ -43,7 +43,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/scr
 irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex
 ```
 
-> **Windows 注意**：必须用 PowerShell，不要用 CMD。`bash <(curl ...)` 是 bash 专有语法，PowerShell 和 CMD 都不支持。
+**Windows CMD**：
+```cmd
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex"
+```
 
 这条命令会：
 1. 干净地重装 plugin（`agy plugin uninstall` + `agy plugin install`）
@@ -90,6 +93,14 @@ agy plugin install https://github.com/icebear0828/agy-hud.git
 $t = Join-Path $env:TEMP "agy-hud-bootstrap.js"
 Invoke-WebRequest -Uri https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.js -OutFile $t -UseBasicParsing
 node $t; Remove-Item $t
+```
+
+**Windows CMD**：
+```cmd
+agy plugin install https://github.com/icebear0828/agy-hud.git
+powershell -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.js -OutFile %TEMP%\agy-hud-bootstrap.js -UseBasicParsing"
+node %TEMP%\agy-hud-bootstrap.js
+del %TEMP%\agy-hud-bootstrap.js
 ```
 
 ---
@@ -141,6 +152,11 @@ bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/uni
 **Windows PowerShell**：
 ```powershell
 irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.ps1 | iex
+```
+
+**Windows CMD**：
+```cmd
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.ps1 | iex"
 ```
 
 如果有 clone 仓库也可以直接跑：`bash uninstall.sh` / `.\uninstall.ps1`。

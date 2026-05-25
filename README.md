@@ -43,7 +43,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/scr
 irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex
 ```
 
-> **Windows note**: use PowerShell (not CMD). The `bash <(curl ...)` syntax is bash-only and will error in PowerShell or CMD.
+**Windows CMD**:
+```cmd
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex"
+```
 
 This:
 1. Cleanly re-installs the plugin (`agy plugin uninstall` + `agy plugin install`)
@@ -90,6 +93,14 @@ agy plugin install https://github.com/icebear0828/agy-hud.git
 $t = Join-Path $env:TEMP "agy-hud-bootstrap.js"
 Invoke-WebRequest -Uri https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.js -OutFile $t -UseBasicParsing
 node $t; Remove-Item $t
+```
+
+**Windows CMD**:
+```cmd
+agy plugin install https://github.com/icebear0828/agy-hud.git
+powershell -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.js -OutFile %TEMP%\agy-hud-bootstrap.js -UseBasicParsing"
+node %TEMP%\agy-hud-bootstrap.js
+del %TEMP%\agy-hud-bootstrap.js
 ```
 
 ---
@@ -141,6 +152,11 @@ bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/uni
 **Windows PowerShell**:
 ```powershell
 irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.ps1 | iex
+```
+
+**Windows CMD**:
+```cmd
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.ps1 | iex"
 ```
 
 Or, if you have the repo cloned: `bash uninstall.sh` / `.\uninstall.ps1`.
