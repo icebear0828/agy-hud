@@ -74,21 +74,33 @@ test('bootstrap refreshes quota cache during setup when a token is available', a
       },
     }));
 
-    globalThis.fetch = async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        models: {
-          'gemini-3-flash-agent': {
-            displayName: 'Gemini 3.5 Flash (High)',
-            quotaInfo: {
-              remainingFraction: 0.64,
-              resetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('loadCodeAssist')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            paidTier: { id: 'g1-pro-tier', name: 'Google AI Pro' },
+            allowedTiers: [{ id: 'standard-tier', name: 'Antigravity', isDefault: true }],
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: {
+            'gemini-3-flash-agent': {
+              displayName: 'Gemini 3.5 Flash (High)',
+              quotaInfo: {
+                remainingFraction: 0.64,
+                resetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+              },
             },
           },
-        },
-      }),
-    });
+        }),
+      };
+    };
 
     const { installRuntime } = require(path.join(projectRoot, 'scripts', 'bootstrap.js'));
     const result = await installRuntime({
@@ -104,7 +116,7 @@ test('bootstrap refreshes quota cache during setup when a token is available', a
       },
     });
 
-    assert.deepEqual(result.quotaRefresh, { status: 'refreshed', count: 1 });
+    assert.deepEqual(result.quotaRefresh, { status: 'refreshed', count: 1, tier: 'Google AI Pro' });
 
     const quotaModule = require(path.join(result.runtimeDir, 'runtime', 'quota.js'));
     const cached = quotaModule.readCache({

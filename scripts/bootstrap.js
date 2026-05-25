@@ -154,13 +154,16 @@ async function refreshQuotaCache(runtimeDir, options = {}) {
   try {
     const quotaPath = path.join(runtimeDir, 'runtime', 'quota.js');
     delete require.cache[require.resolve(quotaPath)];
-    const { readToken, fetchQuotaFromCloud, writeCache, isTokenExpired } = require(quotaPath);
+    const { readToken, fetchQuotaFromCloud, fetchTierFromCloud, writeCache, isTokenExpired } = require(quotaPath);
     const roots = getAntigravityRoots(options.env || process.env, options.homeDir || os.homedir());
     const token = readToken({ roots });
     if (!token) return { status: 'skipped', reason: 'not_logged_in' };
     if (isTokenExpired(token)) return { status: 'skipped', reason: 'expired_token' };
 
-    const quota = await fetchQuotaFromCloud(token.accessToken);
+    const [quota, tier] = await Promise.all([
+      fetchQuotaFromCloud(token.accessToken),
+      fetchTierFromCloud(token.accessToken).catch(() => null),
+    ]);
     if (!Array.isArray(quota) || quota.length === 0) {
       return {
         status: 'skipped',
@@ -168,8 +171,8 @@ async function refreshQuotaCache(runtimeDir, options = {}) {
       };
     }
 
-    writeCache(quota, token);
-    return { status: 'refreshed', count: quota.length };
+    writeCache(quota, token, tier);
+    return { status: 'refreshed', count: quota.length, tier: tier || null };
   } catch (error) {
     return { status: 'failed', reason: error.message };
   }

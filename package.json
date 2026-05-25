@@ -1,6 +1,6 @@
 {
   "name": "agy-hud",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Premium HUD for Antigravity CLI",
   "main": "runtime/bin/agy-hud.js",
   "files": [
@@ -34,8 +34,5 @@
     "terminal"
   ],
   "author": "",
-  "license": "MIT",
-  "dependencies": {
-    "chalk": "^5.6.2"
-  }
+  "license": "MIT"
 }
