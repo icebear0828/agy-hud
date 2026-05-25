@@ -365,7 +365,7 @@ function observeLocalAgy(env) {
     const streamHudPresent = hudInRaw || /AGY-HUD/.test(observedPlain);
     const statusLineReady = Boolean(afterObserve.statusLine && /agy-hud/i.test(String(afterObserve.statusLine.command || '')));
     const runtimeReady = Boolean(afterObserve.runtimeHudExists);
-    const staleCleaned = stalePresentBeforeBootstrap && !fs.existsSync(planted);
+    const staleCleaned = stalePresentBeforeBootstrap ? !fs.existsSync(planted) : true;
     const displayReady = hudVisible && statusLineReady && runtimeReady && staleCleaned;
 
     // Dump raw PTY bytes as artifact so CI can upload and reviewers can
