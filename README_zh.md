@@ -78,9 +78,18 @@ irm "$env:AGY_HUD_REPO_RAW/scripts/install.ps1" | iex
 
 如果你想分两步自己跑：
 
+**macOS / Linux**：
 ```bash
 agy plugin install https://github.com/icebear0828/agy-hud.git
 bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.sh)
+```
+
+**Windows PowerShell**：
+```powershell
+agy plugin install https://github.com/icebear0828/agy-hud.git
+$t = Join-Path $env:TEMP "agy-hud-bootstrap.js"
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.js -OutFile $t -UseBasicParsing
+node $t; Remove-Item $t
 ```
 
 ---
