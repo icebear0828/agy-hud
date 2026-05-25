@@ -33,9 +33,17 @@ AGY-HUD │ ⎇ main │ ❖ Plan: Pro │ ⚡ Steps: 42 │ ✓ Tasks: 3
 
 One command, in a normal shell (NOT inside an active `agy` session):
 
+**macOS / Linux**:
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.sh)
 ```
+
+**Windows PowerShell**:
+```powershell
+irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex
+```
+
+> **Windows note**: use PowerShell (not CMD). The `bash <(curl ...)` syntax is bash-only and will error in PowerShell or CMD.
 
 This:
 1. Cleanly re-installs the plugin (`agy plugin uninstall` + `agy plugin install`)
@@ -52,10 +60,18 @@ Open a fresh `agy` session — the HUD appears at the bottom of the terminal.
 
 ### For forks / mirrors
 
+**macOS / Linux**:
 ```bash
 AGY_HUD_REPO_RAW=https://raw.githubusercontent.com/your-fork/agy-hud/main \
 AGY_HUD_REPO_URL=https://github.com/your-fork/agy-hud.git \
   bash <(curl -fsSL "$AGY_HUD_REPO_RAW/scripts/install.sh")
+```
+
+**Windows PowerShell**:
+```powershell
+$env:AGY_HUD_REPO_RAW = 'https://raw.githubusercontent.com/your-fork/agy-hud/main'
+$env:AGY_HUD_REPO_URL = 'https://github.com/your-fork/agy-hud.git'
+irm "$env:AGY_HUD_REPO_RAW/scripts/install.ps1" | iex
 ```
 
 ### Manual / advanced
@@ -108,10 +124,17 @@ The most common failure mode is `statusline_runner.go: failure N/30` — that me
 
 ## Uninstall
 
+**macOS / Linux**:
 ```bash
-bash uninstall.sh        # macOS / Linux
-.\uninstall.ps1          # Windows PowerShell
+bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.sh)
 ```
+
+**Windows PowerShell**:
+```powershell
+irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.ps1 | iex
+```
+
+Or, if you have the repo cloned: `bash uninstall.sh` / `.\uninstall.ps1`.
 
 This:
 1. Clears `settings.json` `statusLine` (with `.bak` of the original)
@@ -159,7 +182,8 @@ agy-hud/
 │   ├── uninstall.js
 │   └── ...
 ├── scripts/
-│   ├── install.sh             # one-command installer (recommended)
+│   ├── install.sh             # one-command installer — macOS/Linux
+│   ├── install.ps1            # one-command installer — Windows PowerShell
 │   ├── bootstrap.sh           # repair-only entry (called by install.sh)
 │   ├── bootstrap.js           # actual download + configure logic
 │   ├── verify-display.js      # E2E: install + bootstrap + PTY-spawn agy + assert HUD
