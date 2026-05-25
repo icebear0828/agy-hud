@@ -7,7 +7,10 @@ import quotaModule from '../../runtime/quota.js';
 
 const {
   getQuota,
+  getCachedTier,
   fetchQuotaFromCloud,
+  fetchTierFromCloud,
+  extractTierName,
   normalizeQuotaModels,
   isCachePayloadFresh,
   createUnavailableQuotaResult,
@@ -534,5 +537,140 @@ test('fetchQuotaFromCloud respects AGY_HUD_ENDPOINTS and AGY_HUD_INTERESTING_MOD
     globalThis.fetch = originalFetch;
     delete process.env.AGY_HUD_ENDPOINTS;
     delete process.env.AGY_HUD_INTERESTING_MODELS;
+  }
+});
+
+// --- extractTierName ---
+
+test('extractTierName returns paidTier.name when present', () => {
+  assert.equal(
+    extractTierName({ paidTier: { name: 'Google AI Pro' }, allowedTiers: [{ id: 'free-tier', name: 'Free' }] }),
+    'Google AI Pro'
+  );
+});
+
+test('extractTierName returns first non-free allowedTier name when no paidTier', () => {
+  assert.equal(
+    extractTierName({ allowedTiers: [{ id: 'free-tier', name: 'Free' }, { id: 'pro-tier', name: 'Pro' }] }),
+    'Pro'
+  );
+});
+
+test('extractTierName falls back to free-tier name when only free-tier exists', () => {
+  assert.equal(
+    extractTierName({ allowedTiers: [{ id: 'free-tier', name: 'Free' }] }),
+    'Free'
+  );
+});
+
+test('extractTierName returns null for empty allowedTiers', () => {
+  assert.equal(extractTierName({ allowedTiers: [] }), null);
+});
+
+test('extractTierName returns null when no paidTier and no allowedTiers', () => {
+  assert.equal(extractTierName({}), null);
+});
+
+test('extractTierName prioritizes paidTier over allowedTiers', () => {
+  assert.equal(
+    extractTierName({
+      paidTier: { name: 'Enterprise' },
+      allowedTiers: [{ id: 'pro-tier', name: 'Pro' }],
+    }),
+    'Enterprise'
+  );
+});
+
+// --- getCachedTier ---
+
+const CACHE_PATH = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
+
+function withCacheFile(content, fn) {
+  const prev = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  try {
+    if (content === null) {
+      fs.rmSync(CACHE_PATH, { force: true });
+    } else {
+      fs.writeFileSync(CACHE_PATH, content);
+    }
+    return fn();
+  } finally {
+    if (prev === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, prev);
+  }
+}
+
+test('getCachedTier returns tier string from cache file', () => {
+  withCacheFile(JSON.stringify({ tier: 'Google AI Pro', data: [], version: 2 }), () => {
+    assert.equal(getCachedTier(), 'Google AI Pro');
+  });
+});
+
+test('getCachedTier returns null when cache has no tier field', () => {
+  withCacheFile(JSON.stringify({ data: [], version: 2 }), () => {
+    assert.equal(getCachedTier(), null);
+  });
+});
+
+test('getCachedTier returns null when cache file does not exist', () => {
+  withCacheFile(null, () => {
+    assert.equal(getCachedTier(), null);
+  });
+});
+
+test('getCachedTier returns null when cache file has invalid JSON', () => {
+  withCacheFile('not json {{{', () => {
+    assert.equal(getCachedTier(), null);
+  });
+});
+
+// --- fetchTierFromCloud ---
+
+test('fetchTierFromCloud returns tier name from paidTier in response', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('loadCodeAssist')) {
+      return { ok: true, json: async () => ({ paidTier: { name: 'Google AI Pro' } }) };
+    }
+    return { ok: false, status: 500 };
+  };
+  try {
+    const tier = await withEnv({ AGY_HUD_ENDPOINTS: 'https://mock.test' }, () =>
+      fetchTierFromCloud('test-token')
+    );
+    assert.equal(tier, 'Google AI Pro');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchTierFromCloud returns null when all endpoints fail', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('network down'); };
+  try {
+    const tier = await withEnv({ AGY_HUD_ENDPOINTS: 'https://mock.test' }, () =>
+      fetchTierFromCloud('test-token')
+    );
+    assert.equal(tier, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchTierFromCloud returns null when response ok but no tier data', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('loadCodeAssist')) {
+      return { ok: true, json: async () => ({}) };
+    }
+    return { ok: false, status: 500 };
+  };
+  try {
+    const tier = await withEnv({ AGY_HUD_ENDPOINTS: 'https://mock.test' }, () =>
+      fetchTierFromCloud('test-token')
+    );
+    assert.equal(tier, null);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

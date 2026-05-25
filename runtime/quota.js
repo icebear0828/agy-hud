@@ -694,6 +694,7 @@ module.exports = {
   getCachedTier,
   fetchQuotaFromCloud,
   fetchTierFromCloud,
+  extractTierName,
   normalizeQuotaModels,
   isCachePayloadFresh,
   createUnavailableQuotaResult,
