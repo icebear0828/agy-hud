@@ -208,10 +208,10 @@ test('readToken only accepts Antigravity token files from configured data roots'
       APPDATA: undefined,
       LOCALAPPDATA: undefined,
     }, () => {
-      assert.equal(readToken().accessToken, 'antigravity-token');
+      assert.equal(readToken({ platform: 'linux' }).accessToken, 'antigravity-token');
 
       fs.rmSync(antigravityTokenPath);
-      assert.equal(readToken(), null);
+      assert.equal(readToken({ platform: 'linux' }), null);
     });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -239,7 +239,7 @@ test('readToken falls back to ~/.gemini/oauth_creds.json when antigravity-cli to
       APPDATA: undefined,
       LOCALAPPDATA: undefined,
     }, () => {
-      const token = readToken();
+      const token = readToken({ platform: 'linux' });
       assert.equal(token.accessToken, 'oauth-creds-token');
       assert.equal(token.sourceFormat, 'oauth-creds');
       assert.equal(token.sourcePath.endsWith(path.join('.gemini', 'oauth_creds.json')), true);
@@ -386,6 +386,7 @@ test('getQuota reports expired tokens without spawning quota refresh', async () 
 
     const quota = await getQuota({
       fast: true,
+      platform: 'linux',
       tokenReader: () => ({
         accessToken: 'expired-token',
         expiry: '2000-01-01T00:00:00.000Z',

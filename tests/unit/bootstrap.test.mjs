@@ -26,7 +26,11 @@ test('bootstrap installs runtime files and writes statusLine from a source direc
       env: {
         ...process.env,
         HOME: home,
+        USERPROFILE: home,
         AGY_HUD_SETUP_SOURCE_DIR: projectRoot,
+        APPDATA: '',
+        LOCALAPPDATA: '',
+        XDG_DATA_HOME: '',
       },
       encoding: 'utf8',
     });
@@ -43,7 +47,7 @@ test('bootstrap installs runtime files and writes statusLine from a source direc
     assert.ok(fs.existsSync(path.join(runtime, 'runtime', 'statusline-installer.js')));
     assert.equal(settings.statusLine.type, 'command');
     assert.match(settings.statusLine.command, /agy-hud-runtime/);
-    assert.match(settings.statusLine.command, /runtime[/\\]bin[/\\]agy-hud\.js/);
+    assert.match(settings.statusLine.command, /runtime[/\\]bin[/\\]agy-hud\.(?:js|cmd)/);
     assert.match(result.stdout, /AGY-HUD bootstrap complete/);
     // Regression: command must point inside the isolated tmp HOME, not the real
     // user's antigravity-cli (configureStatusLine used to ignore homeDir).
@@ -119,6 +123,7 @@ test('bootstrap refreshes quota cache during setup when a token is available', a
         XDG_DATA_HOME: '',
         APPDATA: '',
         LOCALAPPDATA: '',
+        AGY_HUD_TEST_PLATFORM: 'linux',
       },
     });
 
@@ -171,6 +176,7 @@ test('bootstrap skips quota refresh when the available token is expired', async 
         XDG_DATA_HOME: '',
         APPDATA: '',
         LOCALAPPDATA: '',
+        AGY_HUD_TEST_PLATFORM: 'linux',
       },
     });
 

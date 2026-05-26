@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { getAntigravityRoots } = require('../runtime/paths.js');
+const { getAntigravityRoots, resolveSafeExecutable } = require('../runtime/paths.js');
 const {
   getTokenCandidates,
   parseTokenPayload,
@@ -16,10 +16,6 @@ function compactObject(value) {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined)
   );
-}
-
-function unique(values) {
-  return [...new Set(values.filter(Boolean))];
 }
 
 function pathExists(target) {
@@ -79,35 +75,27 @@ function summarizeTokenCandidate(candidatePath) {
   return summary;
 }
 
-function getPathExecutableCandidates(command) {
-  const pathEnv = process.env.PATH || '';
-  const dirs = pathEnv.split(path.delimiter).filter(Boolean);
-  const names = process.platform === 'win32'
-    ? unique([command, `${command}.exe`, `${command}.cmd`, `${command}.bat`])
-    : [command];
-  return dirs.flatMap(dir => names.map(name => path.join(dir, name)));
-}
+function getAgyCandidates() {
+  const candidates = [
+    process.env.AGY_BIN,
+    resolveSafeExecutable('agy'),
+  ].filter(Boolean);
 
-function getKnownAgyCandidates() {
-  if (process.platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA ||
-      path.join(os.homedir(), 'AppData', 'Local');
-    return [path.join(localAppData, 'agy', 'bin', 'agy.exe')];
+  if (candidates.length === 0) {
+    if (process.platform === 'win32') {
+      const localAppData = process.env.LOCALAPPDATA ||
+        path.join(os.homedir(), 'AppData', 'Local');
+      candidates.push(path.join(localAppData, 'agy', 'bin', 'agy.exe'));
+    } else {
+      candidates.push(
+        '/opt/homebrew/bin/agy',
+        '/usr/local/bin/agy',
+        '/usr/bin/agy'
+      );
+    }
   }
 
-  return [
-    '/opt/homebrew/bin/agy',
-    '/usr/local/bin/agy',
-    '/usr/bin/agy',
-  ];
-}
-
-function getAgyCandidates() {
-  return unique([
-    process.env.AGY_BIN,
-    ...getPathExecutableCandidates('agy'),
-    ...getKnownAgyCandidates(),
-  ]);
+  return [...new Set(candidates)];
 }
 
 function summarizeAgyCandidates(candidates) {
@@ -155,6 +143,9 @@ function resolveAgyInfo() {
   });
 }
 
+// Exported for testing/mocking
+const _testing = { getAgyCandidates };
+
 function sanitizeReadTokenResult(token) {
   if (!token) return { found: false };
 
@@ -170,10 +161,11 @@ function sanitizeReadTokenResult(token) {
 function buildAuthDiagnostic(options = {}) {
   const roots = getAntigravityRoots();
   const resolveAgy = options.resolveAgyInfo || resolveAgyInfo;
+  const platform = options.platform || process.platform;
 
   return {
     schemaVersion: 1,
-    platform: process.platform,
+    platform: platform,
     arch: process.arch,
     node: process.version,
     home: os.homedir(),
@@ -184,7 +176,7 @@ function buildAuthDiagnostic(options = {}) {
       exists: pathExists(root),
     })),
     tokenCandidates: getTokenCandidates(roots).map(summarizeTokenCandidate),
-    readToken: sanitizeReadTokenResult(readToken()),
+    readToken: sanitizeReadTokenResult(readToken({ platform })),
   };
 }
 

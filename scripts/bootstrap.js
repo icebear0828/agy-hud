@@ -216,8 +216,9 @@ async function refreshQuotaCache(runtimeDir, options = {}) {
     const quotaPath = path.join(runtimeDir, 'runtime', 'quota.js');
     delete require.cache[require.resolve(quotaPath)];
     const { readToken, fetchQuotaFromCloud, fetchTierFromCloud, writeCache, isTokenExpired } = require(quotaPath);
-    const roots = getAntigravityRoots(options.env || process.env, options.homeDir || os.homedir());
-    const token = readToken({ roots });
+    const env = options.env || process.env;
+    const roots = getAntigravityRoots(env, options.homeDir || os.homedir());
+    const token = readToken({ roots, platform: env.AGY_HUD_TEST_PLATFORM || process.platform });
     if (!token) return { status: 'skipped', reason: 'not_logged_in' };
     if (isTokenExpired(token)) return { status: 'skipped', reason: 'expired_token' };
 

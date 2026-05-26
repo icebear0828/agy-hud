@@ -79,7 +79,7 @@ async function getSessionState(transcriptPath) {
 
   const cwd = process.cwd();
   const normalizedCwd = cwd.replace(/\\/g, '/');
-  const projectKey = normalizedCwd.replace(/\//g, '-');
+  const projectKey = normalizedCwd.replace(/:/g, '').replace(/\//g, '-');
   const projectMemoryDir = path.join(os.homedir(), '.claude', 'projects', projectKey, 'memory');
 
   // Detect memory files (GEMINI.md first — this is an agy plugin)

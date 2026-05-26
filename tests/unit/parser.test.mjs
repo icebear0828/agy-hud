@@ -106,7 +106,7 @@ test('getSessionState reads project memory from HOME without counting memory doc
   const workspaceDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-home-workspace-')));
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-home-'));
   const normalizedCwd = workspaceDir.replace(/\\/g, '/');
-  const projectKey = normalizedCwd.replace(/\//g, '-');
+  const projectKey = normalizedCwd.replace(/:/g, '').replace(/\//g, '-');
   const projectMemoryDir = path.join(homeDir, '.claude', 'projects', projectKey, 'memory');
   const ruleDir = path.join(workspaceDir, '.claude', 'rules');
 

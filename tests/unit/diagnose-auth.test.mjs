@@ -47,7 +47,8 @@ test('auth diagnostic reuses token parsing without leaking token values', () => 
       LOCALAPPDATA: undefined,
     }, () => {
       const diagnostic = buildAuthDiagnostic({
-        resolveAgyInfo: () => ({ found: false, candidates: [] })
+        resolveAgyInfo: () => ({ found: false, candidates: [] }),
+        platform: 'linux',
       });
       const serialized = JSON.stringify(diagnostic);
 

@@ -17,7 +17,8 @@ function readText(relativePath) {
 }
 
 function extractConfigurationJson(readme, headingPattern) {
-  const match = readme.match(new RegExp(`${headingPattern}[\\s\\S]*?\`\`\`json\\n([\\s\\S]*?)\\n\`\`\``));
+  const normalizedReadme = readme.replace(/\r\n/g, '\n');
+  const match = normalizedReadme.match(new RegExp(`${headingPattern}[\\s\\S]*?\`\`\`json\\n([\\s\\S]*?)\\n\`\`\``));
   assert.ok(match, 'README must include a JSON configuration example');
   return JSON.parse(match[1]);
 }
