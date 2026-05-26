@@ -198,6 +198,17 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
     modelIcon = '[M] ';
   }
 
+  // Override via config.icons if present
+  if (config && config.icons) {
+    if (config.icons.branch !== undefined) branchIcon = config.icons.branch;
+    if (config.icons.plan !== undefined) planIcon = config.icons.plan;
+    if (config.icons.step !== undefined) stepIcon = config.icons.step;
+    if (config.icons.task !== undefined) taskIcon = config.icons.task;
+    if (config.icons.token !== undefined) tokenIcon = config.icons.token;
+    if (config.icons.ctx !== undefined) ctxIcon = config.icons.ctx;
+    if (config.icons.model !== undefined) modelIcon = config.icons.model;
+  }
+
   const branchName = `${blue}${branchIcon}${state.branch || 'unknown'}${reset}`;
 
   // Compact arrow glyphs for token breakdown

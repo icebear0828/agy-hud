@@ -9,6 +9,12 @@ const { getQuota, getCachedTier } = require('../quota.js');
 const { resolveAntigravityPath } = require('../paths.js');
 
 async function main() {
+  if (process.argv.includes('--config')) {
+    const { startWizard } = require('../config-wizard.js');
+    await startWizard();
+    return;
+  }
+
   const stdinData = [];
   let hasHandled = false;
 

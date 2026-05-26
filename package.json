@@ -6,6 +6,7 @@
   "files": [
     "runtime",
     "scripts",
+    "skills",
     "plugin.json",
     "README.md",
     "package.json"
@@ -22,7 +23,8 @@
     "test": "node --test tests/unit/*.test.mjs",
     "bootstrap": "node scripts/bootstrap.js",
     "verify": "node scripts/verify-display.js",
-    "diagnose": "node scripts/diagnose-auth.js"
+    "diagnose": "node scripts/diagnose-auth.js",
+    "config": "node runtime/bin/agy-hud.js --config"
   },
   "keywords": [
     "antigravity",

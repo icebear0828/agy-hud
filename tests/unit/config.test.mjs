@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadConfig } from '../../runtime/config.js';
+import { loadConfig, getLocalConfigPath, getGlobalConfigPath, saveConfig } from '../../runtime/config.js';
 
 function withCwd(cwd, fn) {
   const previous = process.cwd();
@@ -66,3 +66,22 @@ test('bundled plugin config does not hardcode display.unicode (lets encoding.js 
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('saveConfig writes config to local path', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-config-save-'));
+  try {
+    await withCwd(tmp, async () => {
+      const localPath = getLocalConfigPath();
+      assert.equal(localPath, path.join(tmp, 'agy-hud.config.json'));
+      
+      const newConfig = { theme: 'yellow', display: { useNerdFonts: true } };
+      await saveConfig(newConfig, false);
+      
+      const read = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+      assert.deepEqual(read, newConfig);
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+

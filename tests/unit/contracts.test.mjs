@@ -119,24 +119,19 @@ test('Windows uninstaller falls back when plugin uninstall fails', () => {
   assert.match(uninstallScript, /\$LASTEXITCODE\s+-ne\s+0/);
 });
 
-test('release package contract does not ship agent skills', () => {
+test('release package contract ships agent skills', () => {
   const packageJson = readJson('package.json');
   const releaseScript = readText('release.sh');
-  const workflow = readText('.github/workflows/e2e.yml');
-  const readme = readText('README.md');
-  const readmeZh = readText('README_zh.md');
 
   assert.deepEqual(packageJson.files, [
     'runtime',
     'scripts',
+    'skills',
     'plugin.json',
     'README.md',
     'package.json',
   ]);
-  assert.doesNotMatch(releaseScript, /skills/);
-  assert.doesNotMatch(workflow, /\bskills\b/);
-  assert.doesNotMatch(readme, /skills\//);
-  assert.doesNotMatch(readmeZh, /skills\//);
+  assert.match(releaseScript, /skills/);
 });
 
 test('package does not keep obsolete local HTTP server helpers', () => {
