@@ -18,10 +18,10 @@ test('detectHudRender accepts the current brandless unicode HUD', () => {
 });
 
 test('detectHudRender accepts the ASCII fallback HUD', () => {
-  // Matches current ASCII renderer format: [Tk] Tokens X (in: Y, out: Z)
+  // ASCII mode: tokenIcon '[Tk] ' triggers bare 'Tokens' prefix (no [Tk] in output)
   const hud = [
     '[B] fix/audit-findings | Unknown Model | Google AI Pro',
-    '[Tk] Tokens 0 (in: 0, out: 0) | [C] 0/0 [----------] 0% | [S] 0 [T] 0',
+    'Tokens 0 (in: 0, out: 0) | [C] 0/0 [----------] 0% | [S] 0 [T] 0',
     'Quota loading...',
   ].join('\n');
 
