@@ -14,20 +14,37 @@
 
 ## What it looks like
 
+agy-hud supports two display modes for quota tracking: **Table Mode** (default) and **Compact Mode** (provider-grouped mini bars).
+
+### Table Mode (Default)
+Useful for detailed side-by-side comparison of multiple models' quota.
+
 ```
-AGY-HUD │ ⎇ main │ ❖ Plan: Pro │ ⚡ Steps: 42 │ ✓ Tasks: 3
-⚿ Tokens: 138.4M (in: 6k, out: 202k, cache: 138.2M) │ ⛁ Ctx: 138.2M/1M [████░░░░░░] │ 🤖 Model: Claude Sonnet 4.6
-1 MEMORY.md │ 4 rules │ 1 MCPs │ 5 hooks
+AGY-HUD │ ⎇ docs/refactor-readme-bilingual │ ❖ Plan: Google AI Pro │ ⚡ Steps: 0 │ ✓ Tasks: 0
+⚿ Tokens: 83.7k (in: 4.8k, out: 13.9k, cache: 65.1k) │ ⛁ Ctx: 75.4k/1M [█░░░░░░░░░] │ 🤖 Model: Gemini 3.5 Flash(L)
+1 MEMORY.md │ 0 rules │ 0 MCPs │ 2 hooks
   ───────────────────────────────────────────────────────────────────────────
-  Gem 3.5 Flash(H) [████░░]  60% ~3h │ Gem 3.5 Flash(M) [████░░]  60% ~3h
-  Claude 4.6(Th)   [██████] 100% ~5h │ Claude Opus(Th)  [██████] 100% ~5h
-  GPT-OSS 120B     [██████] 100% ~5h │
+  Gemini 3.5 Flash(M) [█████░]  80% ~3h22m │ Gemini 3.5 Flash(H) [█████░]  80% ~3h22m
+  Gemini 3.5 Flash(L) [█████░]  80% ~3h22m │ Gemini 3.1 Pro(L)   [█████░]  80% ~3h22m
+  Gemini 3.1 Pro(H)   [█████░]  80% ~3h22m │ Claude 4.6(Th)      [██░░░░]  40% ~148h28m
+  Claude Opus(Th)     [██░░░░]  40% ~148h28m │ GPT-OSS 120B        [██░░░░]  40% ~148h28m
 ```
 
-- **Line 1**: branch, plan, step count, task count
-- **Line 2**: total tokens with input/output/cache breakdown, context window bar, current model
-- **Line 3**: workspace signals — memory/rules files, configured MCP servers, active git hooks
-- **Quota rows**: per-model account quota (matches `/usage` exactly) + reset countdown
+### Compact Mode
+Highly space-efficient. It embeds the current model's remaining quota directly on line 2, and displays provider-grouped mini progress bars.
+
+```
+AGY-HUD │ ⎇ main │ ❖ Plan: Pro │ ⚡ Steps: 42 │ ✓ Tasks: 3
+⚿ Tokens: 138.4M (in: 6k, out: 202k, cache: 138.2M) │ ⛁ Ctx: 138.2M/1M [████░░░░░░] │ 🤖 Model: Claude Sonnet 4.6 │ Quota: 100% ~5h
+1 MEMORY.md │ 4 rules │ 1 MCPs │ 5 hooks
+Anthropic: Son███ Opus█░░ │ Google: Flash███ Pro███ │ OpenAI: GPT█░░
+```
+
+### Layout breakdown
+- **Line 1**: Git branch, plan tier, step count, task count.
+- **Line 2**: Total tokens (with input/output/cache breakdown), context window progress bar, current model name, and current model's remaining quota (in Compact Mode).
+- **Line 3**: Workspace signals — project memory file, system rules, configured MCP servers, and active git hooks.
+- **Quota rows**: Account quota by model (matches `/usage` exactly) with reset countdowns.
 
 ---
 
@@ -50,16 +67,16 @@ irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.p
 powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex"
 ```
 
-This:
-1. Cleanly re-installs the plugin (`agy plugin uninstall` + `agy plugin install`)
-2. Downloads the HUD runtime to `~/.gemini/antigravity-cli/agy-hud-runtime/`
-3. Writes `statusLine.command` into `~/.gemini/antigravity-cli/settings.json`
+This installer:
+1. Cleanly re-installs the plugin (`agy plugin uninstall` + `agy plugin install`).
+2. Downloads the HUD runtime to `~/.gemini/antigravity-cli/agy-hud-runtime/`.
+3. Writes `statusLine.command` into `~/.gemini/antigravity-cli/settings.json`.
 
 Open a fresh `agy` session — the HUD appears at the bottom of the terminal.
 
 **Idempotent** — re-run the same command anytime to repair drift, upgrade, or clean stale files left by older versions.
 
-### Why not a single `agy plugin install`?
+### Why not a-single `agy plugin install`?
 
 `agy plugin install` only stages the **declarative** plugin marker (`plugin.json`); it never executes JavaScript and never touches `settings.json`. The HUD's statusLine command and renderer runtime are configured separately. `install.sh` does both pieces atomically.
 
@@ -81,7 +98,7 @@ irm "$env:AGY_HUD_REPO_RAW/scripts/install.ps1" | iex
 
 ### Manual / advanced
 
-If you prefer to run the two steps yourself:
+If you prefer to run the steps yourself:
 
 **macOS / Linux**:
 ```bash
@@ -164,10 +181,10 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 Or, if you have the repo cloned: `bash uninstall.sh` / `.\uninstall.ps1`.
 
 This:
-1. Clears `settings.json` `statusLine` (with `.bak` of the original)
-2. Removes `~/.gemini/antigravity-cli/agy-hud-runtime/`
-3. Removes the staged plugin (`agy plugin uninstall agy-hud`)
-4. Cleans tmp token mirror / quota cache files
+1. Clears `settings.json` `statusLine` (with `.bak` of the original).
+2. Removes `~/.gemini/antigravity-cli/agy-hud-runtime/`.
+3. Removes the staged plugin (`agy plugin uninstall agy-hud`).
+4. Cleans tmp token mirror / quota cache files.
 
 ---
 
@@ -177,21 +194,41 @@ Optional. Create `agy-hud.config.json` at the workspace root to override default
 
 ```json
 {
+  "theme": {
+    "primary": "green",
+    "secondary": "gray",
+    "warning": "yellow",
+    "critical": "red"
+  },
   "display": {
+    "quotaStyle": "table",
+    "showTokenBar": true,
+    "showBreadcrumbs": true,
+    "showGitBranch": true,
+    "breadcrumbCount": 3,
     "useNerdFonts": false,
-    "columnWidth": 37,
-    "quotaStyle": "table"
+    "columnWidth": 37
   },
   "thresholds": {
     "warning": 0.7,
     "critical": 0.9
   },
-  "theme": {
-    "warning": "yellow",
-    "critical": "red"
-  }
+  "language": "auto"
 }
 ```
+
+### Configuration fields
+- **`theme`**: Map of HUD component colors (`primary`, `secondary`, `warning`, `critical`). Supports standard terminal colors (`green`, `gray`, `yellow`, `red`, `blue`, `magenta`, `cyan`).
+- **`display`**:
+  - `quotaStyle`: `"table"` (default multi-column layout) or `"compact"` (inline quota + provider grouped mini bars).
+  - `showTokenBar`: Whether to display the token bar.
+  - `showBreadcrumbs`: Whether to display workspace file breadcrumbs.
+  - `showGitBranch`: Whether to display the current Git branch.
+  - `breadcrumbCount`: Number of files to show in breadcrumbs.
+  - `useNerdFonts`: Set to `true` to use premium developer icons from [Nerd Fonts](https://www.nerdfonts.com/).
+  - `columnWidth`: Max column width for the quota table layout (defaults to `37`).
+- **`thresholds`**: Threshold values (`0.0` to `1.0`) for displaying quota warning and critical usage colors.
+- **`language`**: Lang preference (`"auto"`, `"en"`, `"zh"`).
 
 ---
 
