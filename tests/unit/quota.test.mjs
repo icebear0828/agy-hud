@@ -731,11 +731,17 @@ test('resolveDeprecatedIds is a no-op when no deprecations exist', () => {
   assert.deepEqual(resolveDeprecatedIds(ids, { deprecatedModelIds: {} }), ids);
 });
 
-// --- Fix: token-null fallback to fresh cache ---
+// --- Fix: token-null fallback to fresh cache (with file-existence check) ---
 
-test('getQuota returns fresh cache when token is temporarily unreadable', async () => {
+test('getQuota returns fresh cache when token file exists but is temporarily unreadable', async () => {
   const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-token-transient-'));
   try {
+    const tokenDir = path.join(tmp, 'antigravity-cli');
+    fs.mkdirSync(tokenDir, { recursive: true });
+    // Token file exists but contains garbage (simulates mid-write)
+    fs.writeFileSync(path.join(tokenDir, 'antigravity-oauth-token'), '{corrupt');
+
     const cachedQuota = [{
       id: 'gemini-3-flash-agent',
       displayName: 'Gemini 3.5 Flash (High)',
@@ -748,18 +754,59 @@ test('getQuota returns fresh cache when token is temporarily unreadable', async 
       fast: true,
       tokenReader: () => null,
       backgroundRefresh: () => {},
+      roots: [tokenDir],
     });
 
     assert.deepEqual(quota, cachedQuota);
   } finally {
     if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
     else fs.writeFileSync(CACHE_PATH, previousCache);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('getQuota reports not_logged_in when genuinely logged out despite fresh cache', async () => {
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-no-token-'));
+  try {
+    // Empty root — no token file exists at all
+    const emptyDir = path.join(tmp, 'antigravity-cli');
+    fs.mkdirSync(emptyDir, { recursive: true });
+
+    const freshPayload = {
+      version: 2,
+      expiresAt: Date.now() + 60_000,
+      lastRefreshed: Date.now(),
+      cacheKeyHash: 'abc',
+      tokenHash: 'def',
+      data: [{ id: 'test', remainingFraction: 0.5, resetTime: null }],
+    };
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(freshPayload), { mode: 0o600 });
+
+    const quota = await getQuota({
+      fast: true,
+      tokenReader: () => null,
+      backgroundRefresh: () => {},
+      roots: [emptyDir],
+    });
+
+    assert.equal(quota.length, 0);
+    assert.equal(quota.unavailableReason, 'not_logged_in');
+  } finally {
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 
 test('getQuota reports not_logged_in when token is null and cache is expired', async () => {
   const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-expired-'));
   try {
+    const tokenDir = path.join(tmp, 'antigravity-cli');
+    fs.mkdirSync(tokenDir, { recursive: true });
+    fs.writeFileSync(path.join(tokenDir, 'antigravity-oauth-token'), '{corrupt');
+
     const expiredPayload = {
       version: 2,
       expiresAt: Date.now() - 1000,
@@ -774,6 +821,7 @@ test('getQuota reports not_logged_in when token is null and cache is expired', a
       fast: true,
       tokenReader: () => null,
       backgroundRefresh: () => {},
+      roots: [tokenDir],
     });
 
     assert.equal(quota.length, 0);
@@ -781,6 +829,7 @@ test('getQuota reports not_logged_in when token is null and cache is expired', a
   } finally {
     if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
     else fs.writeFileSync(CACHE_PATH, previousCache);
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 

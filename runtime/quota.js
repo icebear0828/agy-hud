@@ -635,6 +635,20 @@ function readCacheLastRefreshed() {
 }
 
 /**
+ * Check whether any token candidate file exists on disk (regardless of
+ * whether it parses). Distinguishes "file being rewritten" (transient)
+ * from "user genuinely logged out" (no file at all).
+ */
+function anyTokenFileExists(roots = getAntigravityRoots()) {
+  for (const candidate of getTokenCandidates(roots)) {
+    try {
+      if (fs.existsSync(candidate)) return true;
+    } catch { /* ignore */ }
+  }
+  return false;
+}
+
+/**
  * Read entire cache payload without requiring token match.
  * Fallback for transient token-read failures — if the user was recently
  * authenticated (fresh cache exists), return stale data rather than
@@ -698,11 +712,14 @@ async function getQuota(options = {}) {
     skipWindowsCredential: fast && platform === 'win32',
   });
   if (!tok) {
-    // Token file temporarily unreadable (e.g. agy refreshing OAuth) — return
-    // fresh cache if available rather than flashing "not logged in".
-    const fallback = readCacheFallback();
-    if (fallback && isCachePayloadFresh(fallback)) {
-      return fallback.data;
+    // Token file exists but failed to parse → transient (OAuth mid-refresh).
+    // Return fresh cache rather than flashing "not logged in".
+    // Token file absent → genuine logout, skip fallback.
+    if (anyTokenFileExists(roots)) {
+      const fallback = readCacheFallback();
+      if (fallback && isCachePayloadFresh(fallback)) {
+        return fallback.data;
+      }
     }
     refreshWindowsCredential();
     return createUnavailableQuotaResult('not_logged_in');
@@ -784,5 +801,6 @@ module.exports = {
   readCachePayload,
   readCacheLastRefreshed,
   readCacheFallback,
+  anyTokenFileExists,
   CACHE_PATH,
 };
