@@ -555,6 +555,8 @@ function readCache(tokenOrAccessToken) {
 
 /**
  * Write quota cache. Expires at the earliest resetTime among all buckets.
+ * Uses atomic write (tmp + rename) to prevent concurrent readers from seeing
+ * truncated/empty content — the main fix for statusline quota flicker.
  * @param {ModelQuota[]} data
  * @param {string|Object} tokenOrAccessToken
  */
@@ -581,8 +583,12 @@ function writeCache(data, tokenOrAccessToken, tier = null) {
     data,
   };
   try {
-    fs.writeFileSync(CACHE_PATH, JSON.stringify(payload), { mode: 0o600 });
-  } catch { /* ignore write errors */ }
+    const tmpPath = `${CACHE_PATH}.tmp.${process.pid}`;
+    fs.writeFileSync(tmpPath, JSON.stringify(payload), { mode: 0o600 });
+    fs.renameSync(tmpPath, CACHE_PATH);
+  } catch {
+    try { fs.unlinkSync(`${CACHE_PATH}.tmp.${process.pid}`); } catch {}
+  }
 }
 
 /**
@@ -608,6 +614,36 @@ function readCachePayload(tokenOrAccessToken) {
   try {
     const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
     if (!doesCachePayloadMatchToken(raw, tokenOrAccessToken)) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read lastRefreshed from cache file without requiring token match.
+ * Used to debounce background refreshes even when the caller's token
+ * doesn't match the cache (e.g. token rotation, new account).
+ */
+function readCacheLastRefreshed() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+    return raw.lastRefreshed || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Read entire cache payload without requiring token match.
+ * Fallback for transient token-read failures — if the user was recently
+ * authenticated (fresh cache exists), return stale data rather than
+ * flashing "not logged in".
+ */
+function readCacheFallback() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+    if (!raw || !Array.isArray(raw.data) || raw.version !== CACHE_VERSION) return null;
     return raw;
   } catch {
     return null;
@@ -662,6 +698,12 @@ async function getQuota(options = {}) {
     skipWindowsCredential: fast && platform === 'win32',
   });
   if (!tok) {
+    // Token file temporarily unreadable (e.g. agy refreshing OAuth) — return
+    // fresh cache if available rather than flashing "not logged in".
+    const fallback = readCacheFallback();
+    if (fallback && isCachePayloadFresh(fallback)) {
+      return fallback.data;
+    }
     refreshWindowsCredential();
     return createUnavailableQuotaResult('not_logged_in');
   }
@@ -675,7 +717,11 @@ async function getQuota(options = {}) {
   const needsRefresh = !tokenExpired && (!isFresh || didAccessTokenRotate(payload, tok));
 
   if (needsRefresh) {
-    const lastRefreshed = payload ? payload.lastRefreshed || 0 : 0;
+    // Read lastRefreshed from cache even when payload doesn't match our token,
+    // to prevent a storm of concurrent background refresh processes.
+    const lastRefreshed = payload
+      ? payload.lastRefreshed || 0
+      : readCacheLastRefreshed();
     // Debounce stale/no-cache refreshes, but refresh immediately when a fresh
     // cache belongs to the same source and only the access token has rotated.
     if (didAccessTokenRotate(payload, tok) || Date.now() - lastRefreshed > 30 * 1000) {
@@ -736,5 +782,7 @@ module.exports = {
   readCache,
   writeCache,
   readCachePayload,
+  readCacheLastRefreshed,
+  readCacheFallback,
   CACHE_PATH,
 };

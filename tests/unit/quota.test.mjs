@@ -300,8 +300,7 @@ test('readToken can read Windows Credential Manager when the fast path is not re
 });
 
 test('getQuota fast path returns cached quota without background refresh', async () => {
-  const cachePath = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
-  const previousCache = fs.existsSync(cachePath) ? fs.readFileSync(cachePath, 'utf8') : null;
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
   try {
     const cachedQuota = [{
       id: 'gemini-3-flash-agent',
@@ -321,14 +320,13 @@ test('getQuota fast path returns cached quota without background refresh', async
     assert.deepEqual(quota, cachedQuota);
     assert.equal(refreshes, 0);
   } finally {
-    if (previousCache === null) fs.rmSync(cachePath, { force: true });
-    else fs.writeFileSync(cachePath, previousCache);
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
   }
 });
 
 test('getQuota fast path preserves fresh cache when the access token rotates', async () => {
-  const cachePath = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
-  const previousCache = fs.existsSync(cachePath) ? fs.readFileSync(cachePath, 'utf8') : null;
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
   try {
     const tokenSourcePath = path.join('same-user', 'antigravity-oauth-token');
     const cachedQuota = [{
@@ -355,16 +353,15 @@ test('getQuota fast path preserves fresh cache when the access token rotates', a
     assert.deepEqual(quota, cachedQuota);
     assert.equal(refreshes, 1);
   } finally {
-    if (previousCache === null) fs.rmSync(cachePath, { force: true });
-    else fs.writeFileSync(cachePath, previousCache);
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
   }
 });
 
 test('getQuota fast path starts background refresh when no cache exists', async () => {
-  const cachePath = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
-  const previousCache = fs.existsSync(cachePath) ? fs.readFileSync(cachePath, 'utf8') : null;
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
   try {
-    fs.rmSync(cachePath, { force: true });
+    fs.rmSync(CACHE_PATH, { force: true });
     let refreshes = 0;
 
     const quota = await getQuota({
@@ -376,15 +373,15 @@ test('getQuota fast path starts background refresh when no cache exists', async 
     assert.deepEqual(quota, []);
     assert.equal(refreshes, 1);
   } finally {
-    if (previousCache !== null) fs.writeFileSync(cachePath, previousCache);
+    if (previousCache !== null) fs.writeFileSync(CACHE_PATH, previousCache);
+    else fs.rmSync(CACHE_PATH, { force: true });
   }
 });
 
 test('getQuota reports expired tokens without spawning quota refresh', async () => {
-  const cachePath = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
-  const previousCache = fs.existsSync(cachePath) ? fs.readFileSync(cachePath, 'utf8') : null;
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
   try {
-    fs.rmSync(cachePath, { force: true });
+    fs.rmSync(CACHE_PATH, { force: true });
     let refreshes = 0;
 
     const quota = await getQuota({
@@ -401,15 +398,15 @@ test('getQuota reports expired tokens without spawning quota refresh', async () 
     assert.equal(quota.unavailableReason, 'expired_token');
     assert.equal(refreshes, 0);
   } finally {
-    if (previousCache !== null) fs.writeFileSync(cachePath, previousCache);
+    if (previousCache !== null) fs.writeFileSync(CACHE_PATH, previousCache);
+    else fs.rmSync(CACHE_PATH, { force: true });
   }
 });
 
 test('getQuota fast path wakes Windows Credential Manager refresh when no token is visible', async () => {
-  const cachePath = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
-  const previousCache = fs.existsSync(cachePath) ? fs.readFileSync(cachePath, 'utf8') : null;
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
   try {
-    fs.rmSync(cachePath, { force: true });
+    fs.rmSync(CACHE_PATH, { force: true });
     let refreshes = 0;
 
     const quota = await getQuota({
@@ -424,15 +421,15 @@ test('getQuota fast path wakes Windows Credential Manager refresh when no token 
     assert.equal(quota.unavailableReason, 'not_logged_in');
     assert.equal(refreshes, 1);
   } finally {
-    if (previousCache !== null) fs.writeFileSync(cachePath, previousCache);
+    if (previousCache !== null) fs.writeFileSync(CACHE_PATH, previousCache);
+    else fs.rmSync(CACHE_PATH, { force: true });
   }
 });
 
 test('getQuota fast path wakes Windows Credential Manager refresh when file token is expired', async () => {
-  const cachePath = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
-  const previousCache = fs.existsSync(cachePath) ? fs.readFileSync(cachePath, 'utf8') : null;
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
   try {
-    fs.rmSync(cachePath, { force: true });
+    fs.rmSync(CACHE_PATH, { force: true });
     let refreshes = 0;
 
     const quota = await getQuota({
@@ -451,7 +448,8 @@ test('getQuota fast path wakes Windows Credential Manager refresh when file toke
     assert.equal(quota.unavailableReason, 'expired_token');
     assert.equal(refreshes, 1);
   } finally {
-    if (previousCache !== null) fs.writeFileSync(cachePath, previousCache);
+    if (previousCache !== null) fs.writeFileSync(CACHE_PATH, previousCache);
+    else fs.rmSync(CACHE_PATH, { force: true });
   }
 });
 
@@ -731,4 +729,131 @@ test('resolveDeprecatedIds is a no-op when no deprecations exist', () => {
   const ids = ['gemini-3-flash-agent', 'claude-sonnet-4-6'];
   assert.deepEqual(resolveDeprecatedIds(ids, {}), ids);
   assert.deepEqual(resolveDeprecatedIds(ids, { deprecatedModelIds: {} }), ids);
+});
+
+// --- Fix: token-null fallback to fresh cache ---
+
+test('getQuota returns fresh cache when token is temporarily unreadable', async () => {
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  try {
+    const cachedQuota = [{
+      id: 'gemini-3-flash-agent',
+      displayName: 'Gemini 3.5 Flash (High)',
+      remainingFraction: 0.55,
+      resetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    }];
+    quotaModule.writeCache(cachedQuota, 'some-token');
+
+    const quota = await getQuota({
+      fast: true,
+      tokenReader: () => null,
+      backgroundRefresh: () => {},
+    });
+
+    assert.deepEqual(quota, cachedQuota);
+  } finally {
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
+  }
+});
+
+test('getQuota reports not_logged_in when token is null and cache is expired', async () => {
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  try {
+    const expiredPayload = {
+      version: 2,
+      expiresAt: Date.now() - 1000,
+      lastRefreshed: Date.now() - 600_000,
+      cacheKeyHash: 'abc',
+      tokenHash: 'def',
+      data: [{ id: 'test', remainingFraction: 0.5 }],
+    };
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(expiredPayload), { mode: 0o600 });
+
+    const quota = await getQuota({
+      fast: true,
+      tokenReader: () => null,
+      backgroundRefresh: () => {},
+    });
+
+    assert.equal(quota.length, 0);
+    assert.equal(quota.unavailableReason, 'not_logged_in');
+  } finally {
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
+  }
+});
+
+// --- Fix: refresh dedup via readCacheLastRefreshed ---
+
+test('getQuota debounces background refresh using cache lastRefreshed even without token match', async () => {
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  try {
+    const recentPayload = {
+      version: 2,
+      expiresAt: Date.now() - 1000,
+      lastRefreshed: Date.now() - 5000,
+      cacheKeyHash: 'different-user',
+      tokenHash: 'different-token',
+      data: [{ id: 'test', remainingFraction: 0.5, resetTime: null }],
+    };
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(recentPayload), { mode: 0o600 });
+
+    let refreshes = 0;
+    await getQuota({
+      fast: true,
+      tokenReader: () => ({ accessToken: 'new-unmatched-token', sourcePath: '/new/path' }),
+      backgroundRefresh: () => { refreshes += 1; },
+    });
+
+    assert.equal(refreshes, 0, 'should not refresh when cache was recently refreshed');
+  } finally {
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
+  }
+});
+
+// --- Fix: readCacheLastRefreshed / readCacheFallback ---
+
+test('readCacheLastRefreshed returns timestamp from cache regardless of token', () => {
+  const { readCacheLastRefreshed } = quotaModule;
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  try {
+    const ts = Date.now() - 10000;
+    fs.writeFileSync(CACHE_PATH, JSON.stringify({ version: 2, lastRefreshed: ts, data: [] }), { mode: 0o600 });
+    assert.equal(readCacheLastRefreshed(), ts);
+
+    fs.rmSync(CACHE_PATH, { force: true });
+    assert.equal(readCacheLastRefreshed(), 0);
+  } finally {
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
+  }
+});
+
+test('readCacheFallback returns payload without token matching', () => {
+  const { readCacheFallback } = quotaModule;
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  try {
+    const payload = {
+      version: 2,
+      expiresAt: Date.now() + 60000,
+      lastRefreshed: Date.now(),
+      cacheKeyHash: 'any',
+      tokenHash: 'any',
+      data: [{ id: 'test', remainingFraction: 0.8 }],
+    };
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(payload), { mode: 0o600 });
+    const result = readCacheFallback();
+    assert.deepEqual(result.data, payload.data);
+
+    fs.writeFileSync(CACHE_PATH, 'corrupt{{{', { mode: 0o600 });
+    assert.equal(readCacheFallback(), null);
+
+    fs.rmSync(CACHE_PATH, { force: true });
+    assert.equal(readCacheFallback(), null);
+  } finally {
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
+  }
 });

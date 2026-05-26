@@ -377,3 +377,31 @@ test('renderHUD table mode is unchanged with quotaStyle unset', () => {
   assert.match(output, /Gemini 3\.5 Flas…/);
   assert.doesNotMatch(output, /Google:/);
 });
+
+test('renderHUD shows loading state when quotaData is empty array without reason', () => {
+  const state = { steps: 0, branch: 'main' };
+  const agyData = {
+    context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
+  };
+
+  const outputUnicode = renderHUD(state, agyData, { display: { unicode: true } }, []);
+  assert.match(outputUnicode, /Quota loading…/);
+  assert.match(outputUnicode, /─+/);
+
+  const outputAscii = renderHUD(state, agyData, { display: { unicode: false } }, []);
+  assert.match(outputAscii, /Quota loading\.\.\./);
+});
+
+test('renderHUD does not show loading when quotaData is null or undefined', () => {
+  const state = { steps: 0, branch: 'main' };
+  const agyData = {
+    context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
+  };
+
+  const output = renderHUD(state, agyData, { display: { unicode: true } }, null);
+  assert.doesNotMatch(output, /Quota loading/);
+  assert.doesNotMatch(output, /Quota unavailable/);
+
+  const output2 = renderHUD(state, agyData, { display: { unicode: true } });
+  assert.doesNotMatch(output2, /Quota loading/);
+});

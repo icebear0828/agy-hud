@@ -372,6 +372,9 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
     };
     const reason = reasonMessages[quotaData.unavailableReason] || quotaData.unavailableReason;
     quotaLines = `\n${dividerLine}\n  ${yellow}Quota unavailable:${reset} ${gray}${reason}${reset}\n${dividerLine}`;
+  } else if (quotaData && quotaData.length === 0) {
+    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
+    quotaLines = `\n${dividerLine}\n  ${gray}Quota loading${glyph.ellipsis}${reset}\n${dividerLine}`;
   }
 
   return `${line1}\n${line2}\n${line3}${quotaLines}\n`;
