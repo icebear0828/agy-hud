@@ -516,29 +516,30 @@ test('fetchQuotaFromCloud passes AbortSignal to fetch and handles timeout aborts
 
 test('readCache / writeCache reuses stable token source across access token refreshes', () => {
   const { readCache, writeCache } = quotaModule;
-  const mockData = [{ id: 'gemini-3.5-flash-low', displayName: 'Gemini 3.5 Flash (Medium)', remainingFraction: 0.5, resetTime: null }];
-
-  writeCache(mockData, {
-    accessToken: 'access-token-A',
-    sourcePath: path.join('stable', 'antigravity-oauth-token'),
-  });
-
-  const cachedA = readCache({
-    accessToken: 'access-token-B',
-    sourcePath: path.join('stable', 'antigravity-oauth-token'),
-  });
-  assert.deepEqual(cachedA, mockData);
-
-  const cachedB = readCache({
-    accessToken: 'access-token-B',
-    sourcePath: path.join('other', 'antigravity-oauth-token'),
-  });
-  assert.equal(cachedB, null);
-
-  const cachePath = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
   try {
-    fs.unlinkSync(cachePath);
-  } catch {}
+    const mockData = [{ id: 'gemini-3.5-flash-low', displayName: 'Gemini 3.5 Flash (Medium)', remainingFraction: 0.5, resetTime: null }];
+
+    writeCache(mockData, {
+      accessToken: 'access-token-A',
+      sourcePath: path.join('stable', 'antigravity-oauth-token'),
+    });
+
+    const cachedA = readCache({
+      accessToken: 'access-token-B',
+      sourcePath: path.join('stable', 'antigravity-oauth-token'),
+    });
+    assert.deepEqual(cachedA, mockData);
+
+    const cachedB = readCache({
+      accessToken: 'access-token-B',
+      sourcePath: path.join('other', 'antigravity-oauth-token'),
+    });
+    assert.equal(cachedB, null);
+  } finally {
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
+  }
 });
 
 test('writeCache limits fresh cache TTL to maximum 2 minutes even with long resetTime', () => {

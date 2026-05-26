@@ -70,7 +70,7 @@ test('bootstrap does not require git clone as its runtime source', () => {
 
 test('bootstrap refreshes quota cache during setup when a token is available', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-setup-quota-home-'));
-  const cachePath = path.join(os.tmpdir(), 'agy-hud-quota-cache.json');
+  const cachePath = CACHE_PATH;
   const previousCache = fs.existsSync(cachePath) ? fs.readFileSync(cachePath, 'utf8') : null;
   const previousFetch = globalThis.fetch;
   try {
