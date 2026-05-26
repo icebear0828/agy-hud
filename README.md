@@ -20,31 +20,32 @@ agy-hud supports two display modes for quota tracking: **Table Mode** (default) 
 Useful for detailed side-by-side comparison of multiple models' quota.
 
 ```
-AGY-HUD │ ⎇ docs/refactor-readme-bilingual │ ❖ Plan: Google AI Pro │ ⚡ Steps: 0 │ ✓ Tasks: 0
-⚿ Tokens: 83.7k (in: 4.8k, out: 13.9k, cache: 65.1k) │ ⛁ Ctx: 75.4k/1M [█░░░░░░░░░] │ 🤖 Model: Gemini 3.5 Flash(L)
-1 MEMORY.md │ 0 rules │ 0 MCPs │ 2 hooks
-  ───────────────────────────────────────────────────────────────────────────
+⎇ main │ Gemini 3.5 Flash(L) │ Google AI Pro
+⚿ 83.7k ↑4.8k ↓13.9k ⟳65.1k │ ⛁ 75.4k/1M [█░░░░░░░░░] 8% │ ⚡0 ✓0
+1 GEMINI.md │ 2 hooks
+  ─────────────────────────────────────────────────────────────────────────────────
   Gemini 3.5 Flash(M) [█████░]  80% ~3h22m │ Gemini 3.5 Flash(H) [█████░]  80% ~3h22m
   Gemini 3.5 Flash(L) [█████░]  80% ~3h22m │ Gemini 3.1 Pro(L)   [█████░]  80% ~3h22m
-  Gemini 3.1 Pro(H)   [█████░]  80% ~3h22m │ Claude 4.6(Th)      [██░░░░]  40% ~148h28m
-  Claude Opus(Th)     [██░░░░]  40% ~148h28m │ GPT-OSS 120B        [██░░░░]  40% ~148h28m
+  Gemini 3.1 Pro(H)   [█████░]  80% ~3h22m │ Sonnet 4.6(Th)      [██░░░░]  40% ~6d4h
+  Opus 4.6(Th)        [██░░░░]  40% ~6d4h  │ GPT-OSS 120B        [██░░░░]  40% ~6d4h
+  ─────────────────────────────────────────────────────────────────────────────────
 ```
 
 ### Compact Mode
 Highly space-efficient. It embeds the current model's remaining quota directly on line 2, and displays provider-grouped mini progress bars.
 
 ```
-AGY-HUD │ ⎇ main │ ❖ Plan: Pro │ ⚡ Steps: 42 │ ✓ Tasks: 3
-⚿ Tokens: 138.4M (in: 6k, out: 202k, cache: 138.2M) │ ⛁ Ctx: 138.2M/1M [████░░░░░░] │ 🤖 Model: Claude Sonnet 4.6 │ Quota: 100% ~5h
-1 MEMORY.md │ 4 rules │ 1 MCPs │ 5 hooks
+⎇ main │ Claude Sonnet 4.6 │ Pro
+⚿ 138.4M ↑6k ↓202k ⟳138.2M │ ⛁ 138.2M/1M [████░░░░░░] 40% │ ⚡42 ✓3 │ Quota: 100% ~5h
+1 GEMINI.md │ 4 rules │ 1 MCPs │ 5 hooks
 Anthropic: Son███ Opus█░░ │ Google: Flash███ Pro███ │ OpenAI: GPT█░░
 ```
 
 ### Layout breakdown
-- **Line 1**: Git branch, plan tier, step count, task count.
-- **Line 2**: Total tokens (with input/output/cache breakdown), context window progress bar, current model name, and current model's remaining quota (in Compact Mode).
-- **Line 3**: Workspace signals — project memory file, system rules, configured MCP servers, and active git hooks.
-- **Quota rows**: Account quota by model (matches `/usage` exactly) with reset countdowns.
+- **Line 1** (identity): Git branch, current model, plan tier.
+- **Line 2** (resources): Compact token breakdown (↑in ↓out ⟳cache — cache hidden when zero), context window bar with percentage, step/task counts. In Compact Mode, also shows current model quota.
+- **Line 3** (metadata): Project memory file, rules, MCPs, hooks — **only non-zero items shown**; entire line omitted when all are zero.
+- **Quota rows**: Account quota by model (matches `/usage` exactly) with reset countdowns. Durations ≥24h show days (e.g. `~6d4h`), ≥10h drop minutes (e.g. `~12h`).
 
 ---
 
@@ -132,7 +133,7 @@ After bootstrap:
 # settings.statusLine should point at the runtime
 cat ~/.gemini/antigravity-cli/settings.json | grep statusLine -A2
 
-# Direct HUD invocation should print the AGY-HUD banner
+# Direct HUD invocation should print the HUD status lines
 node ~/.gemini/antigravity-cli/agy-hud-runtime/runtime/bin/agy-hud.js
 ```
 
@@ -207,7 +208,7 @@ Optional. Create `agy-hud.config.json` at the workspace root to override default
     "showGitBranch": true,
     "breadcrumbCount": 3,
     "useNerdFonts": false,
-    "columnWidth": 37
+    "columnWidth": 40
   },
   "thresholds": {
     "warning": 0.7,
@@ -226,7 +227,7 @@ Optional. Create `agy-hud.config.json` at the workspace root to override default
   - `showGitBranch`: Whether to display the current Git branch.
   - `breadcrumbCount`: Number of files to show in breadcrumbs.
   - `useNerdFonts`: Set to `true` to use premium developer icons from [Nerd Fonts](https://www.nerdfonts.com/).
-  - `columnWidth`: Max column width for the quota table layout (defaults to `37`).
+  - `columnWidth`: Max column width for the quota table layout (defaults to `40`).
 - **`thresholds`**: Threshold values (`0.0` to `1.0`) for displaying quota warning and critical usage colors.
 - **`language`**: Lang preference (`"auto"`, `"en"`, `"zh"`).
 
@@ -283,7 +284,7 @@ This appends a guarded UTF-8 encoding block to your PowerShell profile and sets 
 
 Every push to `main` runs [.github/workflows/e2e.yml](./.github/workflows/e2e.yml) against a 3-OS matrix:
 
-| OS | install.sh runs | bootstrap writes settings.json | HUD command renders `AGY-HUD` |
+| OS | install.sh runs | bootstrap writes settings.json | HUD command renders status lines |
 |----|------|------|------|
 | ubuntu-latest | ✅ | ✅ | ✅ |
 | macos-latest  | ✅ | ✅ | ✅ |
@@ -296,7 +297,7 @@ Each run uploads (14-day retention):
 | `e2e-<os>` | all 3 | `e2e-report.json` (diagnostic: `ok`, `hudVisible`, `staleCleaned`, …) + `agy-hud-pty-*.log` (raw ANSI bytes — `cat` to see the HUD render with colors) |
 | `hud-screenshot-<os>` | ubuntu + macos | `hud-ascii-<os>.png` + `hud-unicode-<os>.png` rendered via [charm.sh `freeze`](https://github.com/charmbracelet/freeze). PNG visual evidence — download and open. |
 
-CI runs in **no-auth mode**: it asserts the standalone HUD command renders the banner. The full "HUD visible inside a live `agy` session with model-step trigger" check runs on dev machines (with real OAuth) via `release.sh`'s built-in E2E gate.
+CI runs in **no-auth mode**: it asserts the standalone HUD command renders the status lines. The full "HUD visible inside a live `agy` session with model-step trigger" check runs on dev machines (with real OAuth) via `release.sh`'s built-in E2E gate.
 
 ---
 

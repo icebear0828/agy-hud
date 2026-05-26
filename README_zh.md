@@ -20,31 +20,32 @@ agy-hud 支持两种额度（Quota）显示模式：**Table 模式**（默认）
 适合需要详细对比多个模型额度余量和重置时间的场景。
 
 ```
-AGY-HUD │ ⎇ docs/refactor-readme-bilingual │ ❖ Plan: Google AI Pro │ ⚡ Steps: 0 │ ✓ Tasks: 0
-⚿ Tokens: 83.7k (in: 4.8k, out: 13.9k, cache: 65.1k) │ ⛁ Ctx: 75.4k/1M [█░░░░░░░░░] │ 🤖 Model: Gemini 3.5 Flash(L)
-1 MEMORY.md │ 0 rules │ 0 MCPs │ 2 hooks
-  ───────────────────────────────────────────────────────────────────────────
+⎇ main │ Gemini 3.5 Flash(L) │ Google AI Pro
+⚿ 83.7k ↑4.8k ↓13.9k ⟳65.1k │ ⛁ 75.4k/1M [█░░░░░░░░░] 8% │ ⚡0 ✓0
+1 GEMINI.md │ 2 hooks
+  ─────────────────────────────────────────────────────────────────────────────────
   Gemini 3.5 Flash(M) [█████░]  80% ~3h22m │ Gemini 3.5 Flash(H) [█████░]  80% ~3h22m
   Gemini 3.5 Flash(L) [█████░]  80% ~3h22m │ Gemini 3.1 Pro(L)   [█████░]  80% ~3h22m
-  Gemini 3.1 Pro(H)   [█████░]  80% ~3h22m │ Claude 4.6(Th)      [██░░░░]  40% ~148h28m
-  Claude Opus(Th)     [██░░░░]  40% ~148h28m │ GPT-OSS 120B        [██░░░░]  40% ~148h28m
+  Gemini 3.1 Pro(H)   [█████░]  80% ~3h22m │ Sonnet 4.6(Th)      [██░░░░]  40% ~6d4h
+  Opus 4.6(Th)        [██░░░░]  40% ~6d4h  │ GPT-OSS 120B        [██░░░░]  40% ~6d4h
+  ─────────────────────────────────────────────────────────────────────────────────
 ```
 
 ### Compact（紧凑）模式
 极度节省空间，将当前正在使用的模型额度百分比及重置倒计时直接嵌入到第 2 行末尾，同时在下方展示按 Provider 分组的极简迷你条。
 
 ```
-AGY-HUD │ ⎇ main │ ❖ Plan: Pro │ ⚡ Steps: 42 │ ✓ Tasks: 3
-⚿ Tokens: 138.4M (in: 6k, out: 202k, cache: 138.2M) │ ⛁ Ctx: 138.2M/1M [████░░░░░░] │ 🤖 Model: Claude Sonnet 4.6 │ Quota: 100% ~5h
-1 MEMORY.md │ 4 rules │ 1 MCPs │ 5 hooks
+⎇ main │ Claude Sonnet 4.6 │ Pro
+⚿ 138.4M ↑6k ↓202k ⟳138.2M │ ⛁ 138.2M/1M [████░░░░░░] 40% │ ⚡42 ✓3 │ Quota: 100% ~5h
+1 GEMINI.md │ 4 rules │ 1 MCPs │ 5 hooks
 Anthropic: Son███ Opus█░░ │ Google: Flash███ Pro███ │ OpenAI: GPT█░░
 ```
 
 ### 布局结构说明
-- **第一行**：当前 Git 分支、套餐、已运行的步骤数（Steps）、当前任务数（Tasks）。
-- **第二行**：Token 用量（包括输入/输出/缓存细分数据）、上下文窗口使用率进度条、当前激活的模型名称（如开启 Compact 模式，还会在末尾包含当前模型的额度及重置时间）。
-- **第三行**：工作区状态——项目 Memory 文件、系统 Rules 规则数、已配置的 MCP 服务数、已激活的 Git Hooks 挂钩数。
-- **额度行**：账号内各模型的剩余额度比例（与 `/usage` 保持完全一致）及重置倒计时。
+- **第一行**（身份层）：Git 分支、当前模型、套餐 Tier。
+- **第二行**（资源层）：Token 用量（↑输入 ↓输出 ⟳缓存——缓存为零时自动隐藏）、上下文窗口进度条及百分比、步骤/任务计数。Compact 模式下额外显示当前模型额度。
+- **第三行**（元数据层）：项目 Memory 文件、Rules、MCP、Hooks——**只显示非零项**；全部为零时整行省略。
+- **额度行**：账号内各模型的剩余额度比例（与 `/usage` 保持完全一致）及重置倒计时。≥24h 自动使用天单位（如 `~6d4h`），≥10h 省略分钟（如 `~12h`）。
 
 ---
 
@@ -132,7 +133,7 @@ del %TEMP%\agy-hud-bootstrap.js
 # settings.statusLine 应当正确指向 runtime 路径
 cat ~/.gemini/antigravity-cli/settings.json | grep statusLine -A2
 
-# 直接手动运行 HUD 入口文件，应当能看到输出的 AGY-HUD 状态条
+# 直接手动运行 HUD 入口文件，应当能看到输出的状态行
 node ~/.gemini/antigravity-cli/agy-hud-runtime/runtime/bin/agy-hud.js
 ```
 
@@ -207,7 +208,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
     "showGitBranch": true,
     "breadcrumbCount": 3,
     "useNerdFonts": false,
-    "columnWidth": 37
+    "columnWidth": 40
   },
   "thresholds": {
     "warning": 0.7,
@@ -226,7 +227,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
   - `showGitBranch`：是否在 HUD 中显示当前 Git 分支。
   - `breadcrumbCount`：导航栏中最多展示的文件项数。
   - `useNerdFonts`：开启后（设为 `true`），将使用 [Nerd Fonts](https://www.nerdfonts.com/) 的高保真开发者图标，体验更佳。
-  - `columnWidth`：Table 模式下每一列的最大宽度（默认为 `37`）。
+  - `columnWidth`：Table 模式下每一列的最大宽度（默认为 `40`）。
 - **`thresholds`**：资源使用占比警戒线阈值（`0.0` 到 `1.0`），分别对应黄色的警告和红色的紧急状态。
 - **`language`**：语言偏好选项（`"auto"`，`"en"`，`"zh"`）。
 
@@ -283,7 +284,7 @@ irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/configure
 
 每次 push 到 `main` 分支都会触发 [.github/workflows/e2e.yml](./.github/workflows/e2e.yml) 执行三平台（Linux / macOS / Windows）CI 流程：
 
-| 操作系统 | install.sh 成功运行 | bootstrap 写入 settings.json | HUD 独立命令正确生成 `AGY-HUD` |
+| 操作系统 | install.sh 成功运行 | bootstrap 写入 settings.json | HUD 独立命令正确生成状态行 |
 |----|------|------|------|
 | ubuntu-latest | ✅ | ✅ | ✅ |
 | macos-latest  | ✅ | ✅ | ✅ |
@@ -296,7 +297,7 @@ irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/configure
 | `e2e-<os>` | 包含全部三个系统 | 诊断日志 `e2e-report.json` + `agy-hud-pty-*.log`（富 ANSI 颜色转义代码的文件，`cat` 它即可在本地模拟看到带颜色 HUD） |
 | `hud-screenshot-<os>` | ubuntu 与 macos | `hud-ascii-<os>.png` 和 `hud-unicode-<os>.png`，由 [charm.sh `freeze`](https://github.com/charmbracelet/freeze) 生成，您可以下载后直接用图片查看器预览渲染效果。 |
 
-CI 在**无授权模式（no-auth）**下运行，只断言命令执行生成的状态栏符合预期。带真实 Token 与账户数据的全套 E2E 集成验证通过 `release.sh` 在开发者本机进行。
+CI 在**无授权模式（no-auth）**下运行，只断言独立命令能正确输出状态行。带真实 Token 与账户数据的全套 E2E 集成验证通过 `release.sh` 在开发者本机进行。
 
 ---
 
