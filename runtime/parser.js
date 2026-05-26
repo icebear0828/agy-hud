@@ -82,9 +82,11 @@ async function getSessionState(transcriptPath) {
   const projectKey = normalizedCwd.replace(/\//g, '-');
   const projectMemoryDir = path.join(os.homedir(), '.claude', 'projects', projectKey, 'memory');
 
-  // Detect memory files
+  // Detect memory files (GEMINI.md first — this is an agy plugin)
   let memoryFile;
-  if (fs.existsSync(path.join(cwd, 'CLAUDE.md'))) {
+  if (fs.existsSync(path.join(cwd, 'GEMINI.md'))) {
+    memoryFile = 'GEMINI.md';
+  } else if (fs.existsSync(path.join(cwd, 'CLAUDE.md'))) {
     memoryFile = 'CLAUDE.md';
   } else if (fs.existsSync(path.join(cwd, 'MEMORY.md'))) {
     memoryFile = 'MEMORY.md';

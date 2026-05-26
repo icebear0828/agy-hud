@@ -139,8 +139,8 @@ test('renderHUD should correctly layout quotas in two aligned columns', () => {
   // Verify vertical grid lines
   assert.match(output, /───/);
   // Verify simplified names
-  assert.match(output, /Gemini 3.5 Flas…/);
-  assert.match(output, /Sonnet 4.6\(Th\)/);
+  assert.match(output, /Gemini 3\.5 Flash\(H\)/);
+  assert.match(output, /Sonnet 4\.6\(Th\)/);
   assert.match(output, /GPT-OSS 120B/);
   // Verify reset times
   assert.match(output, /~14m/);
@@ -374,7 +374,7 @@ test('renderHUD table mode is unchanged with quotaStyle unset', () => {
   const output = renderHUD(state, agyData, config, quotaData);
 
   assert.match(output, /─+/);
-  assert.match(output, /Gemini 3\.5 Flas…/);
+  assert.match(output, /Gemini 3\.5 Flash\(H\)/);
   assert.doesNotMatch(output, /Google:/);
 });
 

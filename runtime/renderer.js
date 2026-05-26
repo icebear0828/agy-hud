@@ -17,7 +17,7 @@ const DEFAULT_THRESHOLDS = {
   critical: 0.9,
 };
 
-const DEFAULT_COLUMN_WIDTH = 37;
+const DEFAULT_COLUMN_WIDTH = 40;
 const QUOTA_CHROME_WIDTH = 21;
 
 const TIER_ABBREVS = { Thinking: 'Th', High: 'H', Medium: 'M', Low: 'L' };
