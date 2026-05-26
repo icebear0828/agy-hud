@@ -148,8 +148,12 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
     modelIcon = '[M] ';
   }
 
-  const brand = `${bold}${cyan}AGY-HUD${reset}`;
   const branchName = `${blue}${branchIcon}${state.branch || 'unknown'}${reset}`;
+
+  // Compact arrow glyphs for token breakdown
+  const inArrow = unicode ? '↑' : '^';
+  const outArrow = unicode ? '↓' : 'v';
+  const cacheArrow = unicode ? '⟳' : 'c:';
 
   // Data extraction
   const usage = agyData?.context_window || {};
@@ -222,12 +226,11 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
 
   const divider = ` ${gray}${glyph.vbar}${reset} `;
 
+  // Layer 1: identity + status
   const line1 = [
-    brand,
     branchName,
-    `${magenta}${planIcon}Plan: ${plan}${reset}`,
-    `${yellow}${stepIcon}Steps: ${state.steps}${reset}`,
-    `${yellow}${taskIcon}Tasks: ${tasks}${reset}`
+    `${green}${modelName}${reset}`,
+    `${magenta}${plan}${reset}`,
   ].join(divider);
 
   const firstNumber = (...values) => values.find(value => Number.isFinite(value));
@@ -250,10 +253,13 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
   const outTokens = totalOutput;
   const tokenTotal = inTokens + outTokens + cacheRead;
 
-  const tokensStr = `${cyan}${tokenIcon}Tokens: ${formatTokens(tokenTotal)} (in: ${formatTokens(inTokens)}, out: ${formatTokens(outTokens)}, cache: ${formatTokens(cacheRead)})${reset}`;
-  const ctxStr = `${cyan}${ctxIcon}Ctx: ${formatTokens(totalInput)}/${formatTokens(usage.context_window_size || 0)}${reset}`;
+  // Compact token format: ⚿ 150k ↑127k ↓23k [⟳Xk]
+  let tokenParts = `${formatTokens(tokenTotal)} ${inArrow}${formatTokens(inTokens)} ${outArrow}${formatTokens(outTokens)}`;
+  if (cacheRead > 0) tokenParts += ` ${cacheArrow}${formatTokens(cacheRead)}`;
+  const tokensStr = `${cyan}${tokenIcon}${tokenParts}${reset}`;
   const ctxBar = createProgressBar(ctxPercent, cyan, 10, true);
-  const modelStr = `${green}${modelIcon}Model: ${modelName}${reset}`;
+  const ctxPctStr = `${Math.round(ctxPercent)}%`;
+  const ctxStr = `${cyan}${ctxIcon}${formatTokens(totalInput)}/${formatTokens(usage.context_window_size || 0)}${reset} ${ctxBar} ${cyan}${ctxPctStr}${reset}`;
 
   const quotaStyle = config?.display?.quotaStyle || 'table';
   const isCompact = quotaStyle === 'compact';
@@ -267,11 +273,9 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
     );
   }
 
-  const line2Parts = [
-    tokensStr,
-    `${ctxStr} ${ctxBar}`,
-    modelStr
-  ];
+  // Layer 2: resource consumption + compact steps/tasks
+  const stepsTasksStr = `${yellow}${stepIcon}${state.steps}${reset} ${yellow}${taskIcon}${tasks}${reset}`;
+  const line2Parts = [tokensStr, ctxStr, stepsTasksStr];
   if (isCompact && currentModelQuota) {
     const pct = Math.round(currentModelQuota.remainingFraction * 100);
     const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
@@ -284,17 +288,16 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
   }
   const line2 = line2Parts.join(divider);
 
-  const filesPart = state.memoryFile ? `1 ${state.memoryFile}` : '0 MEMORY.md';
-  const rulesPart = `${state.rulesCount || 0} rules`;
-  const mcpPart = `${state.mcpCount || 0} MCPs`;
-  const hooksPart = `${state.hooksCount || 0} hooks`;
-
-  const line3 = [
-    `${gray}${filesPart}${reset}`,
-    `${gray}${rulesPart}${reset}`,
-    `${gray}${mcpPart}${reset}`,
-    `${gray}${hooksPart}${reset}`
-  ].join(divider);
+  // Layer 3: project metadata (non-zero items only)
+  const metaParts = [];
+  if (state.memoryFile) metaParts.push(`${gray}1 ${state.memoryFile}${reset}`);
+  const rulesCount = state.rulesCount || 0;
+  const mcpCount = state.mcpCount || 0;
+  const hooksCount = state.hooksCount || 0;
+  if (rulesCount > 0) metaParts.push(`${gray}${rulesCount} rules${reset}`);
+  if (mcpCount > 0) metaParts.push(`${gray}${mcpCount} MCPs${reset}`);
+  if (hooksCount > 0) metaParts.push(`${gray}${hooksCount} hooks${reset}`);
+  const line3 = metaParts.length > 0 ? metaParts.join(divider) : '';
 
   // Helper to render one quota item inside a column of exactly columnWidth visible chars
   const renderQuotaColumn = (q, now) => {
@@ -381,7 +384,9 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
     quotaLines = `\n${dividerLine}\n  ${gray}Quota loading${glyph.ellipsis}${reset}\n${dividerLine}`;
   }
 
-  return `${line1}\n${line2}\n${line3}${quotaLines}\n`;
+  const lines = [line1, line2];
+  if (line3) lines.push(line3);
+  return lines.join('\n') + quotaLines + '\n';
 }
 
 module.exports = {

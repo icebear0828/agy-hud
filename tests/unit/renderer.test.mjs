@@ -23,13 +23,16 @@ test('renderHUD should contain branch and steps', () => {
 
   const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } });
   assert.doesNotMatch(output, /^\n/);
-  assert.match(output, /^\x1b\[1m\x1b\[36mAGY-HUD/);
-  assert.match(output, /main/);
-  assert.match(output, /42/);
-  assert.match(output, /Tokens: 20k \(in: 15k, out: 5k, cache: 0\)/);
+  // Layer 1: branch, model, plan (no AGY-HUD brand, no labels)
+  assert.match(output, /⎇ main/);
+  assert.match(output, /Gemini 3\.5 Flash\(H\)/);
   assert.match(output, /Google AI Pro/);
+  // Layer 2: compact tokens, context bar with %, steps/tasks
+  assert.match(output, /20k ↑15k ↓5k/);
+  assert.match(output, /13%/);
+  assert.match(output, /⚡ 42/);
+  assert.match(output, /✓ 3/);
   assert.match(output, /│/); // Unicode divider
-  assert.match(output, /Gemini 3.5 Flash\(H\)/); // Simplified model name
 });
 
 test('renderHUD should correctly render Memory files, rules, MCPs, and hooks count', () => {
@@ -51,6 +54,42 @@ test('renderHUD should correctly render Memory files, rules, MCPs, and hooks cou
   assert.match(output, /5 hooks/);
 });
 
+test('renderHUD hides zero-count metadata items', () => {
+  const state = {
+    steps: 1,
+    branch: 'main',
+    memoryFile: 'GEMINI.md',
+    rulesCount: 0,
+    mcpCount: 0,
+    hooksCount: 2
+  };
+  const agyData = {
+    context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 }
+  };
+  const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } });
+  assert.match(output, /1 GEMINI.md/);
+  assert.match(output, /2 hooks/);
+  assert.doesNotMatch(output, /0 rules/);
+  assert.doesNotMatch(output, /0 MCPs/);
+});
+
+test('renderHUD omits metadata line when all counts are zero', () => {
+  const state = {
+    steps: 0,
+    branch: 'main',
+    rulesCount: 0,
+    mcpCount: 0,
+    hooksCount: 0
+  };
+  const agyData = {
+    context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 }
+  };
+  const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } });
+  const lines = output.trim().split('\n');
+  // Only 2 lines (identity + resources), no metadata line
+  assert.equal(lines.length, 2);
+});
+
 test('renderHUD should correctly display detailed tokens with cache read statistics', () => {
   const state = { steps: 5, branch: 'main' };
   const agyData = {
@@ -69,11 +108,8 @@ test('renderHUD should correctly display detailed tokens with cache read statist
   };
 
   const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } });
-  // Total = 1890 + 358448 + 191019 = 551357 -> 551.4k
-  // in = 1890 -> 1890 (or 1.9k)
-  // out = 358448 -> 358.4k
-  // cache = 191019 -> 191k (exactly 191.019k)
-  assert.match(output, /Tokens: 551\.4k \(in: 1\.9k, out: 358\.4k, cache: 191k\)/);
+  // Compact format: total ↑in ↓out ⟳cache
+  assert.match(output, /551\.4k ↑1\.9k ↓358\.4k ⟳191k/);
 });
 
 test('renderHUD should fall back to transcript token usage for cache breakdown', () => {
@@ -97,7 +133,17 @@ test('renderHUD should fall back to transcript token usage for cache breakdown',
   };
 
   const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } });
-  assert.match(output, /Tokens: 138\.4M \(in: 6k, out: 202k, cache: 138\.2M\)/);
+  assert.match(output, /138\.4M ↑6k ↓202k ⟳138\.2M/);
+});
+
+test('renderHUD hides cache when zero', () => {
+  const state = { steps: 0, branch: 'main' };
+  const agyData = {
+    context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5, context_window_size: 1000000 }
+  };
+  const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } });
+  assert.match(output, /1\.2k ↑1k ↓200/);
+  assert.doesNotMatch(output, /⟳/);
 });
 
 test('renderHUD preserves model name suffixes when applying display aliases', () => {
@@ -217,9 +263,12 @@ test('renderHUD falls back to ASCII when config.display.unicode is false', () =>
   // Ascii substitutes should appear
   assert.match(output, /\|/);
   assert.match(output, /#/);
-  // Plain-text icons replace emoji/glyphs
+  // Plain-text icons
   assert.match(output, /\[B\]/);
-  assert.match(output, /\[P\]/);
+  assert.match(output, /\[Tk\]/);
+  // ASCII arrows
+  assert.match(output, /\^1k/);
+  assert.match(output, /v200/);
 });
 
 test('renderHUD should render Nerd Font icons when enabled', () => {
@@ -227,16 +276,16 @@ test('renderHUD should render Nerd Font icons when enabled', () => {
   const agyData = {
     context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 }
   };
-  
   const output = renderHUD(state, agyData, { display: { useNerdFonts: true } });
-  assert.match(output, //); // branchIcon
-  assert.match(output, /󰌢/); // planIcon
-  assert.match(output, //); // stepIcon
-  assert.match(output, //); // taskIcon
-  assert.match(output, /󰚩/); // tokenIcon
-  assert.match(output, /󱔐/); // ctxIcon
-  assert.match(output, /󰚗/); // modelIcon
+  assert.doesNotMatch(output, /AGY-HUD/);
+  assert.match(output, /main/);
+  assert.match(output, /0%/);
+  assert.doesNotMatch(output, /\[B\]/);
+  assert.doesNotMatch(output, /\[Tk\]/);
+  assert.doesNotMatch(output, /⎇/);
+  assert.doesNotMatch(output, /⚿/);
 });
+
 
 test('renderHUD supports theme custom colors', () => {
   const state = { steps: 5, branch: 'dev' };
