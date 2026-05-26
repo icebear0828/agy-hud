@@ -76,23 +76,21 @@ function summarizeTokenCandidate(candidatePath) {
 }
 
 function getAgyCandidates() {
-  const candidates = [
-    process.env.AGY_BIN,
-    resolveSafeExecutable('agy'),
-  ].filter(Boolean);
+  const candidates = [process.env.AGY_BIN].filter(Boolean);
 
-  if (candidates.length === 0) {
-    if (process.platform === 'win32') {
-      const localAppData = process.env.LOCALAPPDATA ||
-        path.join(os.homedir(), 'AppData', 'Local');
-      candidates.push(path.join(localAppData, 'agy', 'bin', 'agy.exe'));
-    } else {
-      candidates.push(
-        '/opt/homebrew/bin/agy',
-        '/usr/local/bin/agy',
-        '/usr/bin/agy'
-      );
-    }
+  const resolved = resolveSafeExecutable('agy');
+  if (resolved) candidates.push(resolved);
+
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA ||
+      path.join(os.homedir(), 'AppData', 'Local');
+    candidates.push(path.join(localAppData, 'agy', 'bin', 'agy.exe'));
+  } else {
+    candidates.push(
+      '/opt/homebrew/bin/agy',
+      '/usr/local/bin/agy',
+      '/usr/bin/agy'
+    );
   }
 
   return [...new Set(candidates)];
@@ -143,9 +141,6 @@ function resolveAgyInfo() {
   });
 }
 
-// Exported for testing/mocking
-const _testing = { getAgyCandidates };
-
 function sanitizeReadTokenResult(token) {
   if (!token) return { found: false };
 
@@ -165,7 +160,7 @@ function buildAuthDiagnostic(options = {}) {
 
   return {
     schemaVersion: 1,
-    platform: platform,
+    platform,
     arch: process.arch,
     node: process.version,
     home: os.homedir(),

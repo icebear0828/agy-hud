@@ -116,6 +116,7 @@ test('bootstrap refreshes quota cache during setup when a token is available', a
     const result = await installRuntime({
       homeDir: home,
       sourceDir: projectRoot,
+      platform: 'linux',
       env: {
         ...process.env,
         HOME: home,
@@ -123,7 +124,6 @@ test('bootstrap refreshes quota cache during setup when a token is available', a
         XDG_DATA_HOME: '',
         APPDATA: '',
         LOCALAPPDATA: '',
-        AGY_HUD_TEST_PLATFORM: 'linux',
       },
     });
 
@@ -169,6 +169,7 @@ test('bootstrap skips quota refresh when the available token is expired', async 
     const result = await installRuntime({
       homeDir: home,
       sourceDir: projectRoot,
+      platform: 'linux',
       env: {
         ...process.env,
         HOME: home,
@@ -176,7 +177,6 @@ test('bootstrap skips quota refresh when the available token is expired', async 
         XDG_DATA_HOME: '',
         APPDATA: '',
         LOCALAPPDATA: '',
-        AGY_HUD_TEST_PLATFORM: 'linux',
       },
     });
 
