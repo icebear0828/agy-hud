@@ -185,8 +185,12 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
    */
   const formatDuration = (secs) => {
     if (secs <= 0) return 'now';
-    const h = Math.floor(secs / 3600);
+    const d = Math.floor(secs / 86400);
+    const h = Math.floor((secs % 86400) / 3600);
     const m = Math.floor((secs % 3600) / 60);
+    if (d >= 10) return `${d}d`;
+    if (d > 0) return `${d}d${h}h`;
+    if (h >= 10) return `${h}h`;
     if (h > 0) return `${h}h${m}m`;
     return `${m}m`;
   };
