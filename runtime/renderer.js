@@ -322,7 +322,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     line1Parts.unshift(`${cyan}${username}${reset}`);
   }
   if (updateInfo && updateInfo.updateAvailable) {
-    const updateIcon = unicode ? '⟳' : 'c:';
+    const updateIcon = unicode ? '⟳' : '[UP]';
     line1Parts.push(`${yellow}${updateIcon} v${updateInfo.latestVersion}${reset}`);
   }
   const line1 = line1Parts.join(divider);

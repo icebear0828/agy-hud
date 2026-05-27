@@ -833,6 +833,6 @@ test('renderHUD should correctly render update notices', () => {
   assert.match(outputUnicode, /⟳ v1\.2\.3/);
 
   const outputAscii = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: false } }, [], 'tier', updateInfo);
-  assert.match(outputAscii, /c: v1\.2\.3/);
+  assert.match(outputAscii, /\[UP\] v1\.2\.3/);
 });
 
