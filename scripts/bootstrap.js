@@ -21,6 +21,7 @@ const RUNTIME_FILES = [
   'runtime/renderer.js',
   'runtime/statusline-installer.js',
   'runtime/uninstall.js',
+  'runtime/update-checker.js',
 ];
 
 function getAntigravityRoots(env = process.env, homeDir = os.homedir()) {
@@ -241,7 +242,15 @@ async function refreshQuotaCache(runtimeDir, options = {}) {
 }
 
 if (require.main === module) {
-  installRuntime()
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const run = async () => {
+    if (process.argv.includes('--delay-start')) {
+      await sleep(1000);
+    }
+    return installRuntime();
+  };
+
+  run()
     .then(result => {
       process.stdout.write(`AGY-HUD bootstrap complete\n`);
       process.stdout.write(`runtime: ${result.runtimeDir}\n`);

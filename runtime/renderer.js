@@ -133,9 +133,10 @@ function sanitizeTerminalText(value, maxLength = 120) {
  * @param {Object} agyData
  * @param {Object} config
  * @param {Array}  quotaData  — from quota.js getQuota()
+ * @param {Object} updateInfo — local cache info about updates
  * @returns {string}
  */
-function renderHUD(state, agyData, config, quotaData, tierName) {
+function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const display = config?.display || {};
   const useNerd = display.useNerdFonts === true;
   const unicode = typeof display.unicode === 'boolean'
@@ -319,6 +320,10 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
   const username = sanitizeTerminalText(display.username || state.username || '', 80);
   if (showUsername && username) {
     line1Parts.unshift(`${cyan}${username}${reset}`);
+  }
+  if (updateInfo && updateInfo.updateAvailable) {
+    const updateIcon = unicode ? '⟳' : 'c:';
+    line1Parts.push(`${yellow}${updateIcon} v${updateInfo.latestVersion}${reset}`);
   }
   const line1 = line1Parts.join(divider);
 

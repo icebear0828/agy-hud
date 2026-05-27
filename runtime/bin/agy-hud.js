@@ -2,13 +2,87 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const https = require('https');
+const { spawn } = require('child_process');
 const { getSessionState, parseAgyInput } = require('../parser.js');
 const { renderHUD } = require('../renderer.js');
 const { loadConfig } = require('../config.js');
 const { getQuota, getCachedTier } = require('../quota.js');
 const { resolveAntigravityPath } = require('../paths.js');
 
+async function handleSelfUpdate() {
+  console.log('Checking for latest installer...');
+  const bootstrapUrl = 'https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.js';
+  const tempPath = path.join(os.tmpdir(), `agy-hud-bootstrap-${Date.now()}.js`);
+
+  try {
+    await new Promise((resolve, reject) => {
+      https.get(bootstrapUrl, response => {
+        if (response.statusCode !== 200) {
+          return reject(new Error(`Failed to fetch bootstrap: ${response.statusCode}`));
+        }
+        const fileStream = fs.createWriteStream(tempPath);
+        response.pipe(fileStream);
+        fileStream.on('finish', () => {
+          fileStream.close();
+          resolve();
+        });
+        fileStream.on('error', reject);
+      }).on('error', reject);
+    });
+
+    console.log('Spawning update process in background...');
+    const child = spawn(process.execPath, [tempPath, '--delay-start'], {
+      detached: true,
+      stdio: 'inherit',
+      windowsHide: true,
+    });
+    child.unref();
+    console.log('Update initiated. Exiting current process...');
+    process.exit(0);
+  } catch (err) {
+    console.error(`Update failed: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+function maybeCheckUpdates() {
+  const updateStatusPath = resolveAntigravityPath('agy-hud-update-status.json');
+  let lastCheck = 0;
+  let status = {};
+  try {
+    if (fs.existsSync(updateStatusPath)) {
+      status = JSON.parse(fs.readFileSync(updateStatusPath, 'utf8'));
+      lastCheck = status.lastCheck || 0;
+    }
+  } catch {}
+
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  if (Date.now() - lastCheck > ONE_DAY_MS) {
+    status.lastCheck = Date.now();
+    try {
+      fs.writeFileSync(updateStatusPath, JSON.stringify(status, null, 2));
+    } catch {}
+
+    const checkerPath = path.join(__dirname, '..', 'update-checker.js');
+    if (fs.existsSync(checkerPath)) {
+      const checker = spawn(process.execPath, [checkerPath], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      checker.unref();
+    }
+  }
+}
+
 async function main() {
+  if (process.argv.includes('--update')) {
+    await handleSelfUpdate();
+    return;
+  }
+
   if (process.argv.includes('--config')) {
     const { startWizard } = require('../config-wizard.js');
     await startWizard();
@@ -45,6 +119,14 @@ async function main() {
       ));
 
     try {
+      const updateStatusPath = resolveAntigravityPath('agy-hud-update-status.json');
+      let updateInfo = null;
+      try {
+        if (fs.existsSync(updateStatusPath)) {
+          updateInfo = JSON.parse(fs.readFileSync(updateStatusPath, 'utf8'));
+        }
+      } catch {}
+
       const [state, config, quotaData, tierName] = await Promise.all([
         getSessionState(transcriptPath),
         loadConfig(),
@@ -52,8 +134,11 @@ async function main() {
         getCachedTier(),
       ]);
 
-      const hudOutput = renderHUD(state, agyData, config, quotaData, tierName);
+      const hudOutput = renderHUD(state, agyData, config, quotaData, tierName, updateInfo);
       process.stdout.write(hudOutput);
+
+      // Trigger background check for updates after writing output
+      maybeCheckUpdates();
     } catch (err) {
       // Write debug error to Antigravity directory
       try {
@@ -69,3 +154,4 @@ async function main() {
 }
 
 main();
+

@@ -818,3 +818,21 @@ test('renderHUD should correctly display cache for Claude models on cache read',
   assert.match(output, /out: 15\.9k/);
   assert.match(output, /cache: 92\.3k/);
 });
+
+test('renderHUD should correctly render update notices', () => {
+  const state = { steps: 1, branch: 'main' };
+  const agyData = {
+    context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 }
+  };
+  const updateInfo = {
+    updateAvailable: true,
+    latestVersion: '1.2.3'
+  };
+
+  const outputUnicode = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, [], 'tier', updateInfo);
+  assert.match(outputUnicode, /⟳ v1\.2\.3/);
+
+  const outputAscii = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: false } }, [], 'tier', updateInfo);
+  assert.match(outputAscii, /c: v1\.2\.3/);
+});
+
