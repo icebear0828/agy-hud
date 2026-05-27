@@ -247,19 +247,20 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
   const modelName = sanitizeTerminalText(simplifyModelName(rawModelName), 80);
 
   const formatTokens = (n) => {
-    if (n >= 1000000) {
+    if (n >= 999950) {
       const val = n / 1000000;
       let str = val.toFixed(1);
       if (str.endsWith('.0')) str = str.slice(0, -2);
       return str + 'M';
     }
-    if (n >= 1000) {
+    if (n >= 999.5) {
       const val = n / 1000;
       let str = val.toFixed(1);
       if (str.endsWith('.0')) str = str.slice(0, -2);
+      if (str === '1000') return '1M';
       return str + 'k';
     }
-    return n.toString();
+    return Math.round(n).toString();
   };
 
   /**

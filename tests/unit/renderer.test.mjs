@@ -146,6 +146,26 @@ test('renderHUD hides cache when zero', () => {
   assert.doesNotMatch(output, /⟳/);
 });
 
+test('renderHUD formatTokens correctly rounds boundary values to M/k without 1000k spikes', () => {
+  const output1 = renderHUD(
+    { steps: 1, branch: 'main' },
+    {
+      context_window: { total_input_tokens: 999950, total_output_tokens: 50, used_percentage: 0 }
+    },
+    { display: { useNerdFonts: false, unicode: true } }
+  );
+  assert.match(output1, /Tokens 1M /);
+
+  const output2 = renderHUD(
+    { steps: 1, branch: 'main' },
+    {
+      context_window: { total_input_tokens: 999900, total_output_tokens: 0, used_percentage: 0 }
+    },
+    { display: { useNerdFonts: false, unicode: true } }
+  );
+  assert.match(output2, /in: 999\.9k/);
+});
+
 test('renderHUD preserves model name suffixes when applying display aliases', () => {
   const output = renderHUD(
     { steps: 1, branch: 'main' },
