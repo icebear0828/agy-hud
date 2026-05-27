@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { renderHUD, abbreviateDisplayName, compactModelName } from '../../runtime/renderer.js';
 
-test('renderHUD should contain branch and steps', () => {
+test('renderHUD should contain branch', () => {
   const state = {
     steps: 42,
     branch: 'main'
@@ -27,11 +27,9 @@ test('renderHUD should contain branch and steps', () => {
   assert.match(output, /⎇ main/);
   assert.match(output, /Gemini 3\.5 Flash\(H\)/);
   assert.match(output, /Google AI Pro/);
-  // Layer 2: compact tokens, context bar with %, steps/tasks
+  // Layer 2: compact tokens, context bar with %
   assert.match(output, /Tokens 20k .*?\(.*?in: 15k, out: 5k.*?\)/);
   assert.match(output, /13%/);
-  assert.match(output, /⚡ 42/);
-  assert.match(output, /✓ 3/);
   assert.match(output, /│/); // Unicode divider
 });
 

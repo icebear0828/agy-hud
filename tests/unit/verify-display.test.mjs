@@ -9,7 +9,7 @@ test('detectHudRender accepts the current brandless unicode HUD', () => {
   // Matches current renderer format: ⚿ Tokens X (in: Y, out: Z)
   const hud = [
     '\x1b[34m⎇ HEAD\x1b[0m \x1b[90m│\x1b[0m \x1b[32mUnknown Model\x1b[0m \x1b[90m│\x1b[0m \x1b[35mFree\x1b[0m',
-    '\x1b[36m⚿ Tokens 0 \x1b[90m(\x1b[0min: 0, out: 0\x1b[90m)\x1b[0m \x1b[90m│\x1b[0m \x1b[36m⛁ 0/0\x1b[0m \x1b[36m[░░░░░░░░░░]\x1b[0m \x1b[36m0%\x1b[0m \x1b[90m│\x1b[0m \x1b[33m⚡ 0\x1b[0m \x1b[33m✓ 0\x1b[0m',
+    '\x1b[36m⚿ Tokens 0 \x1b[90m(\x1b[0min: 0, out: 0\x1b[90m)\x1b[0m \x1b[90m│\x1b[0m \x1b[36m⛁ 0/0\x1b[0m \x1b[36m[░░░░░░░░░░]\x1b[0m \x1b[36m0%\x1b[0m',
     '  Quota unavailable: not logged into Antigravity',
   ].join('\n');
 
@@ -21,7 +21,7 @@ test('detectHudRender accepts the ASCII fallback HUD', () => {
   // ASCII mode: tokenIcon '[Tk] ' triggers bare 'Tokens' prefix (no [Tk] in output)
   const hud = [
     '[B] fix/audit-findings | Unknown Model | Google AI Pro',
-    'Tokens 0 (in: 0, out: 0) | [C] 0/0 [----------] 0% | [S] 0 [T] 0',
+    'Tokens 0 (in: 0, out: 0) | [C] 0/0 [----------] 0%',
     'Quota loading...',
   ].join('\n');
 

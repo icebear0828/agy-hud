@@ -27,10 +27,9 @@ function detectHudRender(...values) {
       const plain = stripAnsi(value);
       const hasBranch = /(?:⎇||\[B\])\s*\S+/.test(plain);
       const hasContext = /(?:⛁|󱔐|\[C\])\s*\d+(?:\.\d+)?[kM]?\/\d+(?:\.\d+)?[kM]?/i.test(plain);
-      const hasSteps = /(?:⚡||\[S\])\s*\d+/.test(plain);
       const hasTokenBreakdown = /(?:⚿|󰚩|\[Tk\]|Tokens)\s*(?:Tokens\s+)?\d+(?:\.\d+)?[kM]?\s*(?:↑|\^|\(in:)/i.test(plain);
 
-      return hasBranch && hasContext && hasSteps && hasTokenBreakdown;
+      return hasBranch && hasContext && hasTokenBreakdown;
     });
 }
 

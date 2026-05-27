@@ -379,11 +379,10 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
     );
   }
 
-  // Layer 2: resource consumption + compact steps/tasks
-  const stepsTasksStr = `${yellow}${stepIcon}${state.steps}${reset} ${yellow}${taskIcon}${tasks}${reset}`;
+  // Layer 2: resource consumption
   const line2Parts = [];
   if (showTokenBar) line2Parts.push(tokensStr);
-  line2Parts.push(ctxStr, stepsTasksStr);
+  line2Parts.push(ctxStr);
   if (isCompact && currentModelQuota) {
     const pct = Math.round(currentModelQuota.remainingFraction * 100);
     const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
