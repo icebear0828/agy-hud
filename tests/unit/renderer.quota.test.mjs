@@ -67,7 +67,10 @@ describe('renderer / quota lines', () => {
       assert.doesNotMatch(output, /Google:/);
     });
 
-    test('renders two rows per model when both quota windows are observed', () => {
+    test('renders one row per model showing the binding-window quota only', () => {
+      // Data layer keeps per-window observations (q.windows.{fiveHour,weekly}),
+      // but the renderer surfaces just the top-level remainingFraction /
+      // resetTime that the API currently reports as binding.
       const state = { steps: 0, branch: 'main' };
       const agyData = { context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 } };
       const now = Date.now();
@@ -85,30 +88,13 @@ describe('renderer / quota lines', () => {
       const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
       const output = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
 
-      assert.match(output, /Gemini 3\.5 Flash\(H\)/);
-      assert.match(output, /5h\s+\[[█░]+\]\s+60%\s+~4h/);
-      assert.match(output, /Wk\s+\[[█░]+\]\s+20%/);
-    });
-
-    test('shows "no data yet" placeholder for a window that has never been observed', () => {
-      const state = { steps: 0, branch: 'main' };
-      const agyData = { context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 } };
-      const now = Date.now();
-      const quotaData = [{
-        id: 'claude-sonnet-4-6',
-        displayName: 'Claude Sonnet 4.6 (Thinking)',
-        modelProvider: 'MODEL_PROVIDER_ANTHROPIC',
-        remainingFraction: 0.1,
-        resetTime: new Date(now + 100 * 3600 * 1000).toISOString(),
-        windows: {
-          weekly: { remainingFraction: 0.1, resetTime: new Date(now + 100 * 3600 * 1000).toISOString(), observedAt: now },
-        },
-      }];
-      const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
-      const output = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
-
-      assert.match(output, /5h\s+─ no data yet/);
-      assert.match(output, /Wk\s+\[[█░]+\]\s+10%/);
+      const modelLine = output.split('\n').find(l => l.includes('Gemini 3.5 Flash(H)'));
+      assert.ok(modelLine, 'model row exists');
+      // 20% top-level (weekly is binding), not 60% fiveHour.
+      assert.match(modelLine, /\[[█░]+\]\s+20%/);
+      // No 5h / Wk labels on the row — single-line layout.
+      assert.doesNotMatch(modelLine, /5h\s/);
+      assert.doesNotMatch(modelLine, /Wk\s/);
     });
 
     test('uses warning/critical colors for both percent text and progress bar', () => {
@@ -141,9 +127,9 @@ describe('renderer / quota lines', () => {
       const config = { display: { quotaStyle: 'compact', unicode: false } };
       const output = renderHUD(state, agyData, config, quotaData);
 
-      // resetTime ~4d ahead → classified as the weekly window, so the label
-      // gets the "W" suffix.
-      assert.match(output, /Quota\[W\]: 20%/);
+      // Single 'Quota:' label, no window suffix — renderer displays only
+      // the top-level binding quota.
+      assert.match(output, /Quota: 20%/);
       assert.match(output, /Anthropic:/);
       assert.match(output, /Google:/);
       assert.doesNotMatch(output, /─{10}/);
@@ -187,31 +173,6 @@ describe('renderer / quota lines', () => {
       assert.match(output, /OpenAI:.*GPT/);
     });
 
-    test('picks the more critical window per current model', () => {
-      const state = { steps: 0, branch: 'main' };
-      const now = Date.now();
-      const agyData = {
-        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
-        model: { display_name: 'Gemini 3.5 Flash (High)' },
-      };
-      const quotaData = [{
-        id: 'gemini-3-flash-agent',
-        displayName: 'Gemini 3.5 Flash (High)',
-        modelProvider: 'MODEL_PROVIDER_GOOGLE',
-        remainingFraction: 0.2,
-        resetTime: new Date(now + 109 * 3600 * 1000).toISOString(),
-        windows: {
-          fiveHour: { remainingFraction: 0.95, resetTime: new Date(now + 4 * 3600 * 1000).toISOString(), observedAt: now },
-          weekly:   { remainingFraction: 0.2,  resetTime: new Date(now + 109 * 3600 * 1000).toISOString(), observedAt: now },
-        },
-      }];
-      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
-
-      // Weekly is more critical (20% < 95%), so the label uses [W] and the
-      // percent reflects the weekly window, not the 5-hour one.
-      assert.match(output, /Quota\[W\]: 20%/);
-      assert.doesNotMatch(output, /Quota\[5h\]/);
-    });
   });
 
   describe('diagnostics & loading states', () => {

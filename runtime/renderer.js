@@ -1,7 +1,6 @@
 'use strict';
 
 const { supportsUnicode } = require('./encoding.js');
-const { classifyQuotaWindow, pickCriticalWindow } = require('./quota.js');
 const {
   ANSI_COLORS,
   DEFAULT_THRESHOLDS,
@@ -269,34 +268,14 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   if (showTokenBar) line2Parts.push(tokensStr);
   line2Parts.push(ctxStr);
   if (isCompact && currentModelQuota) {
-    const now = Date.now();
-    const windows = currentModelQuota.windows && (currentModelQuota.windows.fiveHour || currentModelQuota.windows.weekly)
-      ? currentModelQuota.windows
-      : null;
-    const critical = windows
-      ? pickCriticalWindow(windows, now)
-      : (currentModelQuota.resetTime
-        ? { remainingFraction: currentModelQuota.remainingFraction, resetTime: currentModelQuota.resetTime, window: classifyQuotaWindow(currentModelQuota.resetTime, now) }
-        : { remainingFraction: currentModelQuota.remainingFraction, resetTime: null, window: null });
-    // pickCriticalWindow can return null if all observations are expired; fall
-    // back to the flat top-level fields so the statusline shows *something*.
-    const safeCritical = critical || {
-      remainingFraction: currentModelQuota.remainingFraction,
-      resetTime: currentModelQuota.resetTime || null,
-      window: null,
-    };
-    const pct = Math.round(safeCritical.remainingFraction * 100);
+    const pct = Math.round(currentModelQuota.remainingFraction * 100);
     const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
     let timeStr = '';
-    if (safeCritical.resetTime) {
-      const secsLeft = Math.max(0, Math.round((new Date(safeCritical.resetTime).getTime() - now) / 1000));
+    if (currentModelQuota.resetTime) {
+      const secsLeft = Math.max(0, Math.round((new Date(currentModelQuota.resetTime).getTime() - Date.now()) / 1000));
       timeStr = ` ${gray}~${formatDuration(secsLeft)}${reset}`;
     }
-    const windowSuffix = safeCritical.window === 'fiveHour' ? '5h'
-      : safeCritical.window === 'weekly' ? 'W'
-      : '';
-    const label = windowSuffix ? `Quota[${windowSuffix}]` : 'Quota';
-    line2Parts.push(`${pctColor}${label}: ${pct}%${reset}${timeStr}`);
+    line2Parts.push(`${pctColor}Quota: ${pct}%${reset}${timeStr}`);
   }
   const line2 = line2Parts.join(divider);
 
@@ -322,11 +301,10 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   if (hooksCount > 0) metaParts.push(`${gray}${hooksCount} hooks${reset}`);
   const line3 = metaParts.length > 0 ? metaParts.join(divider) : '';
 
-  const { renderQuotaBlock, renderCompactQuotaLine } = createQuotaRenderers({
+  const { renderQuotaColumn, renderCompactQuotaLine } = createQuotaRenderers({
     colors: { cyan, reset, gray, red, yellow, green },
     glyph,
     thresholds: { warnThresh, critThresh },
-    columnWidth,
     nameWidth,
     divider,
     createProgressBar,
@@ -340,21 +318,15 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     if (isCompact) {
       quotaLines = `\n${renderCompactQuotaLine(quotaData, now)}`;
     } else {
-      const blocks = quotaData.map(q => renderQuotaBlock(q, now));
-      const blankCell = ' '.repeat(columnWidth);
+      const cols = quotaData.map(q => renderQuotaColumn(q, now));
       const rows = [];
-      for (let i = 0; i < blocks.length; i += 2) {
-        const b1 = blocks[i];
-        const b2 = blocks[i + 1];
-        const height = Math.max(b1.length, b2 ? b2.length : 0);
-        for (let j = 0; j < height; j++) {
-          const line1 = b1[j] || blankCell;
-          if (b2) {
-            const line2 = b2[j] || blankCell;
-            rows.push(`  ${line1} ${gray}${glyph.vbar}${reset} ${line2}`);
-          } else {
-            rows.push(`  ${line1}`);
-          }
+      for (let i = 0; i < cols.length; i += 2) {
+        const col1 = cols[i];
+        const col2 = cols[i + 1];
+        if (col2) {
+          rows.push(`  ${col1} ${gray}${glyph.vbar}${reset} ${col2}`);
+        } else {
+          rows.push(`  ${col1}`);
         }
       }
       const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
