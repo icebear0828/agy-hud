@@ -1,31 +1,7 @@
 'use strict';
 
 const { supportsUnicode } = require('./encoding.js');
-
-// Inline duplicates of the quota classifier/picker so renderer.js stays
-// dependency-light. Keep in sync with runtime/quota.js.
-const FIVE_HOUR_WINDOW_THRESHOLD_MS = 12 * 60 * 60 * 1000;
-
-function classifyQuotaWindow(resetTime, now = Date.now()) {
-  if (!resetTime) return null;
-  const ms = new Date(resetTime).getTime() - now;
-  if (!Number.isFinite(ms)) return null;
-  return ms < FIVE_HOUR_WINDOW_THRESHOLD_MS ? 'fiveHour' : 'weekly';
-}
-
-function pickCriticalWindow(windows) {
-  if (!windows) return null;
-  const five = windows.fiveHour;
-  const week = windows.weekly;
-  if (five && week) {
-    return five.remainingFraction <= week.remainingFraction
-      ? { ...five, window: 'fiveHour' }
-      : { ...week, window: 'weekly' };
-  }
-  if (five) return { ...five, window: 'fiveHour' };
-  if (week) return { ...week, window: 'weekly' };
-  return null;
-}
+const { classifyQuotaWindow, pickCriticalWindow } = require('./quota.js');
 
 const ANSI_COLORS = {
   gray: '\x1b[90m',
@@ -399,19 +375,26 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
       ? currentModelQuota.windows
       : null;
     const critical = windows
-      ? pickCriticalWindow(windows)
+      ? pickCriticalWindow(windows, now)
       : (currentModelQuota.resetTime
         ? { remainingFraction: currentModelQuota.remainingFraction, resetTime: currentModelQuota.resetTime, window: classifyQuotaWindow(currentModelQuota.resetTime, now) }
         : { remainingFraction: currentModelQuota.remainingFraction, resetTime: null, window: null });
-    const pct = Math.round(critical.remainingFraction * 100);
+    // pickCriticalWindow can return null if all observations are expired; fall
+    // back to the flat top-level fields so the statusline shows *something*.
+    const safeCritical = critical || {
+      remainingFraction: currentModelQuota.remainingFraction,
+      resetTime: currentModelQuota.resetTime || null,
+      window: null,
+    };
+    const pct = Math.round(safeCritical.remainingFraction * 100);
     const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
     let timeStr = '';
-    if (critical.resetTime) {
-      const secsLeft = Math.max(0, Math.round((new Date(critical.resetTime).getTime() - now) / 1000));
+    if (safeCritical.resetTime) {
+      const secsLeft = Math.max(0, Math.round((new Date(safeCritical.resetTime).getTime() - now) / 1000));
       timeStr = ` ${gray}~${formatDuration(secsLeft)}${reset}`;
     }
-    const windowSuffix = critical.window === 'fiveHour' ? '5h'
-      : critical.window === 'weekly' ? 'W'
+    const windowSuffix = safeCritical.window === 'fiveHour' ? '5h'
+      : safeCritical.window === 'weekly' ? 'W'
       : '';
     const label = windowSuffix ? `Quota[${windowSuffix}]` : 'Quota';
     line2Parts.push(`${pctColor}${label}: ${pct}%${reset}${timeStr}`);
@@ -549,7 +532,7 @@ function renderHUD(state, agyData, config, quotaData, tierName) {
       const items = models.map(q => {
         const name = sanitizeTerminalText(compactModelName(q.displayName || q.id), 20);
         const windows = resolveWindows(q, now);
-        const critical = windows ? pickCriticalWindow(windows) : null;
+        const critical = windows ? pickCriticalWindow(windows, now) : null;
         const fraction = critical ? critical.remainingFraction : q.remainingFraction;
         const pct = Math.round(fraction * 100);
         const filled = Math.round((pct / 100) * 3);

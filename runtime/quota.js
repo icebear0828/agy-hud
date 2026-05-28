@@ -114,7 +114,8 @@ function normalizeRemainingFraction(value, hasResetTime = false) {
 /**
  * Classify a resetTime as belonging to the 5-hour or weekly quota window.
  * The fetchAvailableModels API exposes only one window at a time, so we infer
- * which one by how far away the reset is.
+ * which one by how far away the reset is. resetTimes already in the past
+ * cannot be classified — they refer to a window that has already rolled over.
  * @param {string|null} resetTime ISO-8601 string
  * @param {number} now epoch ms
  * @returns {'fiveHour' | 'weekly' | null}
@@ -122,8 +123,33 @@ function normalizeRemainingFraction(value, hasResetTime = false) {
 function classifyQuotaWindow(resetTime, now = Date.now()) {
   if (!resetTime) return null;
   const ms = new Date(resetTime).getTime() - now;
-  if (!Number.isFinite(ms)) return null;
+  if (!Number.isFinite(ms) || ms <= 0) return null;
   return ms < FIVE_HOUR_WINDOW_THRESHOLD_MS ? 'fiveHour' : 'weekly';
+}
+
+/**
+ * True when a window observation's resetTime has already elapsed — the
+ * observation is stale and refers to a window cycle that has rolled over.
+ * @param {{ resetTime?: string|null }|null|undefined} observation
+ * @param {number} now epoch ms
+ */
+function isObservationExpired(observation, now = Date.now()) {
+  if (!observation || !observation.resetTime) return false;
+  const t = new Date(observation.resetTime).getTime();
+  return Number.isFinite(t) && t <= now;
+}
+
+/**
+ * Return a windows map with expired observations removed.
+ * @param {ModelQuota['windows']|null|undefined} windows
+ * @param {number} now epoch ms
+ */
+function pruneExpiredWindows(windows, now = Date.now()) {
+  if (!windows) return {};
+  const out = {};
+  if (windows.fiveHour && !isObservationExpired(windows.fiveHour, now)) out.fiveHour = windows.fiveHour;
+  if (windows.weekly && !isObservationExpired(windows.weekly, now)) out.weekly = windows.weekly;
+  return out;
 }
 
 /**
@@ -165,31 +191,54 @@ function normalizeQuotaModels(models, interestingModelIds = FALLBACK_AGENT_MODEL
  * preserving the *other* window's last observation. The cloud API only
  * exposes one window per response, so without merging the never-observed
  * window would never appear in the UI.
+ *
+ * Expired previous observations are dropped so a 5-hour bucket that has
+ * since rolled over server-side cannot keep dominating pickCriticalWindow.
+ * Models present in `previous` but missing from `fresh` are carried forward
+ * with their non-expired windows so a temporary API omission doesn't erase
+ * the user's window history.
  * @param {ModelQuota[]} fresh
  * @param {ModelQuota[]} previous
+ * @param {number} now epoch ms
  * @returns {ModelQuota[]}
  */
-function mergeQuotaWindows(fresh, previous) {
+function mergeQuotaWindows(fresh, previous, now = Date.now()) {
   const prevById = new Map();
   for (const q of previous || []) {
     if (q && q.id) prevById.set(q.id, q);
   }
-  return (fresh || []).map(q => {
+  const freshIds = new Set();
+  const results = [];
+  for (const q of fresh || []) {
+    if (!q || !q.id) continue;
+    freshIds.add(q.id);
     const prev = prevById.get(q.id);
-    const merged = { ...(prev?.windows || {}), ...(q.windows || {}) };
-    return { ...q, windows: merged };
-  });
+    const prevWindows = prev ? pruneExpiredWindows(prev.windows, now) : {};
+    const merged = { ...prevWindows, ...(q.windows || {}) };
+    results.push({ ...q, windows: merged });
+  }
+  for (const q of previous || []) {
+    if (!q || !q.id || freshIds.has(q.id)) continue;
+    const merged = pruneExpiredWindows(q.windows, now);
+    if (merged.fiveHour || merged.weekly) {
+      results.push({ ...q, windows: merged });
+    }
+  }
+  return results;
 }
 
 /**
  * Pick the binding window (lower remaining fraction) for surface display.
  * Falls back to whichever single window we have, or null if none.
+ * Expired observations are skipped — a 5-hour bucket whose resetTime has
+ * already elapsed must not keep winning the pick.
  * @param {ModelQuota['windows']} windows
+ * @param {number} now epoch ms
  */
-function pickCriticalWindow(windows) {
+function pickCriticalWindow(windows, now = Date.now()) {
   if (!windows) return null;
-  const five = windows.fiveHour;
-  const week = windows.weekly;
+  const five = isObservationExpired(windows.fiveHour, now) ? null : windows.fiveHour;
+  const week = isObservationExpired(windows.weekly, now) ? null : windows.weekly;
   if (five && week) {
     return five.remainingFraction <= week.remainingFraction
       ? { ...five, window: 'fiveHour' }
@@ -670,35 +719,46 @@ function readCacheRaw() {
  * @param {string|Object} tokenOrAccessToken
  */
 function writeCache(data, tokenOrAccessToken, tier = null) {
+  const now = Date.now();
   const previousRaw = readCacheRaw();
   const sameIdentity = previousRaw && doesCachePayloadMatchToken(previousRaw, tokenOrAccessToken);
   const previousData = sameIdentity ? previousRaw.data : [];
-  const merged = mergeQuotaWindows(data, previousData);
+  const merged = mergeQuotaWindows(data, previousData, now);
 
-  // Find earliest resetTime
+  // Find earliest resetTime across top-level AND each merged window — a
+  // preserved 5-hour observation can reset well before the weekly top-level,
+  // and we must refresh by then or risk serving a stale fiveHour.
   let earliest = Infinity;
+  const considerResetTime = (value) => {
+    if (!value) return;
+    const t = new Date(value).getTime();
+    if (Number.isFinite(t) && t < earliest) earliest = t;
+  };
   for (const m of merged) {
-    if (m.resetTime) {
-      const t = new Date(m.resetTime).getTime();
-      if (t < earliest) earliest = t;
-    }
+    considerResetTime(m.resetTime);
+    considerResetTime(m.windows?.fiveHour?.resetTime);
+    considerResetTime(m.windows?.weekly?.resetTime);
   }
   // Cache should not stay "fresh" longer than 2 minutes to ensure we fetch updated quotas frequently,
   // but it must expire at the earliest resetTime.
   const maxFreshDuration = 2 * 60 * 1000;
-  let expiresAt = Date.now() + maxFreshDuration;
+  let expiresAt = now + maxFreshDuration;
   if (isFinite(earliest) && earliest < expiresAt) {
     expiresAt = earliest;
   }
   const cacheKeyHash = getTokenCacheKeyHash(tokenOrAccessToken);
   const tokenHash = getTokenHash(tokenOrAccessToken);
+  // Preserve the previously cached tier when the caller passes null and the
+  // cache belongs to the same identity — fetchTierFromCloud transient failures
+  // must not wipe 'Google AI Pro' down to 'Free'.
+  const resolvedTier = tier || (sameIdentity ? (previousRaw.tier || null) : null);
   const payload = {
     version: CACHE_VERSION,
     expiresAt,
-    lastRefreshed: Date.now(),
+    lastRefreshed: now,
     cacheKeyHash,
     tokenHash,
-    tier: tier || null,
+    tier: resolvedTier,
     data: merged,
   };
   try {
@@ -913,6 +973,8 @@ module.exports = {
   extractTierName,
   normalizeQuotaModels,
   classifyQuotaWindow,
+  isObservationExpired,
+  pruneExpiredWindows,
   mergeQuotaWindows,
   pickCriticalWindow,
   discoverAgentModelIds,

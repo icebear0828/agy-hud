@@ -37,10 +37,34 @@ const mockAgyData = {
   }
 };
 
+const _wizardNow = Date.now();
+const _wizardFiveHourReset = new Date(_wizardNow + 4 * 60 * 60 * 1000).toISOString();
+const _wizardWeeklyReset = new Date(_wizardNow + 5 * 24 * 60 * 60 * 1000).toISOString();
 const mockQuotaData = [
-  { id: 'gemini-3.5-flash-low', displayName: 'Gemini 3.5 Flash (Low)', remainingFraction: 0.92, resetTime: new Date(Date.now() + 12120000).toISOString(), modelProvider: 'MODEL_PROVIDER_GOOGLE' },
-  { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6', remainingFraction: 0.4, resetTime: new Date(Date.now() + 534000000).toISOString(), modelProvider: 'MODEL_PROVIDER_ANTHROPIC' },
-  { id: 'gpt-oss-120b-medium', displayName: 'GPT-OSS 120B', remainingFraction: 0.75, resetTime: null, modelProvider: 'MODEL_PROVIDER_OPENAI' }
+  {
+    id: 'gemini-3.5-flash-low', displayName: 'Gemini 3.5 Flash (Low)',
+    remainingFraction: 0.92, resetTime: _wizardFiveHourReset,
+    modelProvider: 'MODEL_PROVIDER_GOOGLE',
+    windows: {
+      fiveHour: { remainingFraction: 0.92, resetTime: _wizardFiveHourReset, observedAt: _wizardNow },
+      weekly:   { remainingFraction: 0.55, resetTime: _wizardWeeklyReset, observedAt: _wizardNow },
+    },
+  },
+  {
+    id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6',
+    remainingFraction: 0.4, resetTime: _wizardWeeklyReset,
+    modelProvider: 'MODEL_PROVIDER_ANTHROPIC',
+    windows: {
+      fiveHour: { remainingFraction: 0.7, resetTime: _wizardFiveHourReset, observedAt: _wizardNow },
+      weekly:   { remainingFraction: 0.4, resetTime: _wizardWeeklyReset, observedAt: _wizardNow },
+    },
+  },
+  {
+    id: 'gpt-oss-120b-medium', displayName: 'GPT-OSS 120B',
+    remainingFraction: 0.75, resetTime: null,
+    modelProvider: 'MODEL_PROVIDER_OPENAI',
+    windows: {},
+  },
 ];
 
 const THEME_PRESETS = {

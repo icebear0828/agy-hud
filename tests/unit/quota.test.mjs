@@ -883,7 +883,7 @@ test('mergeQuotaWindows keeps the previously observed window when the response o
     windows: { weekly: { remainingFraction: 0.2, resetTime: weeklyResetTime, observedAt: now } },
   }];
 
-  const merged = mergeQuotaWindows(fresh, previous);
+  const merged = mergeQuotaWindows(fresh, previous, now);
   assert.equal(merged.length, 1);
   assert.deepEqual(merged[0].windows, {
     fiveHour: previousFiveHour,
@@ -892,6 +892,71 @@ test('mergeQuotaWindows keeps the previously observed window when the response o
   // Top-level remainingFraction/resetTime still reflect the latest response.
   assert.equal(merged[0].remainingFraction, 0.2);
   assert.equal(merged[0].resetTime, weeklyResetTime);
+});
+
+test('mergeQuotaWindows drops expired window observations from the previous cache', () => {
+  const now = Date.parse('2026-05-20T20:00:00Z');
+  const expiredFiveHour = {
+    remainingFraction: 0.05,
+    resetTime: new Date(now - 60 * 60 * 1000).toISOString(), // 1h in the past
+    observedAt: now - 5 * 60 * 60 * 1000,
+  };
+  const freshWeeklyReset = new Date(now + 5 * 24 * 60 * 60 * 1000).toISOString();
+  const previous = [{
+    id: 'gemini-3-flash-agent',
+    windows: { fiveHour: expiredFiveHour },
+  }];
+  const fresh = [{
+    id: 'gemini-3-flash-agent',
+    remainingFraction: 0.8,
+    resetTime: freshWeeklyReset,
+    windows: { weekly: { remainingFraction: 0.8, resetTime: freshWeeklyReset, observedAt: now } },
+  }];
+
+  const merged = mergeQuotaWindows(fresh, previous, now);
+  // Expired fiveHour observation must NOT survive — would otherwise dominate
+  // pickCriticalWindow with a stale 5% reading forever.
+  assert.equal(merged[0].windows.fiveHour, undefined);
+  assert.equal(merged[0].windows.weekly.remainingFraction, 0.8);
+});
+
+test('mergeQuotaWindows carries forward models present in previous but missing from fresh', () => {
+  const now = Date.parse('2026-05-20T20:00:00Z');
+  const futureReset = new Date(now + 4 * 60 * 60 * 1000).toISOString();
+  const liveObservation = { remainingFraction: 0.5, resetTime: futureReset, observedAt: now };
+  const previous = [
+    { id: 'kept-model', remainingFraction: 0.5, resetTime: futureReset, windows: { fiveHour: liveObservation } },
+    { id: 'fully-expired', windows: { fiveHour: { remainingFraction: 0.1, resetTime: new Date(now - 1000).toISOString(), observedAt: now - 10_000 } } },
+  ];
+  const fresh = []; // API temporarily returned nothing for our interesting models
+
+  const merged = mergeQuotaWindows(fresh, previous, now);
+  // The model with at least one non-expired observation must survive.
+  const kept = merged.find(m => m.id === 'kept-model');
+  assert.ok(kept, 'kept-model with a live observation should be preserved');
+  assert.deepEqual(kept.windows.fiveHour, liveObservation);
+  // The fully-expired model is dropped (nothing useful remains to display).
+  assert.equal(merged.find(m => m.id === 'fully-expired'), undefined);
+});
+
+test('pickCriticalWindow skips expired observations even when they have the lower remainingFraction', () => {
+  const now = Date.parse('2026-05-20T20:00:00Z');
+  const expired = { remainingFraction: 0.05, resetTime: new Date(now - 1000).toISOString(), observedAt: now - 10_000 };
+  const live = { remainingFraction: 0.8, resetTime: new Date(now + 5 * 24 * 60 * 60 * 1000).toISOString(), observedAt: now };
+
+  const picked = pickCriticalWindow({ fiveHour: expired, weekly: live }, now);
+  assert.equal(picked.window, 'weekly');
+  assert.equal(picked.remainingFraction, 0.8);
+
+  // Both expired → null so callers can fall back gracefully.
+  assert.equal(pickCriticalWindow({ fiveHour: expired, weekly: expired }, now), null);
+});
+
+test('classifyQuotaWindow returns null for resetTimes in the past', () => {
+  const now = Date.parse('2026-05-20T20:00:00Z');
+  assert.equal(classifyQuotaWindow(new Date(now - 1000).toISOString(), now), null);
+  assert.equal(classifyQuotaWindow(new Date(now).toISOString(), now), null); // exactly now: already-elapsed
+  assert.equal(classifyQuotaWindow(new Date(now + 1000).toISOString(), now), 'fiveHour');
 });
 
 test('pickCriticalWindow returns the lower-remaining window', () => {
@@ -946,6 +1011,60 @@ test('writeCache merges fresh response with previously cached other-window obser
     assert.deepEqual(windows.fiveHour, fiveHourObservation);
     assert.equal(windows.weekly.remainingFraction, 0.2);
     assert.equal(windows.weekly.resetTime, weeklyReset);
+  } finally {
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
+  }
+});
+
+test('writeCache preserves previously cached tier when fresh tier is null and identity matches', () => {
+  const { writeCache, getCachedTier } = quotaModule;
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  try {
+    fs.rmSync(CACHE_PATH, { force: true });
+    const futureReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const data = [{ id: 'm', remainingFraction: 0.5, resetTime: futureReset, windows: {} }];
+
+    writeCache(data, 'tok', 'Google AI Pro');
+    assert.equal(getCachedTier(), 'Google AI Pro');
+
+    // Simulate fetchTierFromCloud transient failure (returns null) while quota
+    // fetch succeeds. The cached tier must survive.
+    writeCache(data, 'tok', null);
+    assert.equal(getCachedTier(), 'Google AI Pro');
+  } finally {
+    if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+    else fs.writeFileSync(CACHE_PATH, previousCache);
+  }
+});
+
+test('writeCache expiresAt accounts for the soonest resetTime across merged windows', () => {
+  const { writeCache, readCachePayload } = quotaModule;
+  const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+  try {
+    fs.rmSync(CACHE_PATH, { force: true });
+    const fiveHourReset = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // ~10min
+    const weeklyReset = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(); // 5d
+
+    // Step 1: prime cache with a 5-hour observation that resets in 10 minutes.
+    writeCache([{
+      id: 'm', remainingFraction: 0.6, resetTime: fiveHourReset,
+      windows: { fiveHour: { remainingFraction: 0.6, resetTime: fiveHourReset, observedAt: Date.now() } },
+    }], 'tok');
+
+    // Step 2: fresh response carries a weekly window only (resetTime 5 days out).
+    writeCache([{
+      id: 'm', remainingFraction: 0.2, resetTime: weeklyReset,
+      windows: { weekly: { remainingFraction: 0.2, resetTime: weeklyReset, observedAt: Date.now() } },
+    }], 'tok');
+
+    const raw = readCachePayload('tok');
+    // expiresAt must be capped to the 10-minute fiveHour reset, NOT the
+    // 5-day weekly top-level — otherwise we'd serve a stale fiveHour past
+    // its real reset time. Allow 2-min cap to fire below 10min anyway.
+    const tenMinutesFromNow = Date.now() + 10 * 60 * 1000 + 5000;
+    assert.ok(raw.expiresAt <= tenMinutesFromNow,
+      `expiresAt ${new Date(raw.expiresAt).toISOString()} must be <= 10min from now, not the 5-day weekly reset`);
   } finally {
     if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
     else fs.writeFileSync(CACHE_PATH, previousCache);
