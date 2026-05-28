@@ -193,5 +193,11 @@ module.exports = {
   normalizeQuotaModels: modelsMod.normalizeQuotaModels,
   discoverAgentModelIds: modelsMod.discoverAgentModelIds,
   resolveDeprecatedIds: modelsMod.resolveDeprecatedIds,
+  classifyQuotaWindow: modelsMod.classifyQuotaWindow,
+  isObservationExpired: modelsMod.isObservationExpired,
+  pruneExpiredWindows: modelsMod.pruneExpiredWindows,
+  mergeQuotaWindows: modelsMod.mergeQuotaWindows,
+  pickCriticalWindow: modelsMod.pickCriticalWindow,
+  FIVE_HOUR_WINDOW_THRESHOLD_MS: modelsMod.FIVE_HOUR_WINDOW_THRESHOLD_MS,
   createUnavailableQuotaResult,
 };

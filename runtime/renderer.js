@@ -1,6 +1,7 @@
 'use strict';
 
 const { supportsUnicode } = require('./encoding.js');
+const { classifyQuotaWindow, pickCriticalWindow } = require('./quota.js');
 
 const ANSI_COLORS = {
   gray: '\x1b[90m',
@@ -404,14 +405,34 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   if (showTokenBar) line2Parts.push(tokensStr);
   line2Parts.push(ctxStr);
   if (isCompact && currentModelQuota) {
-    const pct = Math.round(currentModelQuota.remainingFraction * 100);
+    const now = Date.now();
+    const windows = currentModelQuota.windows && (currentModelQuota.windows.fiveHour || currentModelQuota.windows.weekly)
+      ? currentModelQuota.windows
+      : null;
+    const critical = windows
+      ? pickCriticalWindow(windows, now)
+      : (currentModelQuota.resetTime
+        ? { remainingFraction: currentModelQuota.remainingFraction, resetTime: currentModelQuota.resetTime, window: classifyQuotaWindow(currentModelQuota.resetTime, now) }
+        : { remainingFraction: currentModelQuota.remainingFraction, resetTime: null, window: null });
+    // pickCriticalWindow can return null if all observations are expired; fall
+    // back to the flat top-level fields so the statusline shows *something*.
+    const safeCritical = critical || {
+      remainingFraction: currentModelQuota.remainingFraction,
+      resetTime: currentModelQuota.resetTime || null,
+      window: null,
+    };
+    const pct = Math.round(safeCritical.remainingFraction * 100);
     const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
     let timeStr = '';
-    if (currentModelQuota.resetTime) {
-      const secsLeft = Math.max(0, Math.round((new Date(currentModelQuota.resetTime).getTime() - Date.now()) / 1000));
+    if (safeCritical.resetTime) {
+      const secsLeft = Math.max(0, Math.round((new Date(safeCritical.resetTime).getTime() - now) / 1000));
       timeStr = ` ${gray}~${formatDuration(secsLeft)}${reset}`;
     }
-    line2Parts.push(`${pctColor}Quota: ${pct}%${reset}${timeStr}`);
+    const windowSuffix = safeCritical.window === 'fiveHour' ? '5h'
+      : safeCritical.window === 'weekly' ? 'W'
+      : '';
+    const label = windowSuffix ? `Quota[${windowSuffix}]` : 'Quota';
+    line2Parts.push(`${pctColor}${label}: ${pct}%${reset}${timeStr}`);
   }
   const line2 = line2Parts.join(divider);
 
@@ -466,6 +487,73 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     return `${coloredName} ${barPart} ${coloredPct} ${coloredTime}`;
   };
 
+  // Resolve the per-window observations for a quota entry, falling back to
+  // the legacy flat shape (no `windows` field) by classifying its resetTime.
+  const resolveWindows = (q, now) => {
+    const observed = q.windows && (q.windows.fiveHour || q.windows.weekly)
+      ? q.windows
+      : null;
+    if (observed) return observed;
+    if (!q.resetTime) return null;
+    const window = classifyQuotaWindow(q.resetTime, now);
+    if (!window) return null;
+    return {
+      [window]: {
+        remainingFraction: q.remainingFraction,
+        resetTime: q.resetTime,
+        observedAt: now,
+      },
+    };
+  };
+
+  // Render one row of "label [bar] pct ~time" inside a per-model block, padded
+  // out to columnWidth so paired blocks line up under their vertical divider.
+  const renderWindowRow = (label, obs, now) => {
+    const labelPart = `${gray}${label.padEnd(3, ' ')}${reset}`;
+    const indent = '  ';
+    // visible chars: 2 indent + 3 label + 1 space = 6 before the bar
+    if (!obs) {
+      const message = `${glyph.hbar} no data yet`;
+      const trailing = Math.max(0, columnWidth - 6 - message.length);
+      return `${indent}${labelPart} ${gray}${message}${reset}${' '.repeat(trailing)}`;
+    }
+    const pct = Math.round(obs.remainingFraction * 100);
+    const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
+    const barPart = createProgressBar(pct, pctColor, 6, false);
+    const pctStr = `${pct}%`.padStart(4, ' ');
+    const coloredPct = `${pctColor}${pctStr}${reset}`;
+    let rawTime = '';
+    if (obs.resetTime) {
+      const resetMs = new Date(obs.resetTime).getTime();
+      const secsLeft = Math.max(0, Math.round((resetMs - now) / 1000));
+      rawTime = `~${formatDuration(secsLeft)}`;
+    }
+    const timePart = rawTime.padEnd(6, ' ');
+    const coloredTime = `${gray}${timePart}${reset}`;
+    // 6 (prefix) + 8 (bar) + 1 + 4 (pct) + 1 + 6 (time) = 26 visible chars.
+    const trailing = Math.max(0, columnWidth - 26);
+    return `${indent}${labelPart} ${barPart} ${coloredPct} ${coloredTime}${' '.repeat(trailing)}`;
+  };
+
+  // Render a per-model block: header line with model name, then one row per
+  // window. Returns an array of lines so callers can pair blocks side-by-side.
+  const renderQuotaBlock = (q, now) => {
+    const windows = resolveWindows(q, now);
+    if (!windows) {
+      // Legacy / unlimited / no quota data: single-line layout.
+      return [renderQuotaColumn(q, now)];
+    }
+    const rawName = sanitizeTerminalText(simplifyModelName(q.displayName || q.id), 120);
+    const namePart = truncateAndPad(rawName, nameWidth);
+    const trailing = ' '.repeat(QUOTA_CHROME_WIDTH);
+    const headerLine = `${cyan}${namePart}${reset}${trailing}`;
+    return [
+      headerLine,
+      renderWindowRow('5h', windows.fiveHour, now),
+      renderWindowRow('Wk', windows.weekly, now),
+    ];
+  };
+
   // Compact: provider-grouped mini bars
   const renderCompactQuotaLine = (data, now) => {
     const groups = new Map();
@@ -478,7 +566,10 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     for (const [provider, models] of groups) {
       const items = models.map(q => {
         const name = sanitizeTerminalText(compactModelName(q.displayName || q.id), 20);
-        const pct = Math.round(q.remainingFraction * 100);
+        const windows = resolveWindows(q, now);
+        const critical = windows ? pickCriticalWindow(windows, now) : null;
+        const fraction = critical ? critical.remainingFraction : q.remainingFraction;
+        const pct = Math.round(fraction * 100);
         const filled = Math.round((pct / 100) * 3);
         const empty = 3 - filled;
         const barColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
@@ -496,15 +587,21 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     if (isCompact) {
       quotaLines = `\n${renderCompactQuotaLine(quotaData, now)}`;
     } else {
-      const cols = quotaData.map(q => renderQuotaColumn(q, now));
+      const blocks = quotaData.map(q => renderQuotaBlock(q, now));
+      const blankCell = ' '.repeat(columnWidth);
       const rows = [];
-      for (let i = 0; i < cols.length; i += 2) {
-        const col1 = cols[i];
-        const col2 = cols[i + 1];
-        if (col2) {
-          rows.push(`  ${col1} ${gray}${glyph.vbar}${reset} ${col2}`);
-        } else {
-          rows.push(`  ${col1}`);
+      for (let i = 0; i < blocks.length; i += 2) {
+        const b1 = blocks[i];
+        const b2 = blocks[i + 1];
+        const height = Math.max(b1.length, b2 ? b2.length : 0);
+        for (let j = 0; j < height; j++) {
+          const line1 = b1[j] || blankCell;
+          if (b2) {
+            const line2 = b2[j] || blankCell;
+            rows.push(`  ${line1} ${gray}${glyph.vbar}${reset} ${line2}`);
+          } else {
+            rows.push(`  ${line1}`);
+          }
         }
       }
       const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;

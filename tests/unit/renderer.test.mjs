@@ -656,7 +656,9 @@ test('renderHUD compact mode appends current model quota to line 2', () => {
   const config = { display: { quotaStyle: 'compact', unicode: false } };
   const output = renderHUD(state, agyData, config, quotaData);
 
-  assert.match(output, /Quota: 20%/);
+  // resetTime ~4d ahead → classified as the weekly window, so the label
+  // gets the "W" suffix.
+  assert.match(output, /Quota\[W\]: 20%/);
   assert.match(output, /Anthropic:/);
   assert.match(output, /Google:/);
   assert.doesNotMatch(output, /─{10}/);
@@ -742,6 +744,76 @@ test('renderHUD does not show loading when quotaData is null or undefined', () =
 
   const output2 = renderHUD(state, agyData, { display: { unicode: true } });
   assert.doesNotMatch(output2, /Quota loading/);
+});
+
+test('renderHUD table mode renders two rows per model when both quota windows are observed', () => {
+  const state = { steps: 0, branch: 'main' };
+  const agyData = { context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 } };
+  const now = Date.now();
+  const quotaData = [{
+    id: 'gemini-3-flash-agent',
+    displayName: 'Gemini 3.5 Flash (High)',
+    modelProvider: 'MODEL_PROVIDER_GOOGLE',
+    remainingFraction: 0.2,
+    resetTime: new Date(now + 109 * 3600 * 1000).toISOString(),
+    windows: {
+      fiveHour: { remainingFraction: 0.6, resetTime: new Date(now + 4 * 3600 * 1000).toISOString(), observedAt: now },
+      weekly:   { remainingFraction: 0.2, resetTime: new Date(now + 109 * 3600 * 1000).toISOString(), observedAt: now },
+    },
+  }];
+  const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+  const output = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
+
+  assert.match(output, /Gemini 3\.5 Flash\(H\)/);
+  assert.match(output, /5h\s+\[[█░]+\]\s+60%\s+~4h/);
+  assert.match(output, /Wk\s+\[[█░]+\]\s+20%/);
+});
+
+test('renderHUD table mode shows "no data yet" placeholder for a window that has never been observed', () => {
+  const state = { steps: 0, branch: 'main' };
+  const agyData = { context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 } };
+  const now = Date.now();
+  const quotaData = [{
+    id: 'claude-sonnet-4-6',
+    displayName: 'Claude Sonnet 4.6 (Thinking)',
+    modelProvider: 'MODEL_PROVIDER_ANTHROPIC',
+    remainingFraction: 0.1,
+    resetTime: new Date(now + 100 * 3600 * 1000).toISOString(),
+    windows: {
+      weekly: { remainingFraction: 0.1, resetTime: new Date(now + 100 * 3600 * 1000).toISOString(), observedAt: now },
+    },
+  }];
+  const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+  const output = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
+
+  assert.match(output, /5h\s+─ no data yet/);
+  assert.match(output, /Wk\s+\[[█░]+\]\s+10%/);
+});
+
+test('renderHUD compact mode picks the more critical window per current model', () => {
+  const state = { steps: 0, branch: 'main' };
+  const now = Date.now();
+  const agyData = {
+    context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+    model: { display_name: 'Gemini 3.5 Flash (High)' },
+  };
+  const quotaData = [{
+    id: 'gemini-3-flash-agent',
+    displayName: 'Gemini 3.5 Flash (High)',
+    modelProvider: 'MODEL_PROVIDER_GOOGLE',
+    remainingFraction: 0.2,
+    resetTime: new Date(now + 109 * 3600 * 1000).toISOString(),
+    windows: {
+      fiveHour: { remainingFraction: 0.95, resetTime: new Date(now + 4 * 3600 * 1000).toISOString(), observedAt: now },
+      weekly:   { remainingFraction: 0.2,  resetTime: new Date(now + 109 * 3600 * 1000).toISOString(), observedAt: now },
+    },
+  }];
+  const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+
+  // Weekly is more critical (20% < 95%), so the label uses [W] and the
+  // percent reflects the weekly window, not the 5-hour one.
+  assert.match(output, /Quota\[W\]: 20%/);
+  assert.doesNotMatch(output, /Quota\[5h\]/);
 });
 
 test('renderHUD uses warning/critical colors for both percent text and progress bar in table mode', () => {

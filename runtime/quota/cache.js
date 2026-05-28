@@ -4,9 +4,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { resolveAntigravityPath } = require('../paths.js');
+const { mergeQuotaWindows } = require('./models.js');
 
 const CACHE_PATH = resolveAntigravityPath('agy-hud-quota-cache.json');
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 function isCachePayloadFresh(raw) {
   return raw &&
@@ -94,37 +95,69 @@ function readCache(tokenOrAccessToken) {
 }
 
 /**
+ * Read the previous cache payload (any token) for merging the other window's
+ * last observation. Tier and per-window state are account-level, so we
+ * intentionally skip the token-match check used by readCache.
+ */
+function readCacheRaw() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+    if (!raw || !Array.isArray(raw.data)) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Write quota cache. Expires at the earliest resetTime among all buckets.
  * Uses atomic write (tmp + rename) to prevent concurrent readers from seeing
  * truncated/empty content — the main fix for statusline quota flicker.
- * @param {ModelQuota[]} data
- * @param {string|Object} tokenOrAccessToken
+ * Merges with the previous payload so the window not present in this response
+ * (e.g. 5-hour when the API returns weekly) keeps its last observation, but
+ * only when the cache belongs to the same credential identity (token rotation
+ * is fine, account switch is not).
  */
 function writeCache(data, tokenOrAccessToken, tier = null) {
+  const now = Date.now();
+  const previousRaw = readCacheRaw();
+  const sameIdentity = previousRaw && doesCachePayloadMatchToken(previousRaw, tokenOrAccessToken);
+  const previousData = sameIdentity ? previousRaw.data : [];
+  const merged = mergeQuotaWindows(data, previousData, now);
+
+  // Find earliest resetTime across top-level AND each merged window — a
+  // preserved 5-hour observation can reset well before the weekly top-level,
+  // and we must refresh by then or risk serving a stale fiveHour.
   let earliest = Infinity;
-  for (const m of data) {
-    if (m.resetTime) {
-      const t = new Date(m.resetTime).getTime();
-      if (t < earliest) earliest = t;
-    }
+  const considerResetTime = (value) => {
+    if (!value) return;
+    const t = new Date(value).getTime();
+    if (Number.isFinite(t) && t < earliest) earliest = t;
+  };
+  for (const m of merged) {
+    considerResetTime(m.resetTime);
+    considerResetTime(m.windows?.fiveHour?.resetTime);
+    considerResetTime(m.windows?.weekly?.resetTime);
   }
-  // Cache should not stay "fresh" longer than 2 minutes to ensure we fetch updated quotas frequently,
-  // but it must expire at the earliest resetTime.
   const maxFreshDuration = 2 * 60 * 1000;
-  let expiresAt = Date.now() + maxFreshDuration;
+  let expiresAt = now + maxFreshDuration;
   if (isFinite(earliest) && earliest < expiresAt) {
     expiresAt = earliest;
   }
   const cacheKeyHash = getTokenCacheKeyHash(tokenOrAccessToken);
   const tokenHash = getTokenHash(tokenOrAccessToken);
+  // Preserve the previously cached tier when the caller passes null and the
+  // cache belongs to the same identity — fetchTierFromCloud transient failures
+  // must not wipe 'Google AI Pro' down to 'Free'.
+  const resolvedTier = tier || (sameIdentity ? (previousRaw.tier || null) : null);
   const payload = {
     version: CACHE_VERSION,
     expiresAt,
-    lastRefreshed: Date.now(),
+    lastRefreshed: now,
     cacheKeyHash,
     tokenHash,
-    tier: tier || null,
-    data,
+    tier: resolvedTier,
+    data: merged,
   };
   try {
     const tmpPath = `${CACHE_PATH}.tmp.${process.pid}`;
@@ -192,6 +225,7 @@ module.exports = {
   doesCachePayloadMatchToken,
   didAccessTokenRotate,
   readCache,
+  readCacheRaw,
   writeCache,
   getCachedTier,
   readCachePayload,

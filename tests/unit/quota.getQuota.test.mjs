@@ -12,6 +12,7 @@ describe('quota / getQuota orchestrator', () => {
     test('returns cached quota without background refresh', async () => {
       const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
       try {
+        fs.rmSync(CACHE_PATH, { force: true });
         const cachedQuota = [{
           id: 'gemini-3-flash-agent',
           displayName: 'Gemini 3.5 Flash (High)',
@@ -27,7 +28,7 @@ describe('quota / getQuota orchestrator', () => {
           backgroundRefresh: () => { refreshes += 1; },
         });
 
-        assert.deepEqual(quota, cachedQuota);
+        assert.deepEqual(quota, [{ ...cachedQuota[0], windows: {} }]);
         assert.equal(refreshes, 0);
       } finally {
         if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
@@ -38,6 +39,7 @@ describe('quota / getQuota orchestrator', () => {
     test('preserves fresh cache when the access token rotates', async () => {
       const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
       try {
+        fs.rmSync(CACHE_PATH, { force: true });
         const tokenSourcePath = path.join('same-user', 'antigravity-oauth-token');
         const cachedQuota = [{
           id: 'gemini-3-flash-agent',
@@ -60,7 +62,7 @@ describe('quota / getQuota orchestrator', () => {
           backgroundRefresh: () => { refreshes += 1; },
         });
 
-        assert.deepEqual(quota, cachedQuota);
+        assert.deepEqual(quota, [{ ...cachedQuota[0], windows: {} }]);
         assert.equal(refreshes, 1);
       } finally {
         if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
@@ -120,7 +122,7 @@ describe('quota / getQuota orchestrator', () => {
       const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
       try {
         const payload = {
-          version: 2,
+          version: 3,
           expiresAt: Date.now() + 60000,
           lastRefreshed: Date.now() - 50000,
           cacheKeyHash: 'token-A-hash',
@@ -225,7 +227,7 @@ describe('quota / getQuota orchestrator', () => {
           roots: [tokenDir],
         });
 
-        assert.deepEqual(quota, cachedQuota);
+        assert.deepEqual(quota, [{ ...cachedQuota[0], windows: {} }]);
       } finally {
         if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
         else fs.writeFileSync(CACHE_PATH, previousCache);
@@ -242,7 +244,7 @@ describe('quota / getQuota orchestrator', () => {
         fs.mkdirSync(emptyDir, { recursive: true });
 
         const freshPayload = {
-          version: 2,
+          version: 3,
           expiresAt: Date.now() + 60_000,
           lastRefreshed: Date.now(),
           cacheKeyHash: 'abc',
@@ -276,7 +278,7 @@ describe('quota / getQuota orchestrator', () => {
         fs.writeFileSync(path.join(tokenDir, 'antigravity-oauth-token'), '{corrupt');
 
         const expiredPayload = {
-          version: 2,
+          version: 3,
           expiresAt: Date.now() - 1000,
           lastRefreshed: Date.now() - 600_000,
           cacheKeyHash: 'abc',
@@ -307,7 +309,7 @@ describe('quota / getQuota orchestrator', () => {
       const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
       try {
         const recentPayload = {
-          version: 2,
+          version: 3,
           expiresAt: Date.now() - 1000,
           lastRefreshed: Date.now() - 5000,
           cacheKeyHash: 'different-user',
@@ -334,7 +336,7 @@ describe('quota / getQuota orchestrator', () => {
       const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
       try {
         const payload = {
-          version: 2,
+          version: 3,
           expiresAt: Date.now() + 60000,
           lastRefreshed: Date.now() - 50000,
           cacheKeyHash: 'token-A-hash',
