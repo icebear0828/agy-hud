@@ -11,6 +11,35 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..', '..');
 
+// Env vars that hijack `git` subprocesses regardless of cwd. The git pre-push
+// hook environment sets GIT_DIR/GIT_WORK_TREE for its own use; without
+// scrubbing them, the parser's spawned `git rev-parse` returns the host
+// repo's hooks path instead of the test's fixture, then writeFileSync of
+// fixture data lands in the real .git/hooks/ — silent pollution.
+const GIT_ENV_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
+
+function withScrubbedGitEnv(fn) {
+  const saved = {};
+  for (const key of GIT_ENV_VARS) {
+    saved[key] = process.env[key];
+    delete process.env[key];
+  }
+  try {
+    return fn();
+  } finally {
+    for (const key of GIT_ENV_VARS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  }
+}
+
+function scrubbedGitEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const key of GIT_ENV_VARS) delete env[key];
+  return env;
+}
+
 test('getSessionState should initialize state properly even for missing files', async () => {
   assert.strictEqual(typeof getSessionState, 'function');
   const state = await getSessionState('missing-transcript-nonexistent.jsonl');
@@ -43,7 +72,7 @@ test('getSessionState detects workspace config metadata correctly', async () => 
   const originalCwd = process.cwd;
   process.cwd = () => tempDir;
 
-  try {
+  try { await withScrubbedGitEnv(async () => {
     // 1. Create CLAUDE.md
     fs.writeFileSync(path.join(tempDir, 'CLAUDE.md'), '# rules');
 
@@ -64,7 +93,7 @@ test('getSessionState detects workspace config metadata correctly', async () => 
     assert.equal(state.memoryFile, 'CLAUDE.md');
     assert.equal(state.rulesCount, 2);
     assert.equal(state.hooksCount, 1);
-  } finally {
+  }); } finally {
     process.cwd = originalCwd;
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -147,12 +176,14 @@ test('getSessionState reads project memory from HOME without counting memory doc
 test('getSessionState counts git hooks from subdirectories', () => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-hooks-'));
   const nestedDir = path.join(repoDir, 'nested');
+  const env = scrubbedGitEnv();
 
   try {
     const init = spawnSync('git', ['init'], {
       cwd: repoDir,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      env,
     });
     assert.equal(init.status, 0, init.stderr);
 
@@ -160,6 +191,7 @@ test('getSessionState counts git hooks from subdirectories', () => {
       cwd: repoDir,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      env,
     });
     assert.equal(hooksPathResult.status, 0, hooksPathResult.stderr);
     const hooksDir = path.resolve(repoDir, hooksPathResult.stdout.trim());
@@ -174,10 +206,6 @@ test('getSessionState counts git hooks from subdirectories', () => {
       getSessionState('missing-transcript.jsonl')
         .then(state => process.stdout.write(JSON.stringify(state)));
     `;
-
-    const env = { ...process.env };
-    delete env.GIT_DIR;
-    delete env.GIT_WORK_TREE;
 
     const result = spawnSync(process.execPath, ['-e', script], {
       encoding: 'utf8',
