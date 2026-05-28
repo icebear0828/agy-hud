@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert';
 import { abbreviateDisplayName, compactModelName } from '../../runtime/renderer.js';
+import { visualWidth, padToVisualWidth } from '../../runtime/renderer/format.js';
 
 describe('renderer / format helpers', () => {
   describe('abbreviateDisplayName', () => {
@@ -35,6 +36,48 @@ describe('renderer / format helpers', () => {
       assert.equal(compactModelName('Claude Sonnet 4.6 (Thinking)'), 'Sonnet');
       assert.equal(compactModelName('Claude Opus 4.6 (Thinking)'), 'Opus');
       assert.equal(compactModelName('GPT-OSS 120B (Medium)'), 'GPT');
+    });
+  });
+
+  describe('visualWidth', () => {
+    test('counts ASCII as 1 column per char', () => {
+      assert.equal(visualWidth('hello'), 5);
+      assert.equal(visualWidth(''), 0);
+      assert.equal(visualWidth('5h remaining & reset'), 20);
+    });
+
+    test('counts CJK as 2 columns per char', () => {
+      assert.equal(visualWidth('模型'), 4);
+      assert.equal(visualWidth('5h 剩余配额与可用时间'), 3 + 9 * 2); // "5h " + 9 CJK
+      assert.equal(visualWidth('周趋势'), 6);
+    });
+
+    test('strips ANSI escapes before counting', () => {
+      assert.equal(visualWidth('\x1b[31mhello\x1b[0m'), 5);
+      assert.equal(visualWidth('\x1b[90m─\x1b[0m'), 1);
+    });
+
+    test('ignores C0 controls and DEL', () => {
+      assert.equal(visualWidth('a\x00b\x7fc'), 3);
+    });
+  });
+
+  describe('padToVisualWidth', () => {
+    test('right-pads with spaces to reach visual target width', () => {
+      assert.equal(padToVisualWidth('hi', 5), 'hi   ');
+      assert.equal(padToVisualWidth('模型', 6), '模型  '); // 4 visual + 2 spaces
+      assert.equal(padToVisualWidth('exact', 5), 'exact');
+    });
+
+    test('returns string unchanged when already at or past target', () => {
+      assert.equal(padToVisualWidth('overflow', 3), 'overflow');
+    });
+
+    test('pads correctly even when input contains ANSI escapes', () => {
+      const colored = '\x1b[31mhi\x1b[0m';
+      const padded = padToVisualWidth(colored, 5);
+      assert.equal(visualWidth(padded), 5);
+      assert.ok(padded.endsWith('   '), 'padding spaces are appended after the reset');
     });
   });
 });

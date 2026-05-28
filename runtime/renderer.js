@@ -6,7 +6,6 @@ const {
   ANSI_COLORS,
   DEFAULT_THRESHOLDS,
   DEFAULT_COLUMN_WIDTH,
-  QUOTA_CHROME_WIDTH,
   abbreviateDisplayName,
   simplifyModelName,
   compactModelName,
@@ -79,12 +78,11 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const columnWidth = typeof display.columnWidth === 'number'
     ? display.columnWidth
     : DEFAULT_COLUMN_WIDTH;
-  const nameWidth = Math.max(10, columnWidth - QUOTA_CHROME_WIDTH);
 
   // Box-drawing glyphs with ASCII fallback
   const glyph = unicode
-    ? { bar: '█', empty: '░', vbar: '│', hbar: '─', ellipsis: '…' }
-    : { bar: '#', empty: '-', vbar: '|', hbar: '-', ellipsis: '...' };
+    ? { bar: '█', empty: '░', vbar: '│', hbar: '─', cross: '┼', ellipsis: '…' }
+    : { bar: '#', empty: '-', vbar: '|', hbar: '-', cross: '+', ellipsis: '...' };
 
   // Icons: Nerd Font > emoji > plain ASCII
   let branchIcon, planIcon, stepIcon, taskIcon, tokenIcon, ctxIcon, modelIcon;
@@ -161,13 +159,6 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     }
 
     return `${finalColor}[${glyph.bar.repeat(completed)}${glyph.empty.repeat(remaining)}]${reset}`;
-  };
-
-  const truncateAndPad = (str, width) => {
-    if (str.length > width) {
-      return str.substring(0, width - 1) + glyph.ellipsis;
-    }
-    return str.padEnd(width, ' ');
   };
 
   const divider = ` ${gray}${glyph.vbar}${reset} `;
@@ -322,16 +313,17 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   if (hooksCount > 0) metaParts.push(`${gray}${hooksCount} hooks${reset}`);
   const line3 = metaParts.length > 0 ? metaParts.join(divider) : '';
 
-  const { renderQuotaBlock, renderCompactQuotaLine } = createQuotaRenderers({
+  const { renderQuotaTable, renderCompactQuotaLine } = createQuotaRenderers({
     colors: { cyan, reset, gray, red, yellow, green },
     glyph,
     thresholds: { warnThresh, critThresh },
     columnWidth,
-    nameWidth,
     divider,
+    text,
     createProgressBar,
-    truncateAndPad,
   });
+
+  const fullWidth = columnWidth * 3 + 4; // 2 indent + 3*cw + 2 vbars
 
   // Build quota lines
   let quotaLines = '';
@@ -340,32 +332,14 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     if (isCompact) {
       quotaLines = `\n${renderCompactQuotaLine(quotaData, now)}`;
     } else {
-      const blocks = quotaData.map(q => renderQuotaBlock(q, now));
-      const blankCell = ' '.repeat(columnWidth);
-      const rows = [];
-      for (let i = 0; i < blocks.length; i += 2) {
-        const b1 = blocks[i];
-        const b2 = blocks[i + 1];
-        const height = Math.max(b1.length, b2 ? b2.length : 0);
-        for (let j = 0; j < height; j++) {
-          const line1 = b1[j] || blankCell;
-          if (b2) {
-            const line2 = b2[j] || blankCell;
-            rows.push(`  ${line1} ${gray}${glyph.vbar}${reset} ${line2}`);
-          } else {
-            rows.push(`  ${line1}`);
-          }
-        }
-      }
-      const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
-      quotaLines = `\n${dividerLine}\n` + rows.join('\n') + `\n${dividerLine}`;
+      quotaLines = `\n${renderQuotaTable(quotaData, now)}`;
     }
   } else if (quotaData && quotaData.unavailableReason) {
-    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
+    const dividerLine = `  ${gray}${glyph.hbar.repeat(fullWidth - 2)}${reset}`;
     const reason = sanitizeTerminalText(text.quotaReasons[quotaData.unavailableReason] || quotaData.unavailableReason);
     quotaLines = `\n${dividerLine}\n  ${yellow}${text.quotaUnavailable}:${reset} ${gray}${reason}${reset}\n${dividerLine}`;
   } else if (quotaData && quotaData.length === 0) {
-    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
+    const dividerLine = `  ${gray}${glyph.hbar.repeat(fullWidth - 2)}${reset}`;
     quotaLines = `\n${dividerLine}\n  ${gray}${text.quotaLoading}${glyph.ellipsis}${reset}\n${dividerLine}`;
   }
 

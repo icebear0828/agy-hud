@@ -121,6 +121,48 @@ function sanitizeTerminalText(value, maxLength = 120) {
     .slice(0, maxLength);
 }
 
+/**
+ * Visual width of a string in terminal columns, after stripping ANSI escapes.
+ * CJK ideographs / Hangul / Hiragana / Katakana / Fullwidth forms count as 2
+ * columns; everything else as 1. Used to align table cells that may contain
+ * mixed Chinese + ASCII text (e.g. "5h 剩余配额与可用时间").
+ */
+function visualWidth(str) {
+  if (!str) return 0;
+  const clean = String(str)
+    .replace(/\x1b\][^\x07]*?(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;]*[@-~]/g, '');
+  let w = 0;
+  for (const ch of clean) {
+    const cp = ch.codePointAt(0);
+    if (cp < 0x20 || cp === 0x7f) continue;
+    if (
+      (cp >= 0x1100 && cp <= 0x115F) ||
+      (cp >= 0x2E80 && cp <= 0x303E) ||
+      (cp >= 0x3041 && cp <= 0x33FF) ||
+      (cp >= 0x3400 && cp <= 0x4DBF) ||
+      (cp >= 0x4E00 && cp <= 0x9FFF) ||
+      (cp >= 0xA000 && cp <= 0xA4CF) ||
+      (cp >= 0xAC00 && cp <= 0xD7A3) ||
+      (cp >= 0xF900 && cp <= 0xFAFF) ||
+      (cp >= 0xFE30 && cp <= 0xFE4F) ||
+      (cp >= 0xFF00 && cp <= 0xFF60) ||
+      (cp >= 0xFFE0 && cp <= 0xFFE6)
+    ) {
+      w += 2;
+    } else {
+      w += 1;
+    }
+  }
+  return w;
+}
+
+/** Right-pad `str` with spaces so its visual (terminal) width hits `target`. */
+function padToVisualWidth(str, target) {
+  const pad = Math.max(0, target - visualWidth(str));
+  return str + ' '.repeat(pad);
+}
+
 module.exports = {
   ANSI_COLORS,
   DEFAULT_THRESHOLDS,
@@ -136,4 +178,6 @@ module.exports = {
   sanitizeTerminalText,
   formatTokens,
   formatDuration,
+  visualWidth,
+  padToVisualWidth,
 };

@@ -5,61 +5,32 @@ const {
   PROVIDER_LABELS,
 } = require('./lang.js');
 const {
-  QUOTA_CHROME_WIDTH,
   simplifyModelName,
   compactModelName,
   sanitizeTerminalText,
   formatDuration,
+  visualWidth,
+  padToVisualWidth,
 } = require('./format.js');
 
 /**
  * Build the quota-rendering closures bound to a single renderHUD invocation's
- * configuration. The factory is the only API; the returned bag is private to
- * the calling renderHUD body.
+ * configuration. The returned `renderQuotaTable` produces the entire 3-column
+ * table (header + divider + N data rows) as a single newline-joined string.
  *
  * @param {Object} ctx
  * @param {Object} ctx.colors  { cyan, reset, gray, red, yellow, green }
- * @param {Object} ctx.glyph   { bar, empty, vbar, hbar, ellipsis }
+ * @param {Object} ctx.glyph   { bar, empty, vbar, hbar, cross, ellipsis }
  * @param {Object} ctx.thresholds  { warnThresh, critThresh }
  * @param {number} ctx.columnWidth
- * @param {number} ctx.nameWidth
  * @param {string} ctx.divider
+ * @param {Object} ctx.text    LANGUAGE_TEXT entry (en/zh)
  * @param {Function} ctx.createProgressBar  (percent, color, width, isUsage) => string
- * @param {Function} ctx.truncateAndPad     (str, width) => string
  */
 function createQuotaRenderers(ctx) {
-  const { colors, glyph, thresholds, columnWidth, nameWidth, divider, createProgressBar, truncateAndPad } = ctx;
+  const { colors, glyph, thresholds, columnWidth, divider, text, createProgressBar } = ctx;
   const { cyan, reset, gray, red, yellow, green } = colors;
   const { warnThresh, critThresh } = thresholds;
-
-  const renderQuotaColumn = (q, now) => {
-    const pct = Math.round(q.remainingFraction * 100);
-    const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
-
-    // 1. Name
-    const rawName = sanitizeTerminalText(simplifyModelName(q.displayName || q.id), 120);
-    const namePart = truncateAndPad(rawName, nameWidth);
-    const coloredName = `${cyan}${namePart}${reset}`;
-
-    // 2. Bar (8 chars visible: [ + 6 bars + ])
-    const barPart = createProgressBar(pct, pctColor, 6, false);
-
-    // 3. Percent (4 chars)
-    const pctStr = `${pct}%`.padStart(4, ' ');
-    const coloredPct = `${pctColor}${pctStr}${reset}`;
-
-    // 4. Time (6 chars)
-    let rawTime = '';
-    if (q.resetTime) {
-      const resetMs = new Date(q.resetTime).getTime();
-      const secsLeft = Math.max(0, Math.round((resetMs - now) / 1000));
-      rawTime = `~${formatDuration(secsLeft)}`;
-    }
-    const timePart = rawTime.padEnd(6, ' ');
-    const coloredTime = `${gray}${timePart}${reset}`;
-
-    return `${coloredName} ${barPart} ${coloredPct} ${coloredTime}`;
-  };
 
   // Resolve the per-window observations for a quota entry, falling back to
   // the legacy flat shape (no `windows` field) by classifying its resetTime.
@@ -80,55 +51,67 @@ function createQuotaRenderers(ctx) {
     };
   };
 
-  // Render one row of "label [bar] pct ~time" inside a per-model block, padded
-  // out to columnWidth so paired blocks line up under their vertical divider.
-  const renderWindowRow = (label, obs, now) => {
-    const labelPart = `${gray}${label.padEnd(3, ' ')}${reset}`;
-    const indent = '  ';
-    // visible chars: 2 indent + 3 label + 1 space = 6 before the bar
+  // Render one window-cell's content (already padded to columnWidth). Two
+  // shapes: "  [bar] pct% (~Xh Ym)" for an observation, "  ─ no data" for
+  // a window we've never seen.
+  const renderCell = (obs, now) => {
     if (!obs) {
-      const message = `${glyph.hbar} no data yet`;
-      const trailing = Math.max(0, columnWidth - 6 - message.length);
-      return `${indent}${labelPart} ${gray}${message}${reset}${' '.repeat(trailing)}`;
+      const content = `  ${glyph.hbar} ${text.quotaNoData}`;
+      return `${gray}${padToVisualWidth(content, columnWidth)}${reset}`;
     }
     const pct = Math.round(obs.remainingFraction * 100);
-    const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
-    const barPart = createProgressBar(pct, pctColor, 6, false);
+    const pctColor = pct <= (1 - critThresh) * 100 ? red
+                   : pct <= (1 - warnThresh) * 100 ? yellow
+                   : green;
+    // createProgressBar returns `${color}[████░░]${reset}` — the brackets
+    // count as 2 visible chars, bar/empty as 10, so 12 visible width.
+    const barPart = createProgressBar(pct, pctColor, 10, false);
     const pctStr = `${pct}%`.padStart(4, ' ');
-    const coloredPct = `${pctColor}${pctStr}${reset}`;
-    let rawTime = '';
+    let timeStr = '';
     if (obs.resetTime) {
-      const resetMs = new Date(obs.resetTime).getTime();
-      const secsLeft = Math.max(0, Math.round((resetMs - now) / 1000));
-      rawTime = `~${formatDuration(secsLeft)}`;
+      const secsLeft = Math.max(0, Math.round((new Date(obs.resetTime).getTime() - now) / 1000));
+      timeStr = ` (~${formatDuration(secsLeft)})`;
     }
-    const timePart = rawTime.padEnd(6, ' ');
-    const coloredTime = `${gray}${timePart}${reset}`;
-    // 6 (prefix) + 8 (bar) + 1 + 4 (pct) + 1 + 6 (time) = 26 visible chars.
-    const trailing = Math.max(0, columnWidth - 26);
-    return `${indent}${labelPart} ${barPart} ${coloredPct} ${coloredTime}${' '.repeat(trailing)}`;
+    // Visible layout: "  [████████░░]  80% (~2h31m)"  → 2 + 12 + 2 + 4 + variable
+    const content = `  ${barPart}  ${pctColor}${pctStr}${reset}${gray}${timeStr}${reset}`;
+    return padToVisualWidth(content, columnWidth);
   };
 
-  // Render a per-model block: header line with model name, then one row per
-  // window. Returns an array of lines so callers can pair blocks side-by-side.
-  const renderQuotaBlock = (q, now) => {
-    const windows = resolveWindows(q, now);
-    if (!windows) {
-      // Legacy / unlimited / no quota data: single-line layout.
-      return [renderQuotaColumn(q, now)];
-    }
-    const rawName = sanitizeTerminalText(simplifyModelName(q.displayName || q.id), 120);
-    const namePart = truncateAndPad(rawName, nameWidth);
-    const trailing = ' '.repeat(QUOTA_CHROME_WIDTH);
-    const headerLine = `${cyan}${namePart}${reset}${trailing}`;
-    return [
-      headerLine,
-      renderWindowRow('5h', windows.fiveHour, now),
-      renderWindowRow('Wk', windows.weekly, now),
-    ];
+  /**
+   * Render the full quota table as one string (header row, divider row, then
+   * one row per model). Each row is 3 columns wide; column separator is `│`
+   * (or `|`), divider crosses are `┼` (or `+`).
+   *
+   * @param {ModelQuota[]} data
+   * @param {number} now epoch ms
+   * @returns {string}
+   */
+  const renderQuotaTable = (data, now) => {
+    const vbar = `${gray}${glyph.vbar}${reset}`;
+    const indent = '  ';
+
+    const headerCell = (label) =>
+      `${cyan}${padToVisualWidth(' ' + label, columnWidth)}${reset}`;
+    const headerRow = `${indent}${headerCell(text.quotaHeaders.model)}${vbar}${headerCell(text.quotaHeaders.fiveHour)}${vbar}${headerCell(text.quotaHeaders.weekly)}`;
+
+    const dividerSegment = glyph.hbar.repeat(columnWidth);
+    const cross = `${gray}${glyph.cross}${reset}`;
+    const dividerRow = `${indent}${gray}${dividerSegment}${reset}${cross}${gray}${dividerSegment}${reset}${cross}${gray}${dividerSegment}${reset}`;
+
+    const dataRows = data.map(q => {
+      const windows = resolveWindows(q, now);
+      const rawName = sanitizeTerminalText(simplifyModelName(q.displayName || q.id), 80);
+      // 1 leading space for breathing room, then the name; pad to columnWidth.
+      const nameCell = `${cyan}${padToVisualWidth(' ' + rawName, columnWidth)}${reset}`;
+      const fiveCell = renderCell(windows?.fiveHour, now);
+      const weekCell = renderCell(windows?.weekly, now);
+      return `${indent}${nameCell}${vbar}${fiveCell}${vbar}${weekCell}`;
+    });
+
+    return [headerRow, dividerRow, ...dataRows].join('\n');
   };
 
-  // Compact: provider-grouped mini bars
+  // Compact: provider-grouped mini bars (unchanged from prior layout).
   const renderCompactQuotaLine = (data, now) => {
     const groups = new Map();
     for (const q of data) {
@@ -155,11 +138,9 @@ function createQuotaRenderers(ctx) {
   };
 
   return {
-    renderQuotaColumn,
-    resolveWindows,
-    renderWindowRow,
-    renderQuotaBlock,
+    renderQuotaTable,
     renderCompactQuotaLine,
+    resolveWindows,
   };
 }
 

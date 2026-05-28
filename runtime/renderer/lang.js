@@ -10,6 +10,12 @@ const LANGUAGE_TEXT = {
   en: {
     quotaUnavailable: 'Quota unavailable',
     quotaLoading: 'Quota loading',
+    quotaHeaders: {
+      model: 'Model',
+      fiveHour: '5h remaining & reset',
+      weekly: 'Weekly trend',
+    },
+    quotaNoData: 'no data',
     quotaReasons: {
       not_logged_in: 'not logged into Antigravity',
       expired_token: 'Antigravity token expired',
@@ -20,6 +26,12 @@ const LANGUAGE_TEXT = {
   zh: {
     quotaUnavailable: '额度不可用',
     quotaLoading: '额度加载中',
+    quotaHeaders: {
+      model: '模型名称',
+      fiveHour: '5h 剩余配额与可用时间',
+      weekly: '周趋势',
+    },
+    quotaNoData: '暂无数据',
     quotaReasons: {
       not_logged_in: '未登录 Antigravity',
       expired_token: 'Antigravity token 已过期',
