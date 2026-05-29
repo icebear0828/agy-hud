@@ -4,30 +4,92 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const { resolveSafeExecutable, resolveAntigravityPath } = require('./paths.js');
 
+function getGeminiHome() {
+  const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  return path.join(home, '.gemini');
+}
+
+function getActiveAccountFromRegistry() {
+  try {
+    const registryPath = path.join(getGeminiHome(), 'google_accounts.json');
+    if (!fs.existsSync(registryPath)) return null;
+    const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+    if (registry && typeof registry.active === 'string' && registry.active.includes('@')) {
+      return registry.active;
+    }
+  } catch {}
+  return null;
+}
+
 /**
- * Reads the local oauth_creds.json and extracts the email from the id_token payload.
- * Display-only: the local file is trusted as-is; the JWT signature is NOT verified.
+ * Last-resort email source: the id_token in ~/.gemini/oauth_creds.json. This is
+ * the Gemini-CLI credential file, NOT agy's active-account source — agy neither
+ * refreshes it nor rewrites it on account switch, so it can name a stale
+ * account. It is only used when the authoritative source (the userinfo email
+ * cached against the live token) is unavailable (offline / first run).
+ * Display-only: the JWT signature is NOT verified.
  * @returns {string|null}
  */
 function getOauthCredsEmail() {
   try {
-    const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-    const credsPath = path.join(home, '.gemini', 'oauth_creds.json');
-    if (fs.existsSync(credsPath)) {
-      const raw = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
-      if (raw.id_token) {
-        const parts = raw.id_token.split('.');
-        if (parts.length === 3) {
-          // Base64url decode the payload section (index 1). Signature is NOT verified.
-          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-          if (payload && payload.email) {
-            return payload.email;
-          }
-        }
-      }
+    const credsPath = path.join(getGeminiHome(), 'oauth_creds.json');
+    if (!fs.existsSync(credsPath)) return null;
+
+    const raw = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+    if (!raw.id_token) return null;
+
+    const parts = raw.id_token.split('.');
+    if (parts.length !== 3) return null;
+
+    // Base64url decode the payload section (index 1). Signature is NOT verified.
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    if (payload && payload.email) {
+      return payload.email;
     }
   } catch {}
   return null;
+}
+
+/**
+ * Fallback only: agy's account registry (~/.gemini/google_accounts.json `active`).
+ * NOTE: agy does NOT rewrite this on account switch (verified — it lagged behind
+ * a live switch), so it can be stale. Kept as a best-effort guess ranked below
+ * the authoritative cached userinfo email.
+ * @returns {string|null}
+ */
+function getActiveAccountFromRegistry() {
+  try {
+    const registryPath = path.join(getGeminiHome(), 'google_accounts.json');
+    if (!fs.existsSync(registryPath)) return null;
+    const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+    if (registry && typeof registry.active === 'string' && registry.active.includes('@')) {
+      return registry.active;
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Resolves the email of agy's active account for display.
+ *
+ * agy resolves the signed-in account from the live OAuth access token at
+ * runtime and never persists it, so no local file reliably names the active
+ * account after a switch. The authoritative value is the userinfo email the
+ * quota refresh caches against the current token; we read that first and fall
+ * back to the account registry / oauth_creds id_token only when it is absent.
+ * @returns {string|null}
+ */
+function getActiveAccountEmail() {
+  try {
+    const { readToken } = require('./quota/token.js');
+    const { getCachedAccountEmail } = require('./quota/cache.js');
+    const tok = readToken();
+    if (tok) {
+      const email = getCachedAccountEmail(tok);
+      if (email) return email;
+    }
+  } catch {}
+  return getActiveAccountFromRegistry() || getOauthCredsEmail();
 }
 
 /**
@@ -211,7 +273,7 @@ async function getSessionState(transcriptPath) {
     }
   } catch {}
 
-  const username = getOauthCredsEmail() || getFallbackUsername();
+  const username = getActiveAccountEmail() || getFallbackUsername();
   const currentDir = path.basename(cwd);
   const state = { steps, branch, memoryFile, rulesCount, mcpCount, hooksCount, currentDir, username, maxHistoricalCache };
   if (usage) state.usage = usage;

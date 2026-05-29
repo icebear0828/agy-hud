@@ -40,7 +40,7 @@ const {
   didAccessTokenRotate,
   writeCache,
 } = cacheMod;
-const { fetchQuotaFromCloud, fetchTierFromCloud } = cloudMod;
+const { fetchQuotaFromCloud, fetchTierFromCloud, fetchAccountEmail } = cloudMod;
 const { createUnavailableQuotaResult } = modelsMod;
 
 const WINDOWS_CREDENTIAL_REFRESH_DEBOUNCE_MS = 30 * 1000;
@@ -152,12 +152,15 @@ if (process.argv.includes('--refresh')) {
     try {
       const tok = readToken();
       if (tok) {
-        const [fresh, tier] = await Promise.all([
+        const [fresh, tier, accountEmail] = await Promise.all([
           fetchQuotaFromCloud(tok.accessToken),
           fetchTierFromCloud(tok.accessToken),
+          fetchAccountEmail(tok.accessToken),
         ]);
-        if (fresh.length > 0) {
-          writeCache(fresh, tok, tier);
+        // Write when we got quota OR an email: an ineligible/just-switched
+        // account may return no quota yet still needs its email cached.
+        if (fresh.length > 0 || accountEmail) {
+          writeCache(fresh, tok, tier, accountEmail);
         }
       }
     } catch {}
@@ -177,6 +180,7 @@ module.exports = {
   readCacheLastRefreshed,
   readCacheFallback,
   getCachedTier: cacheMod.getCachedTier,
+  getCachedAccountEmail: cacheMod.getCachedAccountEmail,
   // token module
   readToken,
   readWindowsCredentialTokens,
@@ -188,6 +192,7 @@ module.exports = {
   // cloud module
   fetchQuotaFromCloud,
   fetchTierFromCloud,
+  fetchAccountEmail,
   extractTierName: cloudMod.extractTierName,
   // models module
   normalizeQuotaModels: modelsMod.normalizeQuotaModels,

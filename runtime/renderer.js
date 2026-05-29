@@ -343,7 +343,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
 
   const lines = [line1, line2];
   if (line3) lines.push(line3);
-  return lines.join('\n') + quotaLines + '\n';
+  return lines.join('\n') + quotaLines;
 }
 
 module.exports = {

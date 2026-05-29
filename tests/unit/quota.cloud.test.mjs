@@ -5,10 +5,64 @@ import { quotaModule, withEnv } from './_helpers/quota-test-utils.mjs';
 const {
   fetchQuotaFromCloud,
   fetchTierFromCloud,
+  fetchAccountEmail,
   extractTierName,
 } = quotaModule;
 
 describe('quota / cloud', () => {
+  describe('fetchAccountEmail', () => {
+    test('returns the email from the userinfo response', async () => {
+      const originalFetch = globalThis.fetch;
+      let calledUrl = null;
+      globalThis.fetch = async (url) => {
+        calledUrl = String(url);
+        return { ok: true, json: async () => ({ sub: '1', email: 'who@gmail.com' }) };
+      };
+      try {
+        assert.equal(await fetchAccountEmail('tok'), 'who@gmail.com');
+        assert.match(calledUrl, /userinfo/);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    test('falls through to the next endpoint when the first fails', async () => {
+      const originalFetch = globalThis.fetch;
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('connect timeout');
+        return { ok: true, json: async () => ({ email: 'who@gmail.com' }) };
+      };
+      try {
+        assert.equal(await fetchAccountEmail('tok'), 'who@gmail.com');
+        assert.equal(calls, 2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    test('returns null when every endpoint is unavailable', async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () => { throw new Error('network down'); };
+      try {
+        assert.equal(await fetchAccountEmail('tok'), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    test('returns null on a non-ok response with no usable body', async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () => ({ ok: false, status: 401, json: async () => ({}) });
+      try {
+        assert.equal(await fetchAccountEmail('tok'), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
   describe('fetchQuotaFromCloud', () => {
     test('returns an auth diagnostic for auth failures', async () => {
       const originalFetch = globalThis.fetch;

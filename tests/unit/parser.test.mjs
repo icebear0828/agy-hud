@@ -296,3 +296,64 @@ test('getSessionState falls back to OS username if oauth_creds.json is invalid o
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+const b64url = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64')
+  .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+const mockIdToken = (payload) => `${b64url({ alg: 'RS256' })}.${b64url(payload)}.dummy-sig`;
+
+const withTempHome = async (fn) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-account-'));
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+  process.env.HOME = tempDir;
+  process.env.USERPROFILE = tempDir;
+  const geminiDir = path.join(tempDir, '.gemini');
+  fs.mkdirSync(geminiDir, { recursive: true });
+  try {
+    return await fn(geminiDir);
+  } finally {
+    process.env.HOME = originalHome;
+    process.env.USERPROFILE = originalUserProfile;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+};
+
+test('getSessionState prefers google_accounts.json active over the oauth_creds id_token', async () => {
+  await withTempHome(async (geminiDir) => {
+    // Authoritative active account differs from the stale oauth_creds email.
+    fs.writeFileSync(path.join(geminiDir, 'google_accounts.json'), JSON.stringify({
+      active: 'active-user@gmail.com',
+      old: ['stale-user@gmail.com']
+    }));
+    fs.writeFileSync(path.join(geminiDir, 'oauth_creds.json'), JSON.stringify({
+      id_token: mockIdToken({ email: 'stale-user@gmail.com' })
+    }));
+    const state = await getSessionState('missing-transcript-nonexistent.jsonl');
+    assert.strictEqual(state.username, 'active-user@gmail.com');
+  });
+});
+
+test('getSessionState returns the oauth_creds email even when the id_token is expired', async () => {
+  // Real-world state: oauth_creds is the Gemini-CLI file agy never refreshes, so
+  // its id_token is routinely expired while the email is still the right account.
+  await withTempHome(async (geminiDir) => {
+    fs.writeFileSync(path.join(geminiDir, 'oauth_creds.json'), JSON.stringify({
+      id_token: mockIdToken({ email: 'shetterelland@gmail.com', exp: Math.floor((Date.now() - 10000) / 1000) }),
+      expiry_date: Date.now() - 10000
+    }));
+    const state = await getSessionState('missing-transcript-nonexistent.jsonl');
+    assert.strictEqual(state.username, 'shetterelland@gmail.com');
+  });
+});
+
+test('getSessionState falls back to oauth_creds email when google_accounts.json is malformed', async () => {
+  await withTempHome(async (geminiDir) => {
+    fs.writeFileSync(path.join(geminiDir, 'google_accounts.json'), JSON.stringify({ active: null }));
+    fs.writeFileSync(path.join(geminiDir, 'oauth_creds.json'), JSON.stringify({
+      id_token: mockIdToken({ email: 'shetterelland@gmail.com' })
+    }));
+    const state = await getSessionState('missing-transcript-nonexistent.jsonl');
+    assert.strictEqual(state.username, 'shetterelland@gmail.com');
+  });
+});
+

@@ -118,7 +118,7 @@ function readCacheRaw() {
  * only when the cache belongs to the same credential identity (token rotation
  * is fine, account switch is not).
  */
-function writeCache(data, tokenOrAccessToken, tier = null) {
+function writeCache(data, tokenOrAccessToken, tier = null, accountEmail = null) {
   const now = Date.now();
   const previousRaw = readCacheRaw();
   const sameIdentity = previousRaw && doesCachePayloadMatchToken(previousRaw, tokenOrAccessToken);
@@ -150,6 +150,9 @@ function writeCache(data, tokenOrAccessToken, tier = null) {
   // cache belongs to the same identity — fetchTierFromCloud transient failures
   // must not wipe 'Google AI Pro' down to 'Free'.
   const resolvedTier = tier || (sameIdentity ? (previousRaw.tier || null) : null);
+  // Same as tier: account-level, preserved across token rotation but dropped on
+  // an account switch (different identity) so a stale email never outlives it.
+  const resolvedEmail = accountEmail || (sameIdentity ? (previousRaw.accountEmail || null) : null);
   const payload = {
     version: CACHE_VERSION,
     expiresAt,
@@ -157,6 +160,7 @@ function writeCache(data, tokenOrAccessToken, tier = null) {
     cacheKeyHash,
     tokenHash,
     tier: resolvedTier,
+    accountEmail: resolvedEmail,
     data: merged,
   };
   try {
@@ -176,6 +180,25 @@ function getCachedTier() {
   try {
     const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
     return raw.tier || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the cached active-account email, but ONLY when the cache belongs to the
+ * current token. Unlike tier, a wrong email is worse than none: after an account
+ * switch the token no longer matches, so we return null (caller falls back) and
+ * let the background refresh repopulate it for the new account.
+ * @param {string|Object} tokenOrAccessToken
+ * @returns {string|null}
+ */
+function getCachedAccountEmail(tokenOrAccessToken) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+    if (!raw || !raw.accountEmail) return null;
+    if (!doesCachePayloadMatchToken(raw, tokenOrAccessToken)) return null;
+    return raw.accountEmail;
   } catch {
     return null;
   }
@@ -228,6 +251,7 @@ module.exports = {
   readCacheRaw,
   writeCache,
   getCachedTier,
+  getCachedAccountEmail,
   readCachePayload,
   readCacheLastRefreshed,
   readCacheFallback,

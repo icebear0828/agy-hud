@@ -184,6 +184,52 @@ describe('quota / cache', () => {
     });
   });
 
+  describe('getCachedAccountEmail', () => {
+    const { getCachedAccountEmail } = quotaModule;
+
+    test('returns the email only when the cache matches the current token', () => {
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const futureReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        const data = [{ id: 'm', remainingFraction: 0.5, resetTime: futureReset, windows: {} }];
+
+        writeCache(data, 'tok-A', 'Google AI Pro', 'a@gmail.com');
+        // Same token → authoritative email surfaces.
+        assert.equal(getCachedAccountEmail('tok-A'), 'a@gmail.com');
+        // Different token (account switched) → no stale email, caller falls back.
+        assert.equal(getCachedAccountEmail('tok-B'), null);
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('preserves the cached email on a null refresh for the same identity', () => {
+      const { getCachedAccountEmail } = quotaModule;
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const futureReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        const data = [{ id: 'm', remainingFraction: 0.5, resetTime: futureReset, windows: {} }];
+
+        writeCache(data, 'tok', 'Google AI Pro', 'a@gmail.com');
+        // userinfo transient failure (email null) must not wipe a known email.
+        writeCache(data, 'tok', null, null);
+        assert.equal(getCachedAccountEmail('tok'), 'a@gmail.com');
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('returns null when cache has no accountEmail field', () => {
+      withCacheFile(JSON.stringify({ data: [], version: 3, tokenHash: 'x' }), () => {
+        assert.equal(getCachedAccountEmail('tok'), null);
+      });
+    });
+  });
+
   describe('getCachedTier', () => {
     test('returns tier string from cache file', () => {
       withCacheFile(JSON.stringify({ tier: 'Google AI Pro', data: [], version: 3 }), () => {

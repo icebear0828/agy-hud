@@ -73,6 +73,42 @@ function extractTierName(data) {
   return null;
 }
 
+// Google OIDC userinfo endpoints. agy resolves the signed-in account from the
+// live access token at runtime (it is not persisted to any local file), so this
+// is the only authoritative source for the active account email. The OIDC-spec
+// host (openidconnect.googleapis.com) is tried first — it is the more reliable
+// route in proxied environments; the legacy www host is a fallback.
+const USERINFO_ENDPOINTS = [
+  'https://openidconnect.googleapis.com/v1/userinfo',
+  'https://www.googleapis.com/oauth2/v3/userinfo',
+];
+
+/**
+ * Resolve the email of the account the live access token belongs to.
+ * @param {string} accessToken
+ * @returns {Promise<string|null>}
+ */
+async function fetchAccountEmail(accessToken) {
+  for (const endpoint of USERINFO_ENDPOINTS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    try {
+      const r = await fetch(endpoint, {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+        signal: controller.signal,
+      });
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data && typeof data.email === 'string') return data.email;
+    } catch {
+      /* try next endpoint */
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+  return null;
+}
+
 /**
  * Fetch the user's subscription tier from loadCodeAssist.
  * Returns a display string like "Google AI Pro" or null if unavailable.
@@ -172,6 +208,7 @@ module.exports = {
   buildHeaders,
   resolveEndpoints,
   extractTierName,
+  fetchAccountEmail,
   fetchTierFromCloud,
   fetchQuotaFromCloud,
 };
