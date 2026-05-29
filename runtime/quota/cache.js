@@ -121,7 +121,17 @@ function readCacheRaw() {
 function writeCache(data, tokenOrAccessToken, tier = null, accountEmail = null) {
   const now = Date.now();
   const previousRaw = readCacheRaw();
-  const sameIdentity = previousRaw && doesCachePayloadMatchToken(previousRaw, tokenOrAccessToken);
+  let sameIdentity = previousRaw && doesCachePayloadMatchToken(previousRaw, tokenOrAccessToken);
+  // The OAuth token file path is shared across accounts on one machine, so an
+  // access-token rotation (same account) and an account switch look identical
+  // at the token level (same cacheKeyHash, different tokenHash). The account
+  // email disambiguates them: when the previous and the fresh email are both
+  // known and differ, this is a switch — treat it as a new identity so the
+  // previous account's windows / tier / email cannot leak into this one.
+  if (sameIdentity && accountEmail && previousRaw.accountEmail &&
+      accountEmail !== previousRaw.accountEmail) {
+    sameIdentity = false;
+  }
   const previousData = sameIdentity ? previousRaw.data : [];
   const merged = mergeQuotaWindows(data, previousData, now);
 

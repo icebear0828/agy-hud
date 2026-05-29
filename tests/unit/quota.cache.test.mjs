@@ -130,6 +130,69 @@ describe('quota / cache', () => {
       }
     });
 
+    test('drops the previous account quota/tier/email when the email changes (account switch)', () => {
+      // Same token file (same sourcePath → same cacheKeyHash) but a different
+      // account email — the contamination case: a switch must not merge the
+      // prior account's window or preserve its tier.
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const reset = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+        const tokenA = { accessToken: 'access-A', sourcePath: '/p/antigravity-oauth-token' };
+        const tokenAfterSwitch = { accessToken: 'access-B', sourcePath: '/p/antigravity-oauth-token' };
+
+        writeCache([{
+          id: 'm', remainingFraction: 0.9, resetTime: reset,
+          windows: { fiveHour: { remainingFraction: 0.9, resetTime: reset, observedAt: Date.now() } },
+        }], tokenA, 'Google AI Pro', 'a@gmail.com');
+
+        // Switch to account B; tier fetch failed (null), only a weekly window.
+        writeCache([{
+          id: 'm', remainingFraction: 0.1, resetTime: reset,
+          windows: { weekly: { remainingFraction: 0.1, resetTime: reset, observedAt: Date.now() } },
+        }], tokenAfterSwitch, null, 'b@gmail.com');
+
+        const raw = quotaModule.readCachePayload(tokenAfterSwitch);
+        assert.equal(raw.accountEmail, 'b@gmail.com');
+        assert.equal(raw.tier, null, 'must not preserve account A tier across a switch');
+        assert.equal(raw.data[0].windows.fiveHour, undefined, "account A's window must not leak in");
+        assert.ok(raw.data[0].windows.weekly, "account B's own window is kept");
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('still preserves the other window and tier across a token rotation (same account)', () => {
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const reset = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+        const tokenA = { accessToken: 'access-A', sourcePath: '/p/antigravity-oauth-token' };
+        const tokenRotated = { accessToken: 'access-A2', sourcePath: '/p/antigravity-oauth-token' };
+
+        writeCache([{
+          id: 'm', remainingFraction: 0.9, resetTime: reset,
+          windows: { fiveHour: { remainingFraction: 0.9, resetTime: reset, observedAt: Date.now() } },
+        }], tokenA, 'Google AI Pro', 'a@gmail.com');
+
+        // Same account (same email), rotated access token, tier fetch null.
+        writeCache([{
+          id: 'm', remainingFraction: 0.1, resetTime: reset,
+          windows: { weekly: { remainingFraction: 0.1, resetTime: reset, observedAt: Date.now() } },
+        }], tokenRotated, null, 'a@gmail.com');
+
+        const raw = quotaModule.readCachePayload(tokenRotated);
+        assert.equal(raw.accountEmail, 'a@gmail.com');
+        assert.equal(raw.tier, 'Google AI Pro', 'tier survives a rotation');
+        assert.ok(raw.data[0].windows.fiveHour, 'prior window survives a rotation');
+        assert.ok(raw.data[0].windows.weekly);
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
     test('expiresAt accounts for the soonest resetTime across merged windows', () => {
       const { readCachePayload } = quotaModule;
       const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
