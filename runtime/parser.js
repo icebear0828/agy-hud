@@ -139,13 +139,13 @@ function findContextWindow(value, depth = 0) {
  */
 function parseDurationToMs(durationStr) {
   let ms = 0;
-  const matches = durationStr.match(/(\d+)[hms]/g);
-  if (matches) {
-    for (const match of matches) {
-      const val = parseInt(match, 10);
-      if (match.endsWith('h')) ms += val * 60 * 60 * 1000;
-      else if (match.endsWith('m')) ms += val * 60 * 1000;
-      else if (match.endsWith('s')) ms += val * 1000;
+  const segments = [...durationStr.matchAll(/(\d+)([hms])/g)];
+  if (segments.length > 0) {
+    for (const [, val, unit] of segments) {
+      const n = parseInt(val, 10);
+      if (unit === 'h') ms += n * 60 * 60 * 1000;
+      else if (unit === 'm') ms += n * 60 * 1000;
+      else if (unit === 's') ms += n * 1000;
     }
   } else {
     const val = parseInt(durationStr, 10);
@@ -154,6 +154,24 @@ function parseDurationToMs(durationStr) {
     }
   }
   return ms;
+}
+
+/**
+ * Recursively searches an object tree for a key, up to maxDepth levels deep.
+ * Safer than JSON.stringify + regex for extracting nested API error fields.
+ * @param {unknown} obj
+ * @param {string} key
+ * @param {number} [maxDepth=6]
+ * @returns {unknown}
+ */
+function deepFind(obj, key, maxDepth = 6) {
+  if (!obj || typeof obj !== 'object' || maxDepth === 0) return undefined;
+  if (Object.prototype.hasOwnProperty.call(obj, key)) return obj[key];
+  for (const v of Object.values(obj)) {
+    const found = deepFind(v, key, maxDepth - 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
 }
 
 async function getSessionState(transcriptPath) {
@@ -183,26 +201,29 @@ async function getSessionState(transcriptPath) {
           }
         }
 
-        // Parse image model 429 rate limits
-        const entryStr = JSON.stringify(entry);
-        if (entryStr.includes('429') || entryStr.includes('RESOURCE_EXHAUSTED')) {
-          const cleanStr = entryStr.replace(/\\"/g, '"');
+        // Parse image model 429 rate limits.
+        // Use deepFind on the already-parsed object instead of stringify+regex
+        // to avoid false positives (e.g. step_index or token counts containing "429").
+        const entryContent = typeof entry.content === 'string' ? entry.content : '';
+        const isRateLimit = (
+          deepFind(entry, 'RESOURCE_EXHAUSTED') !== undefined ||
+          deepFind(entry, 'quotaResetDelay') !== undefined ||
+          deepFind(entry, 'quotaResetTimeStamp') !== undefined ||
+          entryContent.includes('HTTP 429') ||
+          entryContent.includes('RESOURCE_EXHAUSTED')
+        );
+        if (isRateLimit) {
           let delayMs = 0;
           let timestampMs = 0;
 
-          const delayMatch = cleanStr.match(/"quotaResetDelay"\s*:\s*"([^"]+)"/) || cleanStr.match(/quotaResetDelay[:\s]+"?([0-9a-zA-Z]+)"?/);
-          if (delayMatch) {
-            delayMs = parseDurationToMs(delayMatch[1]);
-          } else {
-            const retryMatch = cleanStr.match(/"retryDelay"\s*:\s*"([^"]+)"/) || cleanStr.match(/retryDelay[:\s]+"?([0-9a-zA-Z]+)"?/);
-            if (retryMatch) {
-              delayMs = parseDurationToMs(retryMatch[1]);
-            }
+          const delayVal = deepFind(entry, 'quotaResetDelay') ?? deepFind(entry, 'retryDelay');
+          if (typeof delayVal === 'string' && delayVal) {
+            delayMs = parseDurationToMs(delayVal);
           }
 
-          const tsMatch = cleanStr.match(/"quotaResetTimeStamp"\s*:\s*"([^"]+)"/) || cleanStr.match(/quotaResetTimeStamp[:\s]+"?([^"\s]+)"?/);
-          if (tsMatch) {
-            const parsedTs = Date.parse(tsMatch[1]);
+          const tsVal = deepFind(entry, 'quotaResetTimeStamp');
+          if (typeof tsVal === 'string' && tsVal) {
+            const parsedTs = Date.parse(tsVal);
             if (Number.isFinite(parsedTs)) {
               timestampMs = parsedTs;
             }
