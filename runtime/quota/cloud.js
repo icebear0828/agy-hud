@@ -188,12 +188,16 @@ async function fetchQuotaFromCloud(accessToken) {
       const data = await r.json();
       clearTimeout(timeoutId);
       const models = data.models || {};
-      const interestingModelIds = envModelIds
+      let interestingModelIds = envModelIds
         || config.interestingModels
         || resolveDeprecatedIds(
             discoverAgentModelIds(data) || FALLBACK_AGENT_MODEL_IDS,
             data
           );
+      if (data && data.models) {
+        const imageModelIds = Object.keys(data.models).filter(id => id.includes('-image') || id.toLowerCase().includes('image'));
+        interestingModelIds = [...new Set([...interestingModelIds, ...imageModelIds])];
+      }
       return normalizeQuotaModels(models, interestingModelIds);
     } catch {
       clearTimeout(timeoutId);

@@ -273,4 +273,39 @@ describe('renderer / quota lines', () => {
       assert.doesNotMatch(output2, /Quota loading/);
     });
   });
+
+  describe('image model quota and rate limit display', () => {
+    test('renders Image Quota progress bar when quota is normal', () => {
+      const state = { steps: 5, branch: 'dev' };
+      const agyData = {
+        context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
+      };
+      const quotaData = [
+        { id: 'gemini-3.1-flash-image', displayName: 'Gemini 3.1 Flash Image', remainingFraction: 0.9 }
+      ];
+
+      const output = renderHUD(state, agyData, { display: { unicode: true, useNerdFonts: false } }, quotaData);
+      assert.match(output, /Image Quota:/);
+      assert.match(output, /90%/);
+    });
+
+    test('renders Image Quota Exhausted countdown when rate limited', () => {
+      const resetTime = new Date(Date.now() + 3 * 3600 * 1000 + 14 * 60 * 1000).toISOString();
+      const state = {
+        steps: 5,
+        branch: 'dev',
+        imageExhausted: { exhausted: true, resetTime }
+      };
+      const agyData = {
+        context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
+      };
+      const quotaData = [
+        { id: 'gemini-3.1-flash-image', displayName: 'Gemini 3.1 Flash Image', remainingFraction: 0.0 }
+      ];
+
+      const output = renderHUD(state, agyData, { display: { unicode: true, useNerdFonts: false } }, quotaData);
+      assert.match(output, /Image Quota Exhausted/);
+      assert.match(output, /03h14m/);
+    });
+  });
 });

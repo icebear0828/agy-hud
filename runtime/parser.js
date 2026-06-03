@@ -137,12 +137,32 @@ function findContextWindow(value, depth = 0) {
  * @param {string} transcriptPath
  * @returns {Promise<SessionState>}
  */
+function parseDurationToMs(durationStr) {
+  let ms = 0;
+  const matches = durationStr.match(/(\d+)[hms]/g);
+  if (matches) {
+    for (const match of matches) {
+      const val = parseInt(match, 10);
+      if (match.endsWith('h')) ms += val * 60 * 60 * 1000;
+      else if (match.endsWith('m')) ms += val * 60 * 1000;
+      else if (match.endsWith('s')) ms += val * 1000;
+    }
+  } else {
+    const val = parseInt(durationStr, 10);
+    if (Number.isFinite(val)) {
+      ms = val * 1000;
+    }
+  }
+  return ms;
+}
+
 async function getSessionState(transcriptPath) {
   let steps = 0;
   let branch = 'main';
   let gitPath = null;
   let usage;
   let maxHistoricalCache = 0;
+  let imageExhausted = null;
 
   try {
     const fileContent = fs.readFileSync(transcriptPath, 'utf8');
@@ -160,6 +180,49 @@ async function getSessionState(transcriptPath) {
                                (contextWindow.current_usage && contextWindow.current_usage.cache_read_input_tokens) || 0;
           if (cacheReadVal > maxHistoricalCache) {
             maxHistoricalCache = cacheReadVal;
+          }
+        }
+
+        // Parse image model 429 rate limits
+        const entryStr = JSON.stringify(entry);
+        if (entryStr.includes('429') || entryStr.includes('RESOURCE_EXHAUSTED')) {
+          const cleanStr = entryStr.replace(/\\"/g, '"');
+          let delayMs = 0;
+          let timestampMs = 0;
+
+          const delayMatch = cleanStr.match(/"quotaResetDelay"\s*:\s*"([^"]+)"/) || cleanStr.match(/quotaResetDelay[:\s]+"?([0-9a-zA-Z]+)"?/);
+          if (delayMatch) {
+            delayMs = parseDurationToMs(delayMatch[1]);
+          } else {
+            const retryMatch = cleanStr.match(/"retryDelay"\s*:\s*"([^"]+)"/) || cleanStr.match(/retryDelay[:\s]+"?([0-9a-zA-Z]+)"?/);
+            if (retryMatch) {
+              delayMs = parseDurationToMs(retryMatch[1]);
+            }
+          }
+
+          const tsMatch = cleanStr.match(/"quotaResetTimeStamp"\s*:\s*"([^"]+)"/) || cleanStr.match(/quotaResetTimeStamp[:\s]+"?([^"\s]+)"?/);
+          if (tsMatch) {
+            const parsedTs = Date.parse(tsMatch[1]);
+            if (Number.isFinite(parsedTs)) {
+              timestampMs = parsedTs;
+            }
+          }
+
+          let resetTimeMs = 0;
+          if (timestampMs > 0) {
+            resetTimeMs = timestampMs;
+          } else if (delayMs > 0) {
+            const entryTime = entry.created_at ? new Date(entry.created_at).getTime() : Date.now();
+            resetTimeMs = entryTime + delayMs;
+          }
+
+          if (resetTimeMs > Date.now()) {
+            if (!imageExhausted || resetTimeMs > new Date(imageExhausted.resetTime).getTime()) {
+              imageExhausted = {
+                exhausted: true,
+                resetTime: new Date(resetTimeMs).toISOString()
+              };
+            }
           }
         }
       } catch {
@@ -277,6 +340,7 @@ async function getSessionState(transcriptPath) {
   const currentDir = path.basename(cwd);
   const state = { steps, branch, memoryFile, rulesCount, mcpCount, hooksCount, currentDir, username, maxHistoricalCache };
   if (usage) state.usage = usage;
+  if (imageExhausted) state.imageExhausted = imageExhausted;
   return state;
 }
 

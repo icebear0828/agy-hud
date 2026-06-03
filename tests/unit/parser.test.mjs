@@ -357,3 +357,42 @@ test('getSessionState falls back to oauth_creds email when google_accounts.json 
   });
 });
 
+test('getSessionState parses image rate limit 429 errors from transcript', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-ratelimit-'));
+  try {
+    const transcriptPath = path.join(tempDir, 'transcript.jsonl');
+    
+    // Line with quotaResetDelay
+    const entry1 = {
+      step_index: 1,
+      created_at: new Date(Date.now() - 5000).toISOString(),
+      content: 'API error: HTTP 429 {"error": {"message": "RESOURCE_EXHAUSTED", "details": [{"quotaResetDelay": "3h14m20s"}]}}'
+    };
+
+    // Line with quotaResetTimeStamp
+    const entry2 = {
+      step_index: 2,
+      created_at: new Date(Date.now() - 1000).toISOString(),
+      content: `API error: HTTP 429 {"error": {"message": "RESOURCE_EXHAUSTED", "details": [{"quotaResetTimeStamp": "${new Date(Date.now() + 4 * 3600 * 1000).toISOString()}"}]}}`
+    };
+
+    fs.writeFileSync(transcriptPath, [
+      JSON.stringify(entry1),
+      JSON.stringify(entry2),
+      ''
+    ].join('\n'));
+
+    const state = await getSessionState(transcriptPath);
+
+    assert.ok(state.imageExhausted);
+    assert.strictEqual(state.imageExhausted.exhausted, true);
+    // Should prefer the later timestamp (4h) over the earlier delay (3h14m)
+    const resetTime = new Date(state.imageExhausted.resetTime).getTime();
+    assert.ok(resetTime > Date.now() + 3.9 * 3600 * 1000);
+    assert.ok(resetTime < Date.now() + 4.1 * 3600 * 1000);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+

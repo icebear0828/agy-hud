@@ -277,6 +277,34 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     }
     line2Parts.push(`${pctColor}Quota: ${pct}%${reset}${timeStr}`);
   }
+
+  // Render Image Quota or rate limit exhaustion status
+  const imageExhausted = state.imageExhausted;
+  let isImageExhaustedDisplayed = false;
+  if (imageExhausted) {
+    const secsLeft = Math.max(0, Math.round((new Date(imageExhausted.resetTime).getTime() - Date.now()) / 1000));
+    if (secsLeft > 0) {
+      const pad = (n) => String(n).padStart(2, '0');
+      const h = Math.floor(secsLeft / 3600);
+      const m = Math.floor((secsLeft % 3600) / 60);
+      const countdownStr = `${pad(h)}h${pad(m)}m`;
+      const icon = unicode ? '⚠️ ' : '[!] ';
+      line2Parts.push(`${red}${icon}Image Quota Exhausted (Resets in: ${countdownStr})${reset}`);
+      isImageExhaustedDisplayed = true;
+    }
+  }
+
+  if (!isImageExhaustedDisplayed) {
+    const imgQ = quotaData && quotaData.find(q => (q.id && q.id.includes('image')) || (q.displayName && q.displayName.toLowerCase().includes('image')));
+    if (imgQ) {
+      const pct = Math.round(imgQ.remainingFraction * 100);
+      const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
+      const bar = createProgressBar(pct, pctColor, 10, false);
+      const imgIcon = unicode ? '🖼️ ' : '[IMG] ';
+      line2Parts.push(`${cyan}${imgIcon}Image Quota: ${bar} ${pctColor}${pct}%${reset}`);
+    }
+  }
+
   const line2 = line2Parts.join(divider);
 
   // Layer 3: project metadata (non-zero items only)
