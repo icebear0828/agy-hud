@@ -19,7 +19,7 @@ describe('renderer / quota lines', () => {
       const lines = output.split('\n');
       const gptLine = lines.find(l => l.includes('GPT-OSS'));
       assert.ok(gptLine, 'GPT-OSS line must exist');
-      assert.doesNotMatch(gptLine, /│/, 'Odd/last column must not render vertical divider');
+      assert.match(gptLine, /│/, 'Odd/last column now renders vertical divider to align grid');
 
       // Verify vertical grid lines
       assert.match(output, /───/);

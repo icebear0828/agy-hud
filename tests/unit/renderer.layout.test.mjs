@@ -128,8 +128,8 @@ describe('renderer / metadata line', () => {
     };
     const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } });
     const lines = output.trim().split('\n');
-    // Only 2 lines (identity + resources), no metadata line
-    assert.equal(lines.length, 2);
+    // 4 lines now due to top/bottom borders wrapping 2 data lines (identity + resources)
+    assert.equal(lines.length, 4);
   });
 
   test('limits breadcrumb metadata by breadcrumbCount', () => {
@@ -286,7 +286,7 @@ describe('renderer / current directory', () => {
       }
     });
     assert.match(output1, /my-project-dir/);
-    assert.match(output1, /my-project-dir.*[|│].*\[B\] main/);
+    assert.match(output1, /my-project-dir.*\[B\] main.*[|│]/);
 
     // Test with showCurrentDir = false
     const output2 = renderHUD(state, agyData, {

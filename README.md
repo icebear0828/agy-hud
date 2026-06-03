@@ -20,32 +20,41 @@ agy-hud supports two display modes for quota tracking: **Table Mode** (default) 
 Useful for detailed side-by-side comparison of multiple models' quota.
 
 ```
-⎇ main │ Gemini 3.5 Flash(L) │ Google AI Pro
-⚿ 83.7k ↑4.8k ↓13.9k ⟳65.1k │ ⛁ 75.4k/1M [█░░░░░░░░░] 8% │ ⚡0 ✓0
-1 GEMINI.md │ 2 hooks
-  ─────────────────────────────────────────────────────────────────────────────────
-  Gemini 3.5 Flash(M) [█████░]  80% ~3h22m │ Gemini 3.5 Flash(H) [█████░]  80% ~3h22m
-  Gemini 3.5 Flash(L) [█████░]  80% ~3h22m │ Gemini 3.1 Pro(L)   [█████░]  80% ~3h22m
-  Gemini 3.1 Pro(H)   [█████░]  80% ~3h22m │ Sonnet 4.6(Th)      [██░░░░]  40% ~6d4h
-  Opus 4.6(Th)        [██░░░░]  40% ~6d4h  │ GPT-OSS 120B        [██░░░░]  40% ~6d4h
-  ─────────────────────────────────────────────────────────────────────────────────
+  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  user@domain.com agy-hud ⎇ main                          │ Gemini 3.5 Flash(H) Google AI Pro                      
+  ⚿ Tokens 253.2k (in: 126.6k, out: 17.5k, cache: 109.1k) │ ⛁ 126.6k/250k [█████░░░░░] 45%                         
+  1 MEMORY.md                                             │ 🖼️ Image Quota: [█████░] 90% ~3h48m  3 rules • 1 hooks 
+  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Gemini 3.5 Flash(H)                [██████] 100% ~3h48m │ Gemini 3.1 Pro(L)                  [█████░]  80% ~3h48m
+  Sonnet 4.6 (Thinking)              [███░░░]  50% ~4h48m │                                                        
+  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 ### Compact Mode
-Highly space-efficient. It embeds the current model's remaining quota directly on line 2, and displays provider-grouped mini progress bars.
+Highly space-efficient. It embeds the current model's remaining quota and reset countdown directly in the first line (next to model name), and displays provider-grouped mini progress bars.
 
 ```
-⎇ main │ Claude Sonnet 4.6 │ Pro
-⚿ 138.4M ↑6k ↓202k ⟳138.2M │ ⛁ 138.2M/1M [████░░░░░░] 40% │ ⚡42 ✓3 │ Quota: 100% ~5h
-1 GEMINI.md │ 4 rules │ 1 MCPs │ 5 hooks
-Anthropic: Son███ Opus█░░ │ Google: Flash███ Pro███ │ OpenAI: GPT█░░
+  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  user@domain.com agy-hud ⎇ main                          │ Gemini 3.5 Flash(H) Google AI Pro (Quota: 100% ~3h48m) 
+  ⚿ Tokens 253.2k (in: 126.6k, out: 17.5k, cache: 109.1k) │ ⛁ 126.6k/250k [█████░░░░░] 45%                         
+  1 MEMORY.md                                             │ 🖼️ Image Quota: [█████░] 90% ~3h48m  3 rules • 1 hooks 
+  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Other: Flash(H)███ Pro(L)██░ Sonnet██░ Gemini███
+  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 ### Layout breakdown
-- **Line 1** (identity): Resolved username/email (if enabled), Git branch, current model, plan tier.
-- **Line 2** (resources): Compact token breakdown (↑in ↓out ⟳cache — cache hidden when zero), context window bar with percentage, step/task counts. In Compact Mode, also shows current model quota.
-- **Line 3** (metadata): Project memory file, rules, MCPs, hooks — **only non-zero items shown**; entire line omitted when all are zero.
-- **Quota rows**: Account quota by model (matches `/usage` exactly) with reset countdowns. Durations ≥24h show days (e.g. `~6d4h`), ≥10h drop minutes (e.g. `~12h`).
+- **Grid Alignment**: Information is structured in a two-column layout. The vertical divider `│` aligns perfectly across all data rows and quota tables.
+- **Line 1** (identity & status): 
+  - **Left column**: Username, current directory, and Git branch.
+  - **Right column**: Current model and plan tier. In **Compact Mode**, the current model's remaining quota percent and reset countdown are shown here inline.
+- **Line 2** (resource usage): 
+  - **Left column**: Token usage breakdown (input, output, and cache — cache is hidden when zero).
+  - **Right column**: Workspace context window progress bar and percentage.
+- **Line 3** (metadata & image quota): 
+  - **Left column**: Project memory file / breadcrumbs.
+  - **Right column**: Image quota progress bar/exhausted status, along with rules, MCPs, and hooks count (only non-zero items shown; entire Line 3 is omitted if both columns are empty).
+- **Quota rows**: Account quota by model (matches `/usage` exactly) with reset countdowns, enclosed in top and bottom divider lines to form a clean closed box frame.
 
 ---
 
