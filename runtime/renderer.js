@@ -325,7 +325,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   }
 
   if (!isImageExhaustedDisplayed) {
-    const imgQ = quotaData && quotaData.find(q => (q.id && q.id.includes('image')) || (q.displayName && q.displayName.toLowerCase().includes('image')));
+    const imgQ = quotaData && quotaData.find(q => q.id && q.id.toLowerCase().includes('image'));
     if (imgQ) {
       const pct = Math.round(imgQ.remainingFraction * 100);
       const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
@@ -416,7 +416,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
       const compactLine = `  ${renderCompactQuotaLine(quotaData, now)}`;
       lines.push(dividerLine, compactLine, dividerLine);
     } else {
-      const isImageModel = (q) => (q.id && q.id.includes('image')) || (q.displayName && q.displayName.toLowerCase().includes('image'));
+      const isImageModel = (q) => q.id && q.id.toLowerCase().includes('image');
       const tableQuota = quotaData.filter(q => !isImageModel(q));
       const cols = tableQuota.map(q => renderQuotaColumn(q, now));
 
