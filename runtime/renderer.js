@@ -6,191 +6,76 @@ const {
   DEFAULT_THRESHOLDS,
   DEFAULT_COLUMN_WIDTH,
   QUOTA_CHROME_WIDTH,
-  abbreviateDisplayName,
   simplifyModelName,
-  compactModelName,
-  modelNamesMatch,
-  modelIncludesCacheInInput,
   sanitizeTerminalText,
   formatTokens,
   formatDuration,
+  modelIncludesCacheInInput,
+  modelNamesMatch,
+  abbreviateDisplayName,
+  compactModelName,
 } = require('./renderer/format.js');
 const {
   LANGUAGE_TEXT,
   resolveLanguage,
 } = require('./renderer/lang.js');
-const { createQuotaRenderers } = require('./renderer/quota-render.js');
 
-/**
- * Renders the HUD string for the status line using native ANSI escape codes.
- * Falls back to ASCII when the terminal can't render box-drawing / Nerd Font
- * glyphs (detected via encoding.js, override via config.display.unicode).
- *
- * @param {Object} state
- * @param {Object} agyData
- * @param {Object} config
- * @param {Array}  quotaData  — from quota.js getQuota()
- * @param {Object} updateInfo — local cache info about updates
- * @returns {string}
- */
 function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const display = config?.display || {};
-  const useNerd = display.useNerdFonts === true;
-  const unicode = typeof display.unicode === 'boolean'
-    ? display.unicode
-    : supportsUnicode();
-  const showGitBranch = display.showGitBranch !== false;
-  const showTokenBar = display.showTokenBar !== false;
-  const showBreadcrumbs = display.showBreadcrumbs !== false;
-  const showCurrentDir = display.showCurrentDir !== false;
-  const showUsername = display.showUsername === true;
+  const unicode = typeof display.unicode === 'boolean' ? display.unicode : supportsUnicode();
   const text = LANGUAGE_TEXT[resolveLanguage(config)];
 
-  // ANSI escape sequences
   const reset = '\x1b[0m';
-  const bold = '\x1b[1m';
-
-  const getThemeColor = (key, defaultColor) => {
-    const name = config?.theme?.[key] || defaultColor;
-    return ANSI_COLORS[name] || ANSI_COLORS[defaultColor];
-  };
-
-  const primaryColor = getThemeColor('primary', 'green');
-  const secondaryColor = getThemeColor('secondary', 'gray');
-  const warningColor = getThemeColor('warning', 'yellow');
-  const criticalColor = getThemeColor('critical', 'red');
-
-  const gray = secondaryColor;
+  const gray = ANSI_COLORS.gray;
   const blue = ANSI_COLORS.blue;
   const magenta = ANSI_COLORS.magenta;
-  const yellow = warningColor;
+  const yellow = ANSI_COLORS.yellow;
   const cyan = ANSI_COLORS.cyan;
-  const green = primaryColor;
-  const red = criticalColor;
+  const green = ANSI_COLORS.green;
+  const red = ANSI_COLORS.red;
 
-  const warnThresh = typeof config?.thresholds?.warning === 'number'
-    ? config.thresholds.warning
-    : DEFAULT_THRESHOLDS.warning;
-  const critThresh = typeof config?.thresholds?.critical === 'number'
-    ? config.thresholds.critical
-    : DEFAULT_THRESHOLDS.critical;
+  const warnThresh = config?.thresholds?.warning ?? DEFAULT_THRESHOLDS.warning;
+  const critThresh = config?.thresholds?.critical ?? DEFAULT_THRESHOLDS.critical;
 
-  const columnWidth = typeof display.columnWidth === 'number'
-    ? display.columnWidth
-    : DEFAULT_COLUMN_WIDTH;
-  const nameWidth = Math.max(10, columnWidth - QUOTA_CHROME_WIDTH);
+  // Extract variables
+  const branch = sanitizeTerminalText(state.branch || 'unknown', 20);
+  const currentDir = sanitizeTerminalText(state.currentDir || '', 20);
+  const username = sanitizeTerminalText(display.username || state.username || '', 20);
+  const rawModelName = agyData?.model?.display_name || agyData?.model?.id || 'Unknown Model';
+  const modelName = sanitizeTerminalText(simplifyModelName(rawModelName), 40);
+  const plan = sanitizeTerminalText(tierName || agyData?.plan_tier || 'Free', 15);
 
-  // Box-drawing glyphs with ASCII fallback
-  const glyph = unicode
-    ? { bar: '█', empty: '░', vbar: '│', hbar: '─', ellipsis: '…' }
-    : { bar: '#', empty: '-', vbar: '|', hbar: '-', ellipsis: '...' };
-
-  // Icons: Nerd Font > emoji > plain ASCII
-  let branchIcon, planIcon, stepIcon, taskIcon, tokenIcon, ctxIcon, modelIcon;
-  if (useNerd) {
-    branchIcon = ' ';
-    planIcon = '󰌢 ';
-    stepIcon = ' ';
-    taskIcon = ' ';
-    tokenIcon = '󰚩 ';
-    ctxIcon = '󱔐 ';
-    modelIcon = '󰚗 ';
-  } else if (unicode) {
-    branchIcon = '⎇ ';
-    planIcon = '❖ ';
-    stepIcon = '⚡ ';
-    taskIcon = '✓ ';
-    tokenIcon = '⚿ ';
-    ctxIcon = '⛁ ';
-    modelIcon = '🤖 ';
-  } else {
-    branchIcon = '[B] ';
-    planIcon = '[P] ';
-    stepIcon = '[S] ';
-    taskIcon = '[T] ';
-    tokenIcon = '[Tk] ';
-    ctxIcon = '[C] ';
-    modelIcon = '[M] ';
-  }
-
-  // Override via config.icons if present — strip control/escape sequences first
-  if (config && config.icons) {
-    const sanitizeIcon = (v) => sanitizeTerminalText(v, 8);
-    if (config.icons.branch !== undefined) branchIcon = sanitizeIcon(config.icons.branch);
-    if (config.icons.plan !== undefined) planIcon = sanitizeIcon(config.icons.plan);
-    if (config.icons.step !== undefined) stepIcon = sanitizeIcon(config.icons.step);
-    if (config.icons.task !== undefined) taskIcon = sanitizeIcon(config.icons.task);
-    if (config.icons.token !== undefined) tokenIcon = sanitizeIcon(config.icons.token);
-    if (config.icons.ctx !== undefined) ctxIcon = sanitizeIcon(config.icons.ctx);
-    if (config.icons.model !== undefined) modelIcon = sanitizeIcon(config.icons.model);
-  }
-
-  const branchName = `${blue}${branchIcon}${sanitizeTerminalText(state.branch || 'unknown', 80)}${reset}`;
-
-  // Compact arrow glyphs for token breakdown
-  const inArrow = unicode ? '↑' : '^';
-  const outArrow = unicode ? '↓' : 'v';
-  const cacheArrow = unicode ? '⟳' : 'c:';
-
-  // Data extraction
   const usage = agyData?.context_window || {};
   const totalInput = usage.total_input_tokens || 0;
   const totalOutput = usage.total_output_tokens || 0;
   const ctxPercent = usage.used_percentage || 0;
-  const plan = sanitizeTerminalText(tierName || agyData?.plan_tier || 'Free', 80);
-  const tasks = agyData?.task_count || 0;
 
-  // Extract model information
-  const rawModelName = agyData?.model?.display_name || agyData?.model?.id || 'Unknown Model';
-  const modelName = sanitizeTerminalText(simplifyModelName(rawModelName), 80);
+  // Badge generator helper
+  const badge = (label, value, color) => {
+    return `${gray}[${color}${label}${gray}:${reset} ${value}${gray}]${reset}`;
+  };
 
-  const createProgressBar = (percent, color, width = 10, isUsage = true) => {
+  const createProgressBar = (percent, color, width = 6) => {
     const completed = Math.round((percent / 100) * width);
     const remaining = width - completed;
-
-    // Auto-color based on usage vs remaining
-    let finalColor = color;
-    if (isUsage) {
-      if (percent > critThresh * 100) finalColor = red;
-      else if (percent > warnThresh * 100) finalColor = yellow;
-    } else {
-      if (percent <= (1 - critThresh) * 100) finalColor = red;
-      else if (percent <= (1 - warnThresh) * 100) finalColor = yellow;
-      else finalColor = green;
-    }
-
-    return `${finalColor}[${glyph.bar.repeat(completed)}${glyph.empty.repeat(remaining)}]${reset}`;
+    const glyphBar = unicode ? '█' : '#';
+    const glyphEmpty = unicode ? '░' : '-';
+    return `[${color}${glyphBar.repeat(completed)}${gray}${glyphEmpty.repeat(remaining)}${reset}${gray}]${reset}`;
   };
 
-  const truncateAndPad = (str, width) => {
-    if (str.length > width) {
-      return str.substring(0, width - 1) + glyph.ellipsis;
-    }
-    return str.padEnd(width, ' ');
-  };
-
-  const divider = ` ${gray}${glyph.vbar}${reset} `;
-
-  // Layer 1: identity + status
-  const line1Parts = [
-    `${green}${modelName}${reset}`,
-    `${magenta}${plan}${reset}`,
-  ];
-  if (showGitBranch) line1Parts.unshift(branchName);
-  const currentDir = sanitizeTerminalText(state.currentDir || '', 80);
-  if (showCurrentDir && currentDir) {
-    line1Parts.unshift(`${blue}${currentDir}${reset}`);
+  // Row 1: Context Badges
+  const r1Parts = [];
+  if (username) r1Parts.push(badge('user', username, cyan));
+  if (currentDir) r1Parts.push(badge('dir', currentDir, blue));
+  if (branch) r1Parts.push(badge('branch', branch, blue));
+  r1Parts.push(badge('model', modelName, green));
+  r1Parts.push(badge('tier', plan, magenta));
+  
+  if (updateInfo?.updateAvailable) {
+    r1Parts.push(badge('update', `v${updateInfo.latestVersion}`, yellow));
   }
-  const username = sanitizeTerminalText(display.username || state.username || '', 80);
-  if (showUsername && username) {
-    line1Parts.unshift(`${cyan}${username}${reset}`);
-  }
-  if (updateInfo && updateInfo.updateAvailable) {
-    const updateIcon = unicode ? '⟳' : '[UP]';
-    line1Parts.push(`${yellow}${updateIcon} v${updateInfo.latestVersion}${reset}`);
-  }
-  const line1 = line1Parts.join(divider);
 
+  // Compiling detailed cache breakdown for tokens
   const firstNumber = (...values) => values.find(value => Number.isFinite(value));
   const agyCurrentUsage = usage.current_usage || {};
   const transcriptUsage = state?.usage || {};
@@ -215,7 +100,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   );
   if (inTokens === undefined) {
     inTokens = Math.max(0, totalInput - cacheTotal);
-  } else if (modelIncludesCacheInInput(rawModelName)) {
+  } else if (modelIncludesCacheInInput && modelIncludesCacheInInput(rawModelName)) {
     inTokens = Math.max(0, inTokens - cacheTotal);
   }
   const outTokens = totalOutput;
@@ -233,158 +118,157 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   }
 
   const tokenTotal = displayIn + outTokens + displayCache;
-
-  // Compact token format: Tokens 150k (in: 127k, out: 23k, cache: Xk)
   const detailParts = [`in: ${formatTokens(displayIn)}`, `out: ${formatTokens(outTokens)}`];
   if (displayCache > 0) {
     const cacheLabel = isCacheSmoothApplied ? `${formatTokens(displayCache)}*` : formatTokens(displayCache);
     detailParts.push(`cache: ${cacheLabel}`);
   }
-  const tokenParts = `${formatTokens(tokenTotal)} ${gray}(${reset}${detailParts.join(', ')}${gray})${reset}`;
-  const tokenPrefix = tokenIcon === '[Tk] ' ? 'Tokens' : `${tokenIcon}Tokens`;
-  const tokensStr = `${cyan}${tokenPrefix} ${tokenParts}${reset}`;
-  const ctxBar = createProgressBar(ctxPercent, cyan, 10, true);
-  const ctxPctStr = `${Math.round(ctxPercent)}%`;
-  const ctxStr = `${cyan}${ctxIcon}${formatTokens(totalInput)}/${formatTokens(usage.context_window_size || 0)}${reset} ${ctxBar} ${cyan}${ctxPctStr}${reset}`;
+  const tokensVal = `${formatTokens(tokenTotal)} ${gray}(in: ${formatTokens(displayIn)}, out: ${formatTokens(outTokens)}${displayCache > 0 ? `, cache: ${isCacheSmoothApplied ? `${formatTokens(displayCache)}*` : formatTokens(displayCache)}` : ''})${reset}`;
+  
+  const ctxBarColor = ctxPercent > critThresh * 100 ? red : ctxPercent > warnThresh * 100 ? yellow : cyan;
+  const ctxVal = `${formatTokens(totalInput)}/${formatTokens(usage.context_window_size || 0)} (${ctxBarColor}${Math.round(ctxPercent)}%${reset})`;
 
-  const quotaStyle = display.quotaStyle || 'table';
-  const isCompact = quotaStyle === 'compact';
+  const r2Parts = [
+    badge('tokens', tokensVal, cyan),
+    badge('ctx', ctxVal, cyan)
+  ];
 
-  // In compact mode, find current model's quota and append to line 2
-  let currentModelQuota = null;
-  if (isCompact && quotaData && quotaData.length > 0) {
-    const rawName = agyData?.model?.display_name || '';
-    const modelId = agyData?.model?.id || '';
-    currentModelQuota = quotaData.find(q =>
-      (modelId && q.id === modelId) ||
-      q.displayName === rawName ||
-      simplifyModelName(q.displayName) === modelName ||
-      modelNamesMatch(q.displayName, rawName)
-    );
-  }
-
-  // Layer 2: resource consumption
-  const line2Parts = [];
-  if (showTokenBar) line2Parts.push(tokensStr);
-  line2Parts.push(ctxStr);
-  if (isCompact && currentModelQuota) {
-    const pct = Math.round(currentModelQuota.remainingFraction * 100);
-    const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
-    let timeStr = '';
-    if (currentModelQuota.resetTime) {
-      const secsLeft = Math.max(0, Math.round((new Date(currentModelQuota.resetTime).getTime() - Date.now()) / 1000));
-      timeStr = ` ${gray}~${formatDuration(secsLeft)}${reset}`;
-    }
-    line2Parts.push(`${pctColor}Quota: ${pct}%${reset}${timeStr}`);
-  }
-
-  // Render Image Quota or rate limit exhaustion status
+  // Image Quota Badge
   const imageExhausted = state.imageExhausted;
-  let isImageExhaustedDisplayed = false;
+  const imgQ = quotaData && quotaData.find(q => q.id && q.id.toLowerCase().includes('image'));
+  
   if (imageExhausted) {
-    const secsLeft = Math.max(0, Math.round((new Date(imageExhausted.resetTime).getTime() - Date.now()) / 1000));
-    if (secsLeft > 0) {
-      const pad = (n) => String(n).padStart(2, '0');
-      const h = Math.floor(secsLeft / 3600);
-      const m = Math.floor((secsLeft % 3600) / 60);
-      const countdownStr = `${pad(h)}h${pad(m)}m`;
-      const icon = unicode ? '⚠️ ' : '[!] ';
-      line2Parts.push(`${red}${icon}Image Quota Exhausted (Resets in: ${countdownStr})${reset}`);
-      isImageExhaustedDisplayed = true;
-    }
+    r2Parts.push(badge('image-quota', `${red}Exhausted${reset}`, red));
+  } else if (imgQ) {
+    const pct = Math.round(imgQ.remainingFraction * 100);
+    const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
+    r2Parts.push(badge('image-quota', `${pctColor}${pct}%${reset}`, cyan));
   }
 
-  if (!isImageExhaustedDisplayed) {
-    const imgQ = quotaData && quotaData.find(q => (q.id && q.id.includes('image')) || (q.displayName && q.displayName.toLowerCase().includes('image')));
-    if (imgQ) {
-      const pct = Math.round(imgQ.remainingFraction * 100);
-      const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
-      const bar = createProgressBar(pct, pctColor, 10, false);
-      const imgIcon = unicode ? '🖼️ ' : '[IMG] ';
-      let timeStr = '';
-      if (imgQ.resetTime) {
-        const secsLeft = Math.max(0, Math.round((new Date(imgQ.resetTime).getTime() - Date.now()) / 1000));
-        if (secsLeft > 0) timeStr = ` ${gray}~${formatDuration(secsLeft)}${reset}`;
-      }
-      line2Parts.push(`${cyan}${imgIcon}Image Quota: ${bar} ${pctColor}${pct}%${reset}${timeStr}`);
-    }
-
-  }
-
-  const line2 = line2Parts.join(divider);
-
-  // Layer 3: project metadata (non-zero items only)
-  const metaParts = [];
+  // Row 3: Metadata Badges
+  const r3Parts = [];
+  const showBreadcrumbs = display.showBreadcrumbs !== false;
   const breadcrumbCount = typeof display.breadcrumbCount === 'number'
     ? Math.max(0, Math.floor(display.breadcrumbCount))
     : 3;
   if (showBreadcrumbs && breadcrumbCount > 0) {
     if (Array.isArray(state.breadcrumbs) && state.breadcrumbs.length > 0) {
       for (const item of state.breadcrumbs.filter(Boolean).slice(-breadcrumbCount)) {
-        metaParts.push(`${gray}${sanitizeTerminalText(item)}${reset}`);
+        r3Parts.push(badge('memory', sanitizeTerminalText(item, 40), gray));
       }
     } else if (state.memoryFile) {
-      metaParts.push(`${gray}1 ${sanitizeTerminalText(state.memoryFile)}${reset}`);
+      r3Parts.push(badge('memory', sanitizeTerminalText(state.memoryFile, 40), gray));
     }
+  } else if (state.memoryFile) {
+    r3Parts.push(badge('memory', sanitizeTerminalText(state.memoryFile, 40), gray));
   }
+
   const rulesCount = state.rulesCount || 0;
   const mcpCount = state.mcpCount || 0;
   const hooksCount = state.hooksCount || 0;
-  if (rulesCount > 0) metaParts.push(`${gray}${rulesCount} rules${reset}`);
-  if (mcpCount > 0) metaParts.push(`${gray}${mcpCount} MCPs${reset}`);
-  if (hooksCount > 0) metaParts.push(`${gray}${hooksCount} hooks${reset}`);
-  const line3 = metaParts.length > 0 ? metaParts.join(divider) : '';
+  if (rulesCount > 0) r3Parts.push(badge('rules', rulesCount, gray));
+  if (mcpCount > 0) r3Parts.push(badge('mcps', mcpCount, gray));
+  if (hooksCount > 0) r3Parts.push(badge('hooks', hooksCount, gray));
 
-  const { renderQuotaColumn, renderCompactQuotaLine } = createQuotaRenderers({
-    colors: { cyan, reset, gray, red, yellow, green },
-    glyph,
-    thresholds: { warnThresh, critThresh },
-    nameWidth,
-    divider,
-    createProgressBar,
-    truncateAndPad,
-  });
-
-  // Build quota lines
-  let quotaLines = '';
-  if (quotaData && quotaData.length > 0) {
-    const now = Date.now();
-    if (isCompact) {
-      quotaLines = `\n${renderCompactQuotaLine(quotaData, now)}`;
-    } else {
-      const isImageModel = (q) => (q.id && q.id.includes('image')) || (q.displayName && q.displayName.toLowerCase().includes('image'));
-      const tableQuota = quotaData.filter(q => !isImageModel(q));
-      const cols = tableQuota.map(q => renderQuotaColumn(q, now));
-
-      const rows = [];
-      for (let i = 0; i < cols.length; i += 2) {
-        const col1 = cols[i];
-        const col2 = cols[i + 1];
-        if (col2) {
-          rows.push(`  ${col1} ${gray}${glyph.vbar}${reset} ${col2}`);
-        } else {
-          rows.push(`  ${col1}`);
-        }
-      }
-      const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
-      quotaLines = `\n${dividerLine}\n` + rows.join('\n') + `\n${dividerLine}`;
-    }
-  } else if (quotaData && quotaData.unavailableReason) {
-    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
-    const reason = sanitizeTerminalText(text.quotaReasons[quotaData.unavailableReason] || quotaData.unavailableReason);
-    quotaLines = `\n${dividerLine}\n  ${yellow}${text.quotaUnavailable}:${reset} ${gray}${reason}${reset}\n${dividerLine}`;
-  } else if (quotaData && quotaData.length === 0) {
-    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
-    quotaLines = `\n${dividerLine}\n  ${gray}${text.quotaLoading}${glyph.ellipsis}${reset}\n${dividerLine}`;
+  // Build the basic lines array
+  const lines = [
+    r1Parts.join(' '),
+    r2Parts.join(' ')
+  ];
+  if (r3Parts.length > 0) {
+    lines.push(r3Parts.join(' '));
   }
 
-  const lines = [line1, line2];
-  if (line3) lines.push(line3);
-  return lines.join('\n') + quotaLines;
+  // Check if we are compact / single-line mode (Option 4 style)
+  const quotaStyle = display.quotaStyle || 'table';
+  const isCompact = quotaStyle === 'compact';
+
+  // If in compact mode, append current model quota to line 2 if available
+  if (isCompact && quotaData && quotaData.length > 0) {
+    const rawName = agyData?.model?.display_name || '';
+    const modelId = agyData?.model?.id || '';
+    const currentModelQuota = quotaData.find(q =>
+      (modelId && q.id === modelId) ||
+      q.displayName === rawName ||
+      simplifyModelName(q.displayName) === modelName
+    );
+    if (currentModelQuota) {
+      const pct = Math.round(currentModelQuota.remainingFraction * 100);
+      const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
+      let timeStr = '';
+      if (currentModelQuota.resetTime) {
+        const secsLeft = Math.max(0, Math.round((new Date(currentModelQuota.resetTime).getTime() - Date.now()) / 1000));
+        timeStr = ` ${gray}~${formatDuration(secsLeft)}${reset}`;
+      }
+      r2Parts.push(badge('quota', `${pctColor}${pct}%${reset}${timeStr}`, cyan));
+      // Re-build line 2 with the newly added badge
+      lines[1] = r2Parts.join(' ');
+    }
+  }
+
+  // Quota Table Block (Option 6 Style with progress bars & 3 columns for Gemini, Claude/Other, Images)
+  if (!isCompact && quotaData && quotaData.length > 0) {
+    const geminiModels = [];
+    const claudeOtherModels = [];
+    const imageModels = [];
+
+    for (const q of quotaData) {
+      const id = (q.id || '').toLowerCase();
+      const disp = (q.displayName || '').toLowerCase();
+      if (id.includes('image') || disp.includes('image')) {
+        imageModels.push(q);
+      } else if (id.includes('gemini') || disp.includes('gemini')) {
+        geminiModels.push(q);
+      } else {
+        claudeOtherModels.push(q);
+      }
+    }
+
+    if (geminiModels.length > 0 || claudeOtherModels.length > 0 || imageModels.length > 0) {
+      lines.push(`${gray}-------------------------------------------------------------------------------------------------${reset}`);
+      lines.push(`${gray}Quota Status (Gemini │ Claude/Other │ Images):${reset}`);
+
+      const renderQuotaBadge = (q) => {
+        if (!q) return '';
+        const pct = Math.round(q.remainingFraction * 100);
+        const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
+        const name = sanitizeTerminalText(simplifyModelName(q.displayName || q.id), 18).padEnd(18, ' ');
+        const bar = createProgressBar(pct, pctColor, 6);
+        let timeStr = '';
+        if (q.resetTime) {
+          const secs = Math.max(0, Math.round((new Date(q.resetTime).getTime() - Date.now()) / 1000));
+          if (secs > 0) timeStr = ` ${gray}(${formatDuration(secs)})${reset}`;
+        }
+        return `${gray}[${reset}${name} ${bar} ${pctColor}${pct}%${reset}${timeStr}${gray}]${reset}`;
+      };
+
+      const maxLen = Math.max(geminiModels.length, claudeOtherModels.length, imageModels.length);
+      const colWidth = 42;
+
+      for (let i = 0; i < maxLen; i++) {
+        const geminiCol = renderQuotaBadge(geminiModels[i]);
+        const claudeCol = renderQuotaBadge(claudeOtherModels[i]);
+        const imageCol = renderQuotaBadge(imageModels[i]);
+
+        // Standard pad logic for columns mapping to align them cleanly
+        const geminiStr = geminiCol ? geminiCol.padEnd(colWidth + 15, ' ') : ' '.repeat(colWidth);
+        const claudeStr = claudeCol ? claudeCol.padEnd(colWidth + 15, ' ') : ' '.repeat(colWidth);
+        lines.push(`  ${geminiStr} ${gray}│${reset} ${claudeStr} ${gray}│${reset} ${imageCol}`);
+      }
+    }
+  } else if (!isCompact && quotaData && quotaData.unavailableReason) {
+    const reason = sanitizeTerminalText(text.quotaReasons[quotaData.unavailableReason] || quotaData.unavailableReason);
+    lines.push(badge('quota', `${yellow}${text.quotaUnavailable}:${reset} ${gray}${reason}${reset}`, yellow));
+  } else if (!isCompact && quotaData && quotaData.length === 0) {
+    lines.push(badge('quota', `${gray}${text.quotaLoading}${unicode ? '…' : '...'}${reset}`, gray));
+  }
+
+  return lines.join('\n');
 }
 
 module.exports = {
   renderHUD,
+  simplifyModelName,
   abbreviateDisplayName,
   compactModelName,
 };
