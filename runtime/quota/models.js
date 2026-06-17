@@ -76,35 +76,78 @@ function pruneExpiredWindows(windows, now = Date.now()) {
   return out;
 }
 
-/**
- * Normalize the fetchAvailableModels response to the HUD quota shape.
- * Each model carries the `window` tag inferred from its resetTime so that
- * downstream merging can keep both windows' last observed values in cache.
- * @param {Object<string, Object>} models
- * @returns {ModelQuota[]}
- */
-function normalizeQuotaModels(models, interestingModelIds = FALLBACK_AGENT_MODEL_IDS, now = Date.now()) {
+function normalizeQuotaModels(models, interestingModelIds = FALLBACK_AGENT_MODEL_IDS, now = Date.now(), quotaBuckets = null) {
+  const bucketsByModel = {};
+  if (quotaBuckets && Array.isArray(quotaBuckets)) {
+    for (const b of quotaBuckets) {
+      if (!b.modelId) continue;
+      if (!bucketsByModel[b.modelId]) bucketsByModel[b.modelId] = [];
+      bucketsByModel[b.modelId].push(b);
+    }
+  }
+
   const results = [];
   for (const id of interestingModelIds) {
     const m = models[id];
-    if (!m || !m.quotaInfo) continue;
-    const qi = m.quotaInfo;
-    const resetTime = qi.resetTime || null;
-    const remainingFraction = normalizeRemainingFraction(qi.remainingFraction, !!resetTime);
-    const window = classifyQuotaWindow(resetTime, now);
-    const observation = resetTime
-      ? { remainingFraction, resetTime, observedAt: now }
-      : null;
+    const myBuckets = bucketsByModel[id];
+    
+    // If we have no quota info at all for this model, skip it
+    if ((!m || !m.quotaInfo) && (!myBuckets || myBuckets.length === 0)) continue;
+
+    const windows = {};
+    let fallbackFraction = null;
+    let fallbackResetTime = null;
+
+    if (myBuckets && myBuckets.length > 0) {
+      for (const b of myBuckets) {
+        const resetTime = b.resetTime || null;
+        const remainingFraction = normalizeRemainingFraction(b.remainingFraction, !!resetTime);
+        const win = classifyQuotaWindow(resetTime, now);
+        if (win) {
+          windows[win] = { remainingFraction, resetTime, observedAt: now };
+        } else if (fallbackFraction === null) {
+          fallbackFraction = remainingFraction;
+          fallbackResetTime = resetTime;
+        }
+      }
+    } else if (m && m.quotaInfo) {
+      const qi = m.quotaInfo;
+      const resetTime = qi.resetTime || null;
+      const remainingFraction = normalizeRemainingFraction(qi.remainingFraction, !!resetTime);
+      const win = classifyQuotaWindow(resetTime, now);
+      if (win) {
+        windows[win] = { remainingFraction, resetTime, observedAt: now };
+      } else {
+        fallbackFraction = remainingFraction;
+        fallbackResetTime = resetTime;
+      }
+    }
+
+    let bindingFraction = 0;
+    let bindingResetTime = null;
+    let bindingWindow = null;
+
+    const crit = pickCriticalWindow(windows, now);
+    if (crit) {
+      bindingFraction = crit.remainingFraction;
+      bindingResetTime = crit.resetTime;
+      bindingWindow = crit.window;
+    } else if (fallbackFraction !== null) {
+      bindingFraction = fallbackFraction;
+      bindingResetTime = fallbackResetTime;
+      bindingWindow = null;
+    } else {
+      bindingFraction = 1;
+    }
+
     results.push({
       id,
-      displayName: m.displayName || id,
-      modelProvider: m.modelProvider || null,
-      remainingFraction,
-      resetTime,
-      window,
-      windows: observation && window
-        ? { [window]: observation }
-        : {},
+      displayName: (m && m.displayName) ? m.displayName : id,
+      modelProvider: (m && m.modelProvider) ? m.modelProvider : null,
+      remainingFraction: bindingFraction,
+      resetTime: bindingResetTime,
+      window: bindingWindow,
+      windows: Object.keys(windows).length > 0 ? windows : {},
     });
   }
   return results;

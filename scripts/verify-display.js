@@ -320,9 +320,13 @@ async function main() {
 
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-verify-'));
   const env = buildEnv(tmpRoot);
-  const { server, url } = await startZipServer();
+  
+  const extractDir = path.join(tmpRoot, 'extracted-plugin');
+  fs.mkdirSync(extractDir);
+  execFileSync('unzip', ['-q', zipPath, '-d', extractDir]);
+
   try {
-    const install = await run(agyBin, ['plugin', 'install', url], { env, timeout: 120_000 });
+    const install = await run(agyBin, ['plugin', 'install', extractDir], { env, timeout: 120_000 });
 
     // Upgrade-from-old-version scenario: plant a fake stale hooks.json in the
     // staged plugin dir BEFORE bootstrap. v0.1.x left this behind in real
@@ -437,7 +441,6 @@ async function main() {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     if (!displayReady) process.exit(1);
   } finally {
-    server.close();
     if (!currentHome) fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 }

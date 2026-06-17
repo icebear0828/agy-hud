@@ -174,31 +174,49 @@ async function fetchQuotaFromCloud(accessToken) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
     try {
-      const r = await fetch(`${endpoint}/v1internal:fetchAvailableModels`, {
+      const pModels = fetch(`${endpoint}/v1internal:fetchAvailableModels`, {
         method: 'POST',
         headers: buildHeaders(accessToken),
         body: JSON.stringify({}),
         signal: controller.signal,
       });
-      if (!r.ok) {
+      const pQuota = fetch(`${endpoint}/v1internal:retrieveUserQuota`, {
+        method: 'POST',
+        headers: buildHeaders(accessToken),
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      }).catch(() => null);
+
+      const rModels = await pModels;
+      if (!rModels.ok) {
         clearTimeout(timeoutId);
-        if (r.status === 401 || r.status === 403) sawAuthFailure = true;
+        if (rModels.status === 401 || rModels.status === 403) sawAuthFailure = true;
         continue;
       }
-      const data = await r.json();
+      const dataModels = await rModels.json();
+      
+      let quotaBuckets = null;
+      const rQuota = await pQuota;
+      if (rQuota && rQuota.ok) {
+         try {
+           const dataQuota = await rQuota.json();
+           if (dataQuota && dataQuota.buckets) quotaBuckets = dataQuota.buckets;
+         } catch {}
+      }
       clearTimeout(timeoutId);
-      const models = data.models || {};
+
+      const models = dataModels.models || {};
       let interestingModelIds = envModelIds
         || config.interestingModels
         || resolveDeprecatedIds(
-            discoverAgentModelIds(data) || FALLBACK_AGENT_MODEL_IDS,
-            data
+            discoverAgentModelIds(dataModels) || FALLBACK_AGENT_MODEL_IDS,
+            dataModels
           );
-      if (data && data.models) {
-        const imageModelIds = Object.keys(data.models).filter(id => id.includes('-image') || id.toLowerCase().includes('image'));
+      if (dataModels && dataModels.models) {
+        const imageModelIds = Object.keys(dataModels.models).filter(id => id.includes('-image') || id.toLowerCase().includes('image'));
         interestingModelIds = [...new Set([...interestingModelIds, ...imageModelIds])];
       }
-      return normalizeQuotaModels(models, interestingModelIds);
+      return normalizeQuotaModels(models, interestingModelIds, Date.now(), quotaBuckets);
     } catch {
       clearTimeout(timeoutId);
       /* try next endpoint */
