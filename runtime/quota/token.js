@@ -200,6 +200,23 @@ function readWindowsCredentialTokens(platform = process.platform) {
   }
 }
 
+function readMacOSKeychainToken(platform = process.platform, execFile = execFileSync) {
+  if (platform !== 'darwin') return null;
+
+  try {
+    const raw = execFile('/usr/bin/security', ['find-generic-password', '-s', 'gemini', '-a', 'antigravity', '-w'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
+    });
+    const b64 = raw.trim().replace(/^go-keyring-base64:/, '');
+    const token = parseTokenPayload(JSON.parse(Buffer.from(b64, 'base64').toString('utf8')));
+    return token && { ...token, sourceFormat: 'macos-keychain' };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * @returns {{ accessToken: string, expiry?: string, sourceFormat?: string, sourcePath?: string, all?: Array<{ accessToken: string, expiry?: string }> } | null}
  */
@@ -209,6 +226,7 @@ function readToken(options = {}) {
     roots = getAntigravityRoots(),
     skipWindowsCredential = false,
     credentialReader = readWindowsCredentialTokens,
+    keychainReader = readMacOSKeychainToken,
   } = options;
 
   // Windows: agy stores its OAuth token in Credential Manager. Keep a short
@@ -221,6 +239,11 @@ function readToken(options = {}) {
       const credentialToken = credentialReader(platform);
       if (credentialToken) return credentialToken;
     }
+  }
+
+  if (platform === 'darwin') {
+    const keychainToken = keychainReader(platform);
+    if (keychainToken) return keychainToken;
   }
 
   for (const candidate of getTokenCandidates(roots)) {
@@ -259,6 +282,7 @@ module.exports = {
   readWindowsTokenTemp,
   buildWindowsCredentialScript,
   readWindowsCredentialTokens,
+  readMacOSKeychainToken,
   readToken,
   anyTokenFileExists,
 };

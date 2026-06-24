@@ -9,6 +9,7 @@ const {
   selectUsableTokens,
   isTokenExpired,
   parseTokenPayload,
+  readMacOSKeychainToken,
   readToken,
 } = quotaModule;
 
@@ -80,6 +81,27 @@ describe('quota / token', () => {
           sourceFormat: 'oauth-creds'
         }
       );
+    });
+  });
+
+  describe('readMacOSKeychainToken', () => {
+    test('uses fixed security path, timeout, and shared token parser', () => {
+      const encoded = Buffer.from(JSON.stringify({
+        access_token: 'keychain-token',
+        expiry_date: Date.parse('2026-05-20T12:10:00Z'),
+      })).toString('base64');
+      const calls = [];
+
+      const token = readMacOSKeychainToken('darwin', (file, args, options) => {
+        calls.push({ file, args, options });
+        return `go-keyring-base64:${encoded}\n`;
+      });
+
+      assert.equal(token.accessToken, 'keychain-token');
+      assert.equal(token.expiry, '2026-05-20T12:10:00.000Z');
+      assert.equal(token.sourceFormat, 'macos-keychain');
+      assert.equal(calls[0].file, '/usr/bin/security');
+      assert.equal(calls[0].options.timeout, 5000);
     });
   });
 

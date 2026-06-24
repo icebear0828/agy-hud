@@ -28,6 +28,7 @@ const modelsMod = require('./quota/models.js');
 const {
   readToken,
   readWindowsCredentialTokens,
+  readMacOSKeychainToken,
   isTokenExpired,
   anyTokenFileExists,
 } = tokenMod;
@@ -184,6 +185,7 @@ module.exports = {
   // token module
   readToken,
   readWindowsCredentialTokens,
+  readMacOSKeychainToken,
   isTokenExpired,
   getTokenCandidates: tokenMod.getTokenCandidates,
   parseTokenPayload: tokenMod.parseTokenPayload,
