@@ -223,6 +223,21 @@ function readToken(options = {}) {
     }
   }
 
+  
+  // macOS: read token directly from the Keychain
+  if (platform === 'darwin') {
+    try {
+      const raw = require('child_process').execFileSync('security', ['find-generic-password', '-s', 'gemini', '-a', 'antigravity', '-w'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const b64 = raw.trim().replace(/^go-keyring-base64:/, '');
+      const parsed = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+      if (parsed && parsed.token && parsed.token.access_token) {
+        return { accessToken: parsed.token.access_token, expiry: parsed.token.expiry, sourceFormat: 'macos-keychain' };
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+
   for (const candidate of getTokenCandidates(roots)) {
     try {
       const raw = JSON.parse(fs.readFileSync(candidate, 'utf8'));
