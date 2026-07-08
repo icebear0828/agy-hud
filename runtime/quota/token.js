@@ -22,6 +22,13 @@ const WINDOWS_CREDENTIAL_TARGETS = [
   'LegacyGeneric:target=gemini:antigravity',
 ];
 
+// agy stores its OAuth token in the Linux system keyring (D-Bus Secret
+// Service) under this service/username pair, via the python `keyring` library.
+// These mirror the arguments agy passes to `keyring.set_password(...)`; update
+// here if a future agy version changes the target.
+const LINUX_KEYRING_SERVICE = 'gemini';
+const LINUX_KEYRING_USERNAME = 'antigravity';
+
 function getTokenCandidates(roots = getAntigravityRoots()) {
   const candidates = [];
   for (const root of roots) {
@@ -241,7 +248,12 @@ function readWindowsCredentialTokens(platform = process.platform, roots = getAnt
 
 /**
  * Reads the OAuth token stored in the Linux Keyring (D-Bus Secret Service)
- * by delegating to python3, which ships with the `keyring` library used by agy.
+ * by delegating to python3. agy stores its token via the third-party `keyring`
+ * pip package, so the python3 resolved from PATH must be able to `import keyring`
+ * — typically true when agy was installed via pipx / system pip / an activated
+ * venv, but NOT guaranteed for isolated venvs. On failure this returns null and
+ * readToken falls back to disk files; see probeLinuxKeyringAvailability() for a
+ * diagnostic that distinguishes "no token" from "keyring unreadable".
  *
  * To avoid spawning a python3 subprocess on every statusline refresh, a
  * successful read is written to the same short-lived JSON cache that the
@@ -259,7 +271,7 @@ function readLinuxKeyringTokens(platform = process.platform, roots = getAntigrav
 
     const raw = execFileSync(pythonPath, [
       '-c',
-      "import keyring; print(keyring.get_password('gemini', 'antigravity') or '')",
+      `import keyring; print(keyring.get_password(${JSON.stringify(LINUX_KEYRING_SERVICE)}, ${JSON.stringify(LINUX_KEYRING_USERNAME)}) or '')`,
     ], {
       encoding: 'utf8',
       timeout: 5000,
@@ -292,6 +304,41 @@ function readLinuxKeyringTokens(platform = process.platform, roots = getAntigrav
     return { ...token, sourceFormat: 'linux-keyring', all: tokens };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Probes whether the Linux keyring read path is wired up, WITHOUT reading the
+ * token itself. Returns null on non-linux platforms. On linux, reports whether
+ * a python interpreter is resolvable on PATH and can `import keyring` (the
+ * third-party pip package agy uses to store its OAuth token). Used by
+ * diagnose-auth so users can tell "not logged in" apart from "system python3
+ * is missing the keyring package".
+ *
+ * @param {string} [platform]
+ * @returns {{ available: boolean, reason?: string, python?: string, status?: number, stderr?: string } | null}
+ */
+function probeLinuxKeyringAvailability(platform = process.platform) {
+  if (platform !== 'linux') return null;
+
+  const pythonPath = resolveSafeExecutable('python3') || resolveSafeExecutable('python');
+  if (!pythonPath) return { available: false, reason: 'python-not-found' };
+
+  try {
+    execFileSync(pythonPath, ['-c', 'import keyring'], {
+      encoding: 'utf8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { available: true, python: pythonPath };
+  } catch (error) {
+    return {
+      available: false,
+      reason: 'keyring-not-importable',
+      python: pythonPath,
+      status: typeof error.status === 'number' ? error.status : undefined,
+      stderr: error.stderr ? String(error.stderr).trim().slice(0, 200) : undefined,
+    };
   }
 }
 
@@ -354,6 +401,8 @@ module.exports = {
   WINDOWS_TOKEN_TEMP_TTL_MS,
   WINDOWS_TOKEN_EXPIRY_SKEW_MS,
   WINDOWS_CREDENTIAL_TARGETS,
+  LINUX_KEYRING_SERVICE,
+  LINUX_KEYRING_USERNAME,
   getTokenCandidates,
   isUsableAccessToken,
   selectUsableTokens,
@@ -366,6 +415,7 @@ module.exports = {
   buildWindowsCredentialScript,
   readWindowsCredentialTokens,
   readLinuxKeyringTokens,
+  probeLinuxKeyringAvailability,
   readToken,
   anyTokenFileExists,
 };

@@ -50,6 +50,7 @@ test('auth diagnostic reuses token parsing without leaking token values', () => 
         resolveAgyInfo: () => ({ found: false, candidates: [] }),
         platform: 'linux',
         keyringReader: () => null,
+        keyringProbe: () => null,
       });
       const serialized = JSON.stringify(diagnostic);
 
@@ -94,6 +95,7 @@ test('auth diagnostic reports Linux keyring source without leaking token values'
           sourceFormat: 'linux-keyring',
           all: [{ accessToken: 'secret-keyring-token' }],
         }),
+        keyringProbe: () => null,
       });
       const serialized = JSON.stringify(diagnostic);
 
@@ -101,6 +103,34 @@ test('auth diagnostic reports Linux keyring source without leaking token values'
       assert.equal(diagnostic.readToken.sourceFormat, 'linux-keyring');
       assert.equal(diagnostic.readToken.tokenCount, 1);
       assert.doesNotMatch(serialized, /secret-keyring-token/);
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('auth diagnostic surfaces Linux keyring probe result', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-diagnose-probe-'));
+  try {
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
+
+    withEnv({
+      HOME: home,
+      USERPROFILE: home,
+      XDG_DATA_HOME: undefined,
+      APPDATA: undefined,
+      LOCALAPPDATA: undefined,
+    }, () => {
+      const diagnostic = buildAuthDiagnostic({
+        resolveAgyInfo: () => ({ found: false, candidates: [] }),
+        platform: 'linux',
+        keyringReader: () => null,
+        keyringProbe: () => ({ available: false, reason: 'python-not-found' }),
+      });
+
+      assert.equal(diagnostic.keyringProbe.available, false);
+      assert.equal(diagnostic.keyringProbe.reason, 'python-not-found');
     });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

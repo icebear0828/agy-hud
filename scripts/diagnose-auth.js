@@ -10,6 +10,7 @@ const {
   getTokenCandidates,
   parseTokenPayload,
   readToken,
+  probeLinuxKeyringAvailability,
 } = require('../runtime/quota.js');
 
 function compactObject(value) {
@@ -157,6 +158,7 @@ function buildAuthDiagnostic(options = {}) {
   const roots = getAntigravityRoots();
   const resolveAgy = options.resolveAgyInfo || resolveAgyInfo;
   const platform = options.platform || process.platform;
+  const keyringProbe = options.keyringProbe || probeLinuxKeyringAvailability;
 
   return {
     schemaVersion: 1,
@@ -172,6 +174,7 @@ function buildAuthDiagnostic(options = {}) {
     })),
     tokenCandidates: getTokenCandidates(roots).map(summarizeTokenCandidate),
     readToken: sanitizeReadTokenResult(readToken({ platform, keyringReader: options.keyringReader })),
+    keyringProbe: keyringProbe(platform),
   };
 }
 
