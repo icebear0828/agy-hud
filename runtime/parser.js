@@ -70,13 +70,46 @@ function getActiveAccountFromRegistry() {
 }
 
 /**
+ * Reads the active OAuth account email from agy's local cli.log session log.
+ * @returns {string|null}
+ */
+function getActiveAccountFromCliLog() {
+  try {
+    const { getAntigravityRoots } = require('./paths.js');
+    const candidates = [
+      path.join(getGeminiHome(), 'antigravity-cli', 'cli.log'),
+      ...getAntigravityRoots().map(r => path.join(r, 'cli.log')),
+    ];
+    for (const cliLogPath of candidates) {
+      if (!fs.existsSync(cliLogPath)) continue;
+      const fd = fs.openSync(cliLogPath, 'r');
+      try {
+        const stats = fs.fstatSync(fd);
+        const size = stats.size;
+        const readSize = Math.min(size, 262144);
+        const buffer = Buffer.alloc(readSize);
+        fs.readSync(fd, buffer, 0, readSize, 0);
+        const text = buffer.toString('utf8');
+        const matches = [...text.matchAll(/OAuth:\s+authenticated\s+successfully\s+as\s+([^\s,]+@[^\s,]+)/g)];
+        if (matches.length > 0) {
+          return matches[matches.length - 1][1].trim();
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+  } catch {}
+  return null;
+}
+
+/**
  * Resolves the email of agy's active account for display.
  *
- * agy resolves the signed-in account from the live OAuth access token at
- * runtime and never persists it, so no local file reliably names the active
- * account after a switch. The authoritative value is the userinfo email the
- * quota refresh caches against the current token; we read that first and fall
- * back to the account registry / oauth_creds id_token only when it is absent.
+ * Priority:
+ *   1. Cached accountEmail in quota cache (if matching current token)
+ *   2. Active session authenticated email in local cli.log
+ *   3. Account registry (~/.gemini/google_accounts.json `active`)
+ *   4. Gemini-CLI oauth_creds.json id_token
  * @returns {string|null}
  */
 function getActiveAccountEmail() {
@@ -89,7 +122,7 @@ function getActiveAccountEmail() {
       if (email) return email;
     }
   } catch {}
-  return getActiveAccountFromRegistry() || getOauthCredsEmail();
+  return getActiveAccountFromCliLog() || getActiveAccountFromRegistry() || getOauthCredsEmail();
 }
 
 /**

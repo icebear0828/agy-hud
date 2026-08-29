@@ -66,10 +66,7 @@ describe('renderer / quota lines', () => {
       assert.match(output, /Google/);
     });
 
-    test('renders one row per model showing the binding-window quota only', () => {
-      // Data layer keeps per-window observations (q.windows.{fiveHour,weekly}),
-      // but the renderer surfaces just the top-level remainingFraction /
-      // resetTime that the API currently reports as binding.
+    test('renders dual rows for 5h and weekly quota when both windows exist', () => {
       const state = { steps: 0, branch: 'main' };
       const agyData = { context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 } };
       const now = Date.now();
@@ -87,13 +84,13 @@ describe('renderer / quota lines', () => {
       const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
       const output = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
 
-      const modelLine = output.split('\n').find(l => l.includes('Google'));
-      assert.ok(modelLine, 'Google row exists');
-      // 20% top-level (weekly is binding), not 60% fiveHour.
-      assert.match(modelLine, /\[[█░]+\]\s+20%/);
-      // No 5h / Wk labels on the row — single-line layout.
-      assert.doesNotMatch(modelLine, /5h\s/);
-      assert.doesNotMatch(modelLine, /Wk\s/);
+      const lines = output.split('\n');
+      const google5hLine = lines.find(l => l.includes('Google 5h'));
+      const googleWkLine = lines.find(l => l.includes('Google week'));
+      assert.ok(google5hLine, 'Google 5h row exists');
+      assert.ok(googleWkLine, 'Google week row exists');
+      assert.match(google5hLine, /60%/);
+      assert.match(googleWkLine, /20%/);
     });
 
     test('uses warning/critical colors for both percent text and progress bar', () => {

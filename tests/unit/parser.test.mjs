@@ -348,6 +348,21 @@ test('getSessionState prefers google_accounts.json active over the oauth_creds i
   });
 });
 
+test('getSessionState reads active account email from cli.log', async () => {
+  await withTempHome(async (geminiDir) => {
+    const cliDir = path.join(geminiDir, 'antigravity-cli');
+    fs.mkdirSync(cliDir, { recursive: true });
+    fs.writeFileSync(path.join(cliDir, 'cli.log'), [
+      'I0829 09:10:50.071400 keyringAuth: loaded token',
+      'I0829 09:10:52.107882 server_oauth.go:195] OAuth: authenticated successfully as log-user@gmail.com',
+      'I0829 09:10:55.018182 http_helpers.go:246 URL: fetchAvailableModels',
+    ].join('\n'));
+
+    const state = await getSessionState('missing-transcript-nonexistent.jsonl');
+    assert.strictEqual(state.username, 'log-user@gmail.com');
+  });
+});
+
 test('getSessionState returns the oauth_creds email even when the id_token is expired', async () => {
   // Real-world state: oauth_creds is the Gemini-CLI file agy never refreshes, so
   // its id_token is routinely expired while the email is still the right account.

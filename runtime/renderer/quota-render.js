@@ -96,6 +96,31 @@ function createQuotaRenderers(ctx) {
     const googleQ = data.find(q => (q.modelProvider === 'MODEL_PROVIDER_GOOGLE' && !isImageModel(q)) || q.id?.includes('gemini') || q.displayName?.toLowerCase().includes('gemini'));
     const claudeQ = data.find(q => q.modelProvider === 'MODEL_PROVIDER_ANTHROPIC' || q.id?.includes('claude') || q.displayName?.toLowerCase().includes('claude') || q.displayName?.toLowerCase().includes('sonnet') || q.displayName?.toLowerCase().includes('opus'));
 
+    if (!googleQ && !claudeQ) return null;
+
+    const hasDualWindows = (googleQ?.windows?.weekly && googleQ?.windows?.fiveHour) ||
+                           (claudeQ?.windows?.weekly && claudeQ?.windows?.fiveHour);
+
+    if (hasDualWindows) {
+      const row5h = [];
+      const rowWk = [];
+
+      if (googleQ) {
+        const g5h = googleQ.windows?.fiveHour || googleQ;
+        const gWk = googleQ.windows?.weekly || googleQ;
+        row5h.push(renderQuotaColumn({ ...googleQ, displayName: 'Google 5h', remainingFraction: g5h.remainingFraction, resetTime: g5h.resetTime, windows: {} }, now));
+        rowWk.push(renderQuotaColumn({ ...googleQ, displayName: 'Google week', remainingFraction: gWk.remainingFraction, resetTime: gWk.resetTime, windows: {} }, now));
+      }
+      if (claudeQ) {
+        const c5h = claudeQ.windows?.fiveHour || claudeQ;
+        const cWk = claudeQ.windows?.weekly || claudeQ;
+        row5h.push(renderQuotaColumn({ ...claudeQ, displayName: 'Claude 5h', remainingFraction: c5h.remainingFraction, resetTime: c5h.resetTime, windows: {} }, now));
+        rowWk.push(renderQuotaColumn({ ...claudeQ, displayName: 'Claude week', remainingFraction: cWk.remainingFraction, resetTime: cWk.resetTime, windows: {} }, now));
+      }
+
+      return `  ${row5h.join(` ${gray}${glyph.vbar}${reset} `)}\n  ${rowWk.join(` ${gray}${glyph.vbar}${reset} `)}`;
+    }
+
     const cols = [];
     if (googleQ) {
       cols.push(renderQuotaColumn({ ...googleQ, displayName: 'Google' }, now));
@@ -103,7 +128,6 @@ function createQuotaRenderers(ctx) {
     if (claudeQ) {
       cols.push(renderQuotaColumn({ ...claudeQ, displayName: 'Claude' }, now));
     }
-    if (cols.length === 0) return null;
     return `  ${cols.join(` ${gray}${glyph.vbar}${reset} `)}`;
   };
 

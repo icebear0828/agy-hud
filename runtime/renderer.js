@@ -162,11 +162,36 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     return `${finalColor}[${glyph.bar.repeat(completed)}${glyph.empty.repeat(remaining)}]${reset}`;
   };
 
+  const stringWidth = (str) => {
+    let w = 0;
+    for (const ch of str) {
+      const code = ch.codePointAt(0);
+      if (code >= 0x1100 && (
+        code <= 0x115f ||
+        code === 0x2329 || code === 0x232a ||
+        (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
+        (code >= 0xac00 && code <= 0xd7a3) ||
+        (code >= 0xf900 && code <= 0xfaff) ||
+        (code >= 0xfe10 && code <= 0xfe19) ||
+        (code >= 0xfe30 && code <= 0xfe6f) ||
+        (code >= 0xff00 && code <= 0xff60) ||
+        (code >= 0xffe0 && code <= 0xffe6) ||
+        (code >= 0x20000 && code <= 0x3fffd)
+      )) {
+        w += 2;
+      } else {
+        w += 1;
+      }
+    }
+    return w;
+  };
+
   const truncateAndPad = (str, width) => {
-    if (str.length > width) {
+    const visualWidth = stringWidth(str);
+    if (visualWidth > width) {
       return str.substring(0, width - 1) + glyph.ellipsis;
     }
-    return str.padEnd(width, ' ');
+    return str + ' '.repeat(Math.max(0, width - visualWidth));
   };
 
   const divider = ` ${gray}${glyph.vbar}${reset} `;
@@ -322,7 +347,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     colors: { cyan, reset, gray, red, yellow, green },
     glyph,
     thresholds: { warnThresh, critThresh },
-    nameWidth: 8,
+    nameWidth: 11,
     divider,
     createProgressBar,
     truncateAndPad,

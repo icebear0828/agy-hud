@@ -14,11 +14,10 @@
  *   ./quota/models.js — model-id discovery, deprecation map, quota normalize
  */
 
-'use strict';
-
+const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { getAntigravityRoots } = require('./paths.js');
+const { getAntigravityRoots, resolveAntigravityPath } = require('./paths.js');
 
 const tokenMod = require('./quota/token.js');
 const cacheMod = require('./quota/cache.js');
@@ -40,13 +39,45 @@ const {
   didAccessTokenRotate,
   writeCache,
 } = cacheMod;
-const { fetchQuotaFromCloud, fetchTierFromCloud, fetchAccountEmail } = cloudMod;
+const { fetchQuotaFromCloud, fetchTierFromCloud } = cloudMod;
 const { createUnavailableQuotaResult } = modelsMod;
 
 const WINDOWS_CREDENTIAL_REFRESH_DEBOUNCE_MS = 30 * 1000;
 let lastWindowsCredentialRefreshAt = 0;
 
-function triggerBackgroundRefresh() {
+const REFRESH_LOCK_PATH = resolveAntigravityPath('agy-hud-refresh.lock');
+const REFRESH_LOCK_TTL_MS = 15 * 1000;
+
+function acquireRefreshLock(lockPath = REFRESH_LOCK_PATH, ttlMs = REFRESH_LOCK_TTL_MS) {
+  try {
+    if (fs.existsSync(lockPath)) {
+      const stats = fs.statSync(lockPath);
+      if (Date.now() - stats.mtimeMs < ttlMs) {
+        return false;
+      }
+    }
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, time: Date.now() }), { mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releaseRefreshLock(lockPath = REFRESH_LOCK_PATH) {
+  try {
+    if (fs.existsSync(lockPath)) {
+      fs.unlinkSync(lockPath);
+    }
+  } catch {}
+}
+
+function triggerBackgroundRefresh(options = {}) {
+  const lockPath = options.lockPath || REFRESH_LOCK_PATH;
+  const ttlMs = options.ttlMs || REFRESH_LOCK_TTL_MS;
+  if (!acquireRefreshLock(lockPath, ttlMs)) {
+    return false;
+  }
   try {
     const subprocess = spawn(process.execPath, [
       path.join(__dirname, 'quota.js'),
@@ -56,7 +87,11 @@ function triggerBackgroundRefresh() {
       stdio: 'ignore',
     });
     subprocess.unref();
-  } catch { /* ignore spawning issues */ }
+    return true;
+  } catch {
+    releaseRefreshLock(lockPath);
+    return false;
+  }
 }
 
 function triggerWindowsCredentialRefresh(backgroundRefresh, now, debounceMs) {
@@ -152,25 +187,32 @@ if (process.argv.includes('--refresh')) {
     try {
       const tok = readToken();
       if (tok) {
-        const [fresh, tier, accountEmail] = await Promise.all([
+        const [fresh, tier] = await Promise.all([
           fetchQuotaFromCloud(tok.accessToken),
-          fetchTierFromCloud(tok.accessToken),
-          fetchAccountEmail(tok.accessToken),
+          fetchTierFromCloud(tok.accessToken).catch(() => null),
         ]);
         if (fresh && fresh.unavailableReason === 'auth_failed') {
           tokenMod.clearTokenTemp();
-        } else if (fresh.length > 0 || accountEmail) {
-          writeCache(fresh, tok, tier, accountEmail);
+        } else if (fresh && Array.isArray(fresh) && fresh.length > 0) {
+          writeCache(fresh, tok, tier);
         }
       }
     } catch {}
-    process.exit(0);
+    finally {
+      releaseRefreshLock();
+      process.exit(0);
+    }
   })();
 }
 
 module.exports = {
-  // orchestrator
+  // orchestrator & lock
   getQuota,
+  acquireRefreshLock,
+  releaseRefreshLock,
+  triggerBackgroundRefresh,
+  REFRESH_LOCK_PATH,
+  REFRESH_LOCK_TTL_MS,
   // cache module
   CACHE_PATH,
   isCachePayloadFresh,
@@ -195,7 +237,6 @@ module.exports = {
   // cloud module
   fetchQuotaFromCloud,
   fetchTierFromCloud,
-  fetchAccountEmail,
   extractTierName: cloudMod.extractTierName,
   // models module
   normalizeQuotaModels: modelsMod.normalizeQuotaModels,

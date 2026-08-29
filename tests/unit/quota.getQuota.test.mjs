@@ -360,4 +360,37 @@ describe('quota / getQuota orchestrator', () => {
       }
     });
   });
+
+  describe('refresh lock and concurrency prevention', () => {
+    test('acquireRefreshLock acquires lock and prevents concurrent acquisition within TTL', () => {
+      const { acquireRefreshLock, releaseRefreshLock } = quotaModule;
+      const tmpLock = path.join(os.tmpdir(), `agy-hud-test-lock-${Date.now()}.lock`);
+      try {
+        assert.equal(acquireRefreshLock(tmpLock, 10000), true);
+        // Second attempt must fail due to active lock
+        assert.equal(acquireRefreshLock(tmpLock, 10000), false);
+        // Releasing lock allows subsequent acquisition
+        releaseRefreshLock(tmpLock);
+        assert.equal(acquireRefreshLock(tmpLock, 10000), true);
+      } finally {
+        releaseRefreshLock(tmpLock);
+      }
+    });
+
+    test('acquireRefreshLock allows acquisition when existing lock is expired (stale process)', () => {
+      const { acquireRefreshLock, releaseRefreshLock } = quotaModule;
+      const tmpLock = path.join(os.tmpdir(), `agy-hud-test-lock-stale-${Date.now()}.lock`);
+      try {
+        fs.writeFileSync(tmpLock, JSON.stringify({ pid: 999999, time: Date.now() - 20000 }), { mode: 0o600 });
+        // Setting mtime to 20s ago
+        const past = new Date(Date.now() - 20000);
+        fs.utimesSync(tmpLock, past, past);
+
+        // TTL is 10s, so 20s old lock is considered stale and re-acquired
+        assert.equal(acquireRefreshLock(tmpLock, 10000), true);
+      } finally {
+        releaseRefreshLock(tmpLock);
+      }
+    });
+  });
 });
