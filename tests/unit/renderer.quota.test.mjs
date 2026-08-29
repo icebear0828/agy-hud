@@ -4,29 +4,29 @@ import { renderHUD } from '../../runtime/renderer.js';
 
 describe('renderer / quota lines', () => {
   describe('table mode', () => {
-    test('should correctly layout quotas in two aligned columns', () => {
+    test('should correctly layout Google and Claude quotas side by side in a single line (Style A)', () => {
       const state = { steps: 5, branch: 'dev' };
       const agyData = {
         context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
       };
       const quotaData = [
-        { displayName: 'Gemini 3.5 Flash (High)', remainingFraction: 0.6, resetTime: new Date(Date.now() + 840000).toISOString() },
-        { displayName: 'Claude Sonnet 4.6 (Thinking)', remainingFraction: 0.4, resetTime: new Date(Date.now() + 13620000).toISOString() },
-        { displayName: 'GPT-OSS 120B (Medium)', remainingFraction: 1.0 }
+        { modelProvider: 'MODEL_PROVIDER_GOOGLE', displayName: 'Gemini 3.7 Flash', remainingFraction: 0.6, resetTime: new Date(Date.now() + 840000).toISOString() },
+        { modelProvider: 'MODEL_PROVIDER_ANTHROPIC', displayName: 'Claude Sonnet 4.6 (Thinking)', remainingFraction: 0.4, resetTime: new Date(Date.now() + 13620000).toISOString() },
+        { modelProvider: 'MODEL_PROVIDER_OPENAI', displayName: 'GPT-OSS 120B (Medium)', remainingFraction: 1.0 }
       ];
 
       const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData);
       const lines = output.split('\n');
       const gptLine = lines.find(l => l.includes('GPT-OSS'));
-      assert.ok(gptLine, 'GPT-OSS line must exist');
-      assert.doesNotMatch(gptLine, /│/, 'Odd/last column must not render vertical divider');
+      assert.equal(gptLine, undefined, 'GPT-OSS must not be rendered');
 
-      // Verify vertical grid lines
+      // Verify horizontal dividers
       assert.match(output, /───/);
-      // Verify simplified names
-      assert.match(output, /Gemini 3\.5 Flash\(H\)/);
-      assert.match(output, /Sonnet 4\.6\(Th\)/);
-      assert.match(output, /GPT-OSS 120B/);
+      // Verify Google and Claude provider names
+      assert.match(output, /Google/);
+      assert.match(output, /Claude/);
+      // Verify vertical divider between Google and Claude
+      assert.match(output, /Google.+│.+Claude/);
       // Verify reset times
       assert.match(output, /~14m/);
       assert.match(output, /~3h47m/);
@@ -38,7 +38,7 @@ describe('renderer / quota lines', () => {
         context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
       };
       const quotaData = [
-        { displayName: 'Gemini 3.5 Flash (High)', remainingFraction: 0.6 }
+        { modelProvider: 'MODEL_PROVIDER_GOOGLE', displayName: 'Gemini 3.5 Flash (High)', remainingFraction: 0.6 }
       ];
       const config = {
         display: {
@@ -48,23 +48,22 @@ describe('renderer / quota lines', () => {
       };
       const output = renderHUD(state, agyData, config, quotaData);
       assert.match(output, /─{91}/);
-      assert.match(output, /Gemini 3\.5 Flash\(H\) {5}/);
+      assert.match(output, /Google {2}/);
     });
 
-    test('is unchanged with quotaStyle unset', () => {
+    test('renders Google quota when quotaStyle is unset', () => {
       const state = { steps: 1, branch: 'main' };
       const agyData = {
         context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 }
       };
       const quotaData = [
-        { id: 'gemini-3-flash-agent', displayName: 'Gemini 3.5 Flash (High)', remainingFraction: 1, resetTime: null },
+        { id: 'gemini-3-flash-agent', modelProvider: 'MODEL_PROVIDER_GOOGLE', displayName: 'Gemini 3.5 Flash (High)', remainingFraction: 1, resetTime: null },
       ];
       const config = { display: { unicode: true } };
       const output = renderHUD(state, agyData, config, quotaData);
 
       assert.match(output, /─+/);
-      assert.match(output, /Gemini 3\.5 Flash\(H\)/);
-      assert.doesNotMatch(output, /Google:/);
+      assert.match(output, /Google/);
     });
 
     test('renders one row per model showing the binding-window quota only', () => {
@@ -88,8 +87,8 @@ describe('renderer / quota lines', () => {
       const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
       const output = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
 
-      const modelLine = output.split('\n').find(l => l.includes('Gemini 3.5 Flash(H)'));
-      assert.ok(modelLine, 'model row exists');
+      const modelLine = output.split('\n').find(l => l.includes('Google'));
+      assert.ok(modelLine, 'Google row exists');
       // 20% top-level (weekly is binding), not 60% fiveHour.
       assert.match(modelLine, /\[[█░]+\]\s+20%/);
       // No 5h / Wk labels on the row — single-line layout.
@@ -105,6 +104,7 @@ describe('renderer / quota lines', () => {
       const quotaData = [{
         id: 'gemini-3.5-flash-low',
         displayName: 'Gemini 3.5 Flash (Low)',
+        modelProvider: 'MODEL_PROVIDER_GOOGLE',
         remainingFraction: 0.08, // 8%, which is <= 10% critical threshold
         resetTime: null
       }];
@@ -130,8 +130,8 @@ describe('renderer / quota lines', () => {
       const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
       const output = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
 
-      const modelLine = output.split('\n').find(l => l.includes('Gemini 3.5 Flash(H)'));
-      assert.ok(modelLine, 'model row exists');
+      const modelLine = output.split('\n').find(l => l.includes('Google'));
+      assert.ok(modelLine, 'Google row exists');
       assert.match(modelLine, /\b0%/);
       assert.doesNotMatch(modelLine, /100%/);
     });
@@ -354,7 +354,7 @@ describe('renderer / quota lines', () => {
       // Image model must NOT appear as a table column row
       assert.doesNotMatch(output, /Gemini 3\.1 Flash I/);
       // Non-image model still appears in table
-      assert.match(output, /Gemini 3\.5 Flash/);
+      assert.match(output, /Google/);
     });
   });
 });

@@ -337,11 +337,11 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   if (hooksCount > 0) metaParts.push(`${gray}${hooksCount} hooks${reset}`);
   const line3 = metaParts.length > 0 ? metaParts.join(divider) : '';
 
-  const { renderQuotaColumn, renderCompactQuotaLine } = createQuotaRenderers({
+  const { renderQuotaColumn, renderCompactQuotaLine, renderProviderQuotaLine } = createQuotaRenderers({
     colors: { cyan, reset, gray, red, yellow, green },
     glyph,
     thresholds: { warnThresh, critThresh },
-    nameWidth,
+    nameWidth: 8,
     divider,
     createProgressBar,
     truncateAndPad,
@@ -354,22 +354,11 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     if (isCompact) {
       quotaLines = `\n${renderCompactQuotaLine(quotaData, now)}`;
     } else {
-      const isImageModel = (q) => (q.id && q.id.includes('image')) || (q.displayName && q.displayName.toLowerCase().includes('image'));
-      const tableQuota = quotaData.filter(q => !isImageModel(q));
-      const cols = tableQuota.map(q => renderQuotaColumn(q, now));
-
-      const rows = [];
-      for (let i = 0; i < cols.length; i += 2) {
-        const col1 = cols[i];
-        const col2 = cols[i + 1];
-        if (col2) {
-          rows.push(`  ${col1} ${gray}${glyph.vbar}${reset} ${col2}`);
-        } else {
-          rows.push(`  ${col1}`);
-        }
+      const row = renderProviderQuotaLine(quotaData, now);
+      if (row) {
+        const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
+        quotaLines = `\n${dividerLine}\n${row}\n${dividerLine}`;
       }
-      const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
-      quotaLines = `\n${dividerLine}\n` + rows.join('\n') + `\n${dividerLine}`;
     }
   } else if (quotaData && quotaData.unavailableReason) {
     const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;

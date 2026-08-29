@@ -93,7 +93,17 @@ describe('quota / models', () => {
       assert.deepEqual(discoverAgentModelIds(apiResponse), ['gemini-3-flash-agent', 'claude-sonnet-4-6']);
     });
 
-    test('returns null when agentModelSorts is missing', () => {
+    test('extracts model IDs from tieredModelIds', () => {
+      const apiResponse = {
+        tieredModelIds: {
+          flash: ['gemini-3.7-flash-tiered'],
+          flashLite: ['gemini-3.1-flash-lite']
+        }
+      };
+      assert.deepEqual(discoverAgentModelIds(apiResponse), ['gemini-3.7-flash-tiered', 'gemini-3.1-flash-lite']);
+    });
+
+    test('returns null when agentModelSorts and tieredModelIds are missing', () => {
       assert.equal(discoverAgentModelIds({}), null);
       assert.equal(discoverAgentModelIds({ agentModelSorts: [] }), null);
       assert.equal(discoverAgentModelIds({ agentModelSorts: [{ groups: [] }] }), null);

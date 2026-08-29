@@ -7,6 +7,10 @@ const FIVE_HOUR_WINDOW_THRESHOLD_MS = 12 * 60 * 60 * 1000;
 
 // Fallback model list when agentModelSorts is absent from the API response
 const FALLBACK_AGENT_MODEL_IDS = [
+  'gemini-3.7-flash-tiered',
+  'gemini-3.6-flash-high',
+  'gemini-3.6-flash-medium',
+  'gemini-3.6-flash-low',
   'gemini-3-flash-agent',
   'gemini-3.5-flash-low',
   'gemini-3.5-flash-extra-low',
@@ -18,12 +22,23 @@ const FALLBACK_AGENT_MODEL_IDS = [
 ];
 
 function discoverAgentModelIds(apiResponse) {
-  const sorts = apiResponse.agentModelSorts;
+  const ids = [];
+  const sorts = apiResponse?.agentModelSorts;
   if (Array.isArray(sorts) && sorts.length > 0) {
-    const ids = sorts[0].groups?.[0]?.modelIds;
-    if (Array.isArray(ids) && ids.length > 0) return ids;
+    const sortIds = sorts[0].groups?.[0]?.modelIds;
+    if (Array.isArray(sortIds) && sortIds.length > 0) {
+      ids.push(...sortIds);
+    }
   }
-  return null;
+  const tiered = apiResponse?.tieredModelIds;
+  if (tiered && typeof tiered === 'object') {
+    for (const group of Object.values(tiered)) {
+      if (Array.isArray(group)) {
+        ids.push(...group);
+      }
+    }
+  }
+  return ids.length > 0 ? [...new Set(ids)] : null;
 }
 
 function resolveDeprecatedIds(ids, apiResponse) {
@@ -95,9 +110,15 @@ function normalizeQuotaModels(models, interestingModelIds = FALLBACK_AGENT_MODEL
     const observation = resetTime
       ? { remainingFraction, resetTime, observedAt: now }
       : null;
+    let displayName = m.displayName;
+    if (!displayName) {
+      if (id.includes('3.7') && id.includes('flash')) displayName = 'Gemini 3.7 Flash';
+      else if (id.includes('3.6') && id.includes('flash')) displayName = 'Gemini 3.6 Flash';
+      else displayName = id;
+    }
     results.push({
       id,
-      displayName: m.displayName || id,
+      displayName,
       modelProvider: m.modelProvider || null,
       remainingFraction,
       resetTime,

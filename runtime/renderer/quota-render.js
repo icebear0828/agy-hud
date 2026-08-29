@@ -90,9 +90,27 @@ function createQuotaRenderers(ctx) {
     return segments.join(divider);
   };
 
+  const isImageModel = (q) => (q.id && q.id.includes('image')) || (q.displayName && q.displayName.toLowerCase().includes('image'));
+
+  const renderProviderQuotaLine = (data, now) => {
+    const googleQ = data.find(q => (q.modelProvider === 'MODEL_PROVIDER_GOOGLE' && !isImageModel(q)) || q.id?.includes('gemini') || q.displayName?.toLowerCase().includes('gemini'));
+    const claudeQ = data.find(q => q.modelProvider === 'MODEL_PROVIDER_ANTHROPIC' || q.id?.includes('claude') || q.displayName?.toLowerCase().includes('claude') || q.displayName?.toLowerCase().includes('sonnet') || q.displayName?.toLowerCase().includes('opus'));
+
+    const cols = [];
+    if (googleQ) {
+      cols.push(renderQuotaColumn({ ...googleQ, displayName: 'Google' }, now));
+    }
+    if (claudeQ) {
+      cols.push(renderQuotaColumn({ ...claudeQ, displayName: 'Claude' }, now));
+    }
+    if (cols.length === 0) return null;
+    return `  ${cols.join(` ${gray}${glyph.vbar}${reset} `)}`;
+  };
+
   return {
     renderQuotaColumn,
     renderCompactQuotaLine,
+    renderProviderQuotaLine,
   };
 }
 
