@@ -193,14 +193,14 @@ describe('renderer / per-turn cache hit rate', () => {
     assert.match(output, /\| cache 0\.0% \(0\/10k\) \|/);
   });
 
-  test('shows unavailable for cache-inclusive mathematical contradictions', () => {
+  test('correctly calculates cache hit rate for incremental inputs', () => {
     const output = render({
       input_tokens: 1000,
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 3000,
     }, { unicode: false });
 
-    assert.match(output, /\| cache -- \|/);
+    assert.match(output, /\| cache 75\.0% \(3k\/4k\) \|/);
   });
 
   test('does not alter the existing token bar when the cache badge is enabled', () => {

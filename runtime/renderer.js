@@ -221,7 +221,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   );
   if (inTokens === undefined) {
     inTokens = Math.max(0, totalInput - cacheTotal);
-  } else if (modelIncludesCacheInInput(rawModelName)) {
+  } else if (inTokens >= cacheTotal && modelIncludesCacheInInput(rawModelName)) {
     inTokens = Math.max(0, inTokens - cacheTotal);
   }
   const outTokens = totalOutput;

@@ -100,18 +100,20 @@ function calculateTurnCacheMetrics(usage, modelName) {
 
   const cacheRead = cacheReadValue;
   const cacheWrite = cacheWriteValue ?? 0;
-  // Only models already covered by the existing cache-inclusive behavior have
-  // a confirmed agy statusline interpretation. Unknown providers show "--".
-  if (!modelIncludesCacheInInput(modelName) || inputValue === 0 || inputValue < cacheRead + cacheWrite) {
+  const cacheTotal = cacheRead + cacheWrite;
+
+  const totalPrompt = inputValue >= cacheTotal
+    ? inputValue
+    : inputValue + cacheTotal;
+
+  if (totalPrompt === 0) {
     return { available: false };
   }
-
-  const totalPrompt = inputValue;
 
   return {
     cacheRead,
     totalPrompt,
-    hitRate: (cacheRead / totalPrompt) * 100,
+    hitRate: Math.min(100, Math.max(0, (cacheRead / totalPrompt) * 100)),
     available: true,
   };
 }
