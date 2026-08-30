@@ -11,6 +11,8 @@ const {
   compactModelName,
   modelNamesMatch,
   modelIncludesCacheInInput,
+  calculateTurnCacheMetrics,
+  formatTurnCacheBadge,
   sanitizeTerminalText,
   formatTokens,
   formatDuration,
@@ -44,11 +46,15 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const showBreadcrumbs = display.showBreadcrumbs !== false;
   const showCurrentDir = display.showCurrentDir !== false;
   const showUsername = display.showUsername === true;
+  const showTurnCacheHitRate = display.showTurnCacheHitRate !== false;
+  const quotaStyle = display.quotaStyle || 'table';
+  const isCompact = quotaStyle === 'compact';
   const text = LANGUAGE_TEXT[resolveLanguage(config)];
 
   // ANSI escape sequences
   const reset = '\x1b[0m';
   const bold = '\x1b[1m';
+  const dim = '\x1b[2m';
 
   const getThemeColor = (key, defaultColor) => {
     const name = config?.theme?.[key] || defaultColor;
@@ -215,10 +221,29 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   );
   if (inTokens === undefined) {
     inTokens = Math.max(0, totalInput - cacheTotal);
-  } else if (modelIncludesCacheInInput(rawModelName)) {
+  } else if (inTokens >= cacheTotal && modelIncludesCacheInInput(rawModelName)) {
     inTokens = Math.max(0, inTokens - cacheTotal);
   }
   const outTokens = totalOutput;
+
+  const hasCacheTelemetry = candidate => candidate && typeof candidate === 'object' && (
+    Object.hasOwn(candidate, 'cache_read_input_tokens') ||
+    Object.hasOwn(candidate, 'cache_creation_input_tokens')
+  );
+  const hasCompleteTurnCacheUsage = candidate => candidate && typeof candidate === 'object' &&
+    Number.isFinite(candidate.input_tokens) && candidate.input_tokens >= 0 &&
+    Number.isFinite(candidate.cache_read_input_tokens) && candidate.cache_read_input_tokens >= 0 &&
+    (candidate.cache_creation_input_tokens === undefined || (Number.isFinite(candidate.cache_creation_input_tokens) && candidate.cache_creation_input_tokens >= 0));
+  const turnUsageCandidates = [
+    agyCurrentUsage,
+    usage,
+    transcriptCurrentUsage,
+    transcriptUsage,
+  ];
+  const turnUsage = turnUsageCandidates.find(hasCompleteTurnCacheUsage);
+  const turnCacheMetrics = turnUsage
+    ? calculateTurnCacheMetrics(turnUsage, rawModelName)
+    : turnUsageCandidates.some(hasCacheTelemetry) ? { available: false } : null;
 
   // Apply cache smoothing adaption to absorb CLI truncation/fluctuation bugs
   let displayCache = cacheTotal;
@@ -240,15 +265,14 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     const cacheLabel = isCacheSmoothApplied ? `${formatTokens(displayCache)}*` : formatTokens(displayCache);
     detailParts.push(`cache: ${cacheLabel}`);
   }
-  const tokenParts = `${formatTokens(tokenTotal)} ${gray}(${reset}${detailParts.join(', ')}${gray})${reset}`;
+  const tokenParts = isCompact
+    ? formatTokens(tokenTotal)
+    : `${formatTokens(tokenTotal)} ${gray}(${reset}${detailParts.join(', ')}${gray})${reset}`;
   const tokenPrefix = tokenIcon === '[Tk] ' ? 'Tokens' : `${tokenIcon}Tokens`;
   const tokensStr = `${cyan}${tokenPrefix} ${tokenParts}${reset}`;
   const ctxBar = createProgressBar(ctxPercent, cyan, 10, true);
   const ctxPctStr = `${Math.round(ctxPercent)}%`;
   const ctxStr = `${cyan}${ctxIcon}${formatTokens(totalInput)}/${formatTokens(usage.context_window_size || 0)}${reset} ${ctxBar} ${cyan}${ctxPctStr}${reset}`;
-
-  const quotaStyle = display.quotaStyle || 'table';
-  const isCompact = quotaStyle === 'compact';
 
   // In compact mode, find current model's quota and append to line 2
   let currentModelQuota = null;
@@ -268,6 +292,16 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   // Layer 2: resource consumption
   const line2Parts = [];
   if (showTokenBar) line2Parts.push(tokensStr);
+  if (showTurnCacheHitRate && (turnCacheMetrics || isCacheSmoothApplied)) {
+    const cacheBadge = formatTurnCacheBadge(
+      isCacheSmoothApplied ? null : turnCacheMetrics,
+      text.cacheLabel,
+      { green, cyan, yellow, gray, reset, bold, dim },
+      isCompact,
+      display.cacheHitThresholds
+    );
+    line2Parts.push(cacheBadge);
+  }
   line2Parts.push(ctxStr);
   if (isCompact && currentModelQuota) {
     const pct = formatQuotaPercent(currentModelQuota.remainingFraction);

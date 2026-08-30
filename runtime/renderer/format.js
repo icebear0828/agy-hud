@@ -74,7 +74,37 @@ function modelNamesMatch(left, right) {
 function modelIncludesCacheInInput(nameOrId) {
   if (!nameOrId) return false;
   const name = nameOrId.toLowerCase();
-  return name.includes('claude') || name.includes('sonnet') || name.includes('opus') || name.includes('haiku') || name.includes('gpt');
+  return name.includes('claude') || name.includes('sonnet') || name.includes('opus') ||
+    name.includes('haiku') || name.includes('gpt') || name.includes('deepseek') ||
+    name.includes('gemini');
+}
+
+function normalizeTokenCount(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+/** Calculate a per-turn cache hit rate with self-adaptive total prompt resolution. */
+function calculateTurnCacheMetrics(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+
+  const cacheRead = normalizeTokenCount(usage.cache_read_input_tokens);
+  const cacheWrite = normalizeTokenCount(usage.cache_creation_input_tokens) ?? 0;
+  const input = normalizeTokenCount(usage.input_tokens);
+
+  if (cacheRead === null || input === null) return { available: false };
+
+  const cacheTotal = cacheRead + cacheWrite;
+  const totalPrompt = input >= cacheTotal ? input : input + cacheTotal;
+  if (totalPrompt === 0) return { available: false };
+
+  return {
+    cacheRead,
+    totalPrompt,
+    hitRate: Math.min(100, Math.max(0, (cacheRead / totalPrompt) * 100)),
+    available: true,
+  };
 }
 
 /**
@@ -97,6 +127,40 @@ function formatTokens(n) {
     return str + 'k';
   }
   return Math.round(n).toString();
+}
+
+function formatTurnCacheBadge(metrics, label, colors, isCompact, thresholds = {}) {
+  const palette = colors || {};
+  const reset = palette.reset || '';
+  const dim = palette.dim || '';
+  const safeLabel = label || 'cache';
+
+  if (!metrics || metrics.available === false) {
+    return `${palette.gray || ''}${dim}${safeLabel} --${reset}`;
+  }
+
+  const levels = thresholds && typeof thresholds === 'object' ? thresholds : {};
+  const excellent = Number.isFinite(levels.excellent) ? levels.excellent : 80;
+  const partial = Number.isFinite(levels.partial) ? levels.partial : 50;
+  const hitRate = Number.isFinite(metrics.hitRate)
+    ? Math.min(100, Math.max(0, metrics.hitRate))
+    : 0;
+
+  let style;
+  if (hitRate >= excellent) {
+    style = `${palette.green || palette.cyan || ''}${palette.bold || ''}`;
+  } else if (hitRate >= partial) {
+    style = palette.yellow || '';
+  } else if (hitRate > 0) {
+    style = `${palette.yellow || ''}${dim}`;
+  } else {
+    style = `${palette.gray || ''}${dim}`;
+  }
+
+  const absolute = isCompact
+    ? ''
+    : ` (${formatTokens(normalizeTokenCount(metrics.cacheRead) ?? 0)}/${formatTokens(normalizeTokenCount(metrics.totalPrompt) ?? 0)})`;
+  return `${style}${safeLabel} ${hitRate.toFixed(1)}%${absolute}${reset}`;
 }
 
 /** Format seconds into "XhYm" / "Ym" / "now" (compact). */
@@ -145,6 +209,8 @@ module.exports = {
   normalizeModelMatchValue,
   modelNamesMatch,
   modelIncludesCacheInInput,
+  calculateTurnCacheMetrics,
+  formatTurnCacheBadge,
   sanitizeTerminalText,
   formatTokens,
   formatDuration,
