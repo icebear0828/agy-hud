@@ -42,8 +42,7 @@ function simplifyModelName(name) {
 }
 
 const COMPACT_NAME_RULES = [
-  [/^Gemini [\d.]+ (Flash|Pro) \((\w+)\)/, (_, fam, tier) =>
-    `${fam}(${TIER_ABBREVS[tier] || tier[0]})`],
+  [/^Gemini [\d.]+ (Flash|Pro).*/, (_, fam) => fam],
   [/^Claude (\w+) [\d.]+ \((\w+)\)/, (_, fam) => fam],
   [/^GPT-OSS .+/, () => 'GPT'],
 ];
