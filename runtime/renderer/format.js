@@ -85,30 +85,19 @@ function normalizeTokenCount(value) {
   return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
-/** Calculate a cache hit rate only when the statusline payload has confirmed semantics. */
-function calculateTurnCacheMetrics(usage, modelName) {
+/** Calculate a per-turn cache hit rate with self-adaptive total prompt resolution. */
+function calculateTurnCacheMetrics(usage) {
   if (!usage || typeof usage !== 'object') return null;
 
-  const cacheReadValue = normalizeTokenCount(usage.cache_read_input_tokens);
-  const cacheWriteValue = normalizeTokenCount(usage.cache_creation_input_tokens);
-  if (cacheReadValue === null && cacheWriteValue === null) return null;
+  const cacheRead = normalizeTokenCount(usage.cache_read_input_tokens);
+  const cacheWrite = normalizeTokenCount(usage.cache_creation_input_tokens) ?? 0;
+  const input = normalizeTokenCount(usage.input_tokens);
 
-  const inputValue = normalizeTokenCount(usage.input_tokens);
-  if (inputValue === null || cacheReadValue === null || (usage.cache_creation_input_tokens !== undefined && cacheWriteValue === null)) {
-    return { available: false };
-  }
+  if (cacheRead === null || input === null) return { available: false };
 
-  const cacheRead = cacheReadValue;
-  const cacheWrite = cacheWriteValue ?? 0;
   const cacheTotal = cacheRead + cacheWrite;
-
-  const totalPrompt = inputValue >= cacheTotal
-    ? inputValue
-    : inputValue + cacheTotal;
-
-  if (totalPrompt === 0) {
-    return { available: false };
-  }
+  const totalPrompt = input >= cacheTotal ? input : input + cacheTotal;
+  if (totalPrompt === 0) return { available: false };
 
   return {
     cacheRead,
