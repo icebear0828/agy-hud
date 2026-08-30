@@ -67,27 +67,37 @@ function createQuotaRenderers(ctx) {
     return `${coloredName} ${barPart} ${coloredPct} ${coloredTime}`;
   };
 
-  // Compact: provider-grouped mini bars based on the top-level fraction.
-  const renderCompactQuotaLine = (data, _now) => {
+  const isImageModel = (q) => Boolean((q?.id && q.id.includes('image')) || (q?.displayName && q.displayName.toLowerCase().includes('image')));
+
+  // Compact: provider-grouped mini bars based on the most constrained quota window.
+  const renderCompactQuotaLine = (data, now = Date.now()) => {
     const groups = new Map();
-    for (const q of data) {
+    for (const q of data || []) {
+      if (!q || isImageModel(q)) continue;
       const label = PROVIDER_LABELS[q.modelProvider] || 'Other';
       if (!groups.has(label)) groups.set(label, []);
       groups.get(label).push(q);
     }
     const segments = [];
     for (const [provider, models] of groups) {
-      // Family-level dedup: keep the first model for each compact name.
-      const seenFamilies = new Set();
-      const deduped = models.filter(q => {
+      // Family-level dedup: retain the most constrained model (lowest effective remaining fraction).
+      const familyMap = new Map();
+      for (const q of models) {
         const key = compactModelName(q.displayName || q.id);
-        if (seenFamilies.has(key)) return false;
-        seenFamilies.add(key);
-        return true;
-      });
-      const items = deduped.map(q => {
+        const critical = pickCriticalWindow(q?.windows, now) || q;
+        const effFraction = typeof critical?.remainingFraction === 'number' ? critical.remainingFraction : 1;
+        if (!familyMap.has(key)) {
+          familyMap.set(key, { model: q, effFraction, critical });
+        } else {
+          const current = familyMap.get(key);
+          if (effFraction < current.effFraction) {
+            familyMap.set(key, { model: q, effFraction, critical });
+          }
+        }
+      }
+      const items = Array.from(familyMap.values()).map(({ model: q, critical }) => {
         const name = sanitizeTerminalText(compactModelName(q.displayName || q.id), 20);
-        const pct = formatQuotaPercent(q.remainingFraction);
+        const pct = formatQuotaPercent(critical.remainingFraction);
         const filled = Math.round((pct / 100) * 3);
         const empty = 3 - filled;
         const barColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;

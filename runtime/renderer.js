@@ -14,6 +14,7 @@ const {
   sanitizeTerminalText,
   formatTokens,
   formatDuration,
+  formatQuotaPercent,
 } = require('./renderer/format.js');
 const {
   LANGUAGE_TEXT,
@@ -297,8 +298,6 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     }
   }
 
-  const formatQuotaPercent = require('./renderer/format.js').formatQuotaPercent;
-
   // Layer 2: resource consumption
   const line2Parts = [];
   if (showTokenBar) line2Parts.push(tokensStr);
@@ -418,8 +417,6 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   if (line3) lines.push(line3);
   return lines.join('\n') + quotaLines;
 }
-
-const { formatQuotaPercent } = require('./renderer/format.js');
 
 module.exports = {
   renderHUD,

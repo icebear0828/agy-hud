@@ -18,13 +18,16 @@ const FALLBACK_AGENT_MODEL_IDS = [
 ];
 
 function discoverAgentModelIds(apiResponse) {
+  if (!apiResponse || typeof apiResponse !== 'object') return null;
   const sorts = apiResponse.agentModelSorts;
   if (!Array.isArray(sorts) || sorts.length === 0) return null;
   const ids = [];
   for (const sort of sorts) {
-    for (const group of sort.groups || []) {
-      for (const id of group.modelIds || []) {
-        if (id && !ids.includes(id)) ids.push(id);
+    for (const group of sort?.groups || []) {
+      for (const id of group?.modelIds || []) {
+        if (typeof id === 'string' && id.trim() && !ids.includes(id)) {
+          ids.push(id);
+        }
       }
     }
   }
@@ -32,7 +35,8 @@ function discoverAgentModelIds(apiResponse) {
 }
 
 function resolveDeprecatedIds(ids, apiResponse) {
-  const deprecated = apiResponse.deprecatedModelIds;
+  if (!Array.isArray(ids)) return [];
+  const deprecated = apiResponse?.deprecatedModelIds;
   if (!deprecated || typeof deprecated !== 'object') return ids;
   return ids.map(id => deprecated[id]?.newModelId || id);
 }

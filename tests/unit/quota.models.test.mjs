@@ -100,6 +100,33 @@ describe('quota / models', () => {
       assert.equal(discoverAgentModelIds({ agentModelSorts: [{ groups: [{ modelIds: [] }] }] }), null);
     });
 
+    test('handles null, undefined, and non-object inputs safely', () => {
+      assert.equal(discoverAgentModelIds(null), null);
+      assert.equal(discoverAgentModelIds(undefined), null);
+      assert.equal(discoverAgentModelIds('invalid'), null);
+      assert.equal(discoverAgentModelIds(123), null);
+      assert.equal(discoverAgentModelIds(true), null);
+    });
+
+    test('handles malformed sorts, groups, and invalid modelIds defensively', () => {
+      const response = {
+        agentModelSorts: [
+          null,
+          { groups: null },
+          { groups: [{ modelIds: null }, { modelIds: [null, '', '   ', 'valid-id', 123, 'valid-id'] }] },
+          { groups: [{ modelIds: ['another-id'] }] },
+        ],
+      };
+      assert.deepEqual(discoverAgentModelIds(response), ['valid-id', 'another-id']);
+
+      const emptyOnly = {
+        agentModelSorts: [
+          { groups: [{ modelIds: ['', '   ', null, undefined, 42] }] },
+        ],
+      };
+      assert.equal(discoverAgentModelIds(emptyOnly), null);
+    });
+
     test('flattens multiple sorts and groups with deduplication', () => {
       const response = {
         agentModelSorts: [
@@ -132,6 +159,22 @@ describe('quota / models', () => {
       const ids = ['gemini-3-flash-agent', 'claude-sonnet-4-6'];
       assert.deepEqual(resolveDeprecatedIds(ids, {}), ids);
       assert.deepEqual(resolveDeprecatedIds(ids, { deprecatedModelIds: {} }), ids);
+    });
+
+    test('handles null, undefined, and non-array ids safely', () => {
+      assert.deepEqual(resolveDeprecatedIds(null, {}), []);
+      assert.deepEqual(resolveDeprecatedIds(undefined, {}), []);
+      assert.deepEqual(resolveDeprecatedIds('not-array', {}), []);
+      assert.deepEqual(resolveDeprecatedIds(123, {}), []);
+    });
+
+    test('handles null, undefined, and malformed deprecatedModelIds safely', () => {
+      const ids = ['model-a', 'model-b'];
+      assert.deepEqual(resolveDeprecatedIds(ids, null), ids);
+      assert.deepEqual(resolveDeprecatedIds(ids, undefined), ids);
+      assert.deepEqual(resolveDeprecatedIds(ids, { deprecatedModelIds: null }), ids);
+      assert.deepEqual(resolveDeprecatedIds(ids, { deprecatedModelIds: 'not-object' }), ids);
+      assert.deepEqual(resolveDeprecatedIds(ids, { deprecatedModelIds: 123 }), ids);
     });
   });
 

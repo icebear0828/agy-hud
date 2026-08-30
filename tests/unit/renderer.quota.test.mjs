@@ -217,6 +217,84 @@ describe('renderer / quota lines', () => {
       assert.equal((googleLine.match(/Pro/g) || []).length, 1);
     });
 
+    test('selects the most constrained quota (lowest remaining fraction) when deduplicating families', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { display_name: 'Gemini 3.6 Flash (High)' }
+      };
+      // Test when lowest fraction appears second
+      const quotaData1 = [
+        { id: 'gemini-3.6-flash-high', displayName: 'Gemini 3.6 Flash (High)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.9 },
+        { id: 'gemini-3.5-flash-low', displayName: 'Gemini 3.5 Flash (Low)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.2 },
+      ];
+      const output1 = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: true } }, quotaData1)
+        .replace(/\x1b\[[0-9;]*m/g, '');
+      const googleLine1 = output1.split('\n').find(line => line.includes('Google:')) || '';
+      // 0.2 -> 20% -> 1 filled (█), 2 empty (░░)
+      assert.match(googleLine1, /Flash█░░/);
+
+      // Test when lowest fraction appears first
+      const quotaData2 = [
+        { id: 'gemini-3.5-flash-low', displayName: 'Gemini 3.5 Flash (Low)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.2 },
+        { id: 'gemini-3.6-flash-high', displayName: 'Gemini 3.6 Flash (High)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.9 },
+      ];
+      const output2 = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: true } }, quotaData2)
+        .replace(/\x1b\[[0-9;]*m/g, '');
+      const googleLine2 = output2.split('\n').find(line => line.includes('Google:')) || '';
+      assert.match(googleLine2, /Flash█░░/);
+    });
+
+    test('selects the most constrained quota taking critical window into account in compact mode', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { display_name: 'Gemini 3.6 Flash (High)' }
+      };
+      const now = Date.now();
+      const quotaData = [
+        {
+          id: 'gemini-3.6-flash-high',
+          displayName: 'Gemini 3.6 Flash (High)',
+          modelProvider: 'MODEL_PROVIDER_GOOGLE',
+          remainingFraction: 1.0,
+          resetTime: new Date(now + 100 * 3600 * 1000).toISOString(),
+          windows: {
+            fiveHour: { remainingFraction: 0.0, resetTime: new Date(now + 2 * 3600 * 1000).toISOString(), observedAt: now },
+            weekly: { remainingFraction: 1.0, resetTime: new Date(now + 100 * 3600 * 1000).toISOString(), observedAt: now },
+          },
+        },
+        {
+          id: 'gemini-3.5-flash-low',
+          displayName: 'Gemini 3.5 Flash (Low)',
+          modelProvider: 'MODEL_PROVIDER_GOOGLE',
+          remainingFraction: 0.8,
+        },
+      ];
+      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: true } }, quotaData)
+        .replace(/\x1b\[[0-9;]*m/g, '');
+      const googleLine = output.split('\n').find(line => line.includes('Google:')) || '';
+      // The 0% critical window should make Flash 0% (0 filled, 3 empty ░░░)
+      assert.match(googleLine, /Flash░░░/);
+    });
+
+    test('filters out image models from compact mini bars', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { display_name: 'Gemini 3.6 Flash (High)' }
+      };
+      const quotaData = [
+        { id: 'gemini-3.6-flash-high', displayName: 'Gemini 3.6 Flash (High)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.8 },
+        { id: 'gemini-3.1-flash-image', displayName: 'Gemini 3.1 Flash Image', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.5 },
+      ];
+      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: true } }, quotaData)
+        .replace(/\x1b\[[0-9;]*m/g, '');
+      const googleLine = output.split('\n').find(line => line.includes('Google:')) || '';
+      assert.match(googleLine, /Flash/);
+      assert.doesNotMatch(googleLine, /Image/);
+    });
+
     test('falls back to the same family and tier across model generations', () => {
       const state = { steps: 1, branch: 'main' };
       const agyData = {
