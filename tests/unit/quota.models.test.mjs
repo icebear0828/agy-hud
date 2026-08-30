@@ -99,6 +99,22 @@ describe('quota / models', () => {
       assert.equal(discoverAgentModelIds({ agentModelSorts: [{ groups: [] }] }), null);
       assert.equal(discoverAgentModelIds({ agentModelSorts: [{ groups: [{ modelIds: [] }] }] }), null);
     });
+
+    test('flattens multiple sorts and groups with deduplication', () => {
+      const response = {
+        agentModelSorts: [
+          { groups: [
+            { modelIds: ['model-a', 'model-b'] },
+            { modelIds: ['model-c'] },
+          ] },
+          { groups: [
+            { modelIds: ['model-b', 'model-d'] },
+          ] },
+        ],
+      };
+
+      assert.deepEqual(discoverAgentModelIds(response), ['model-a', 'model-b', 'model-c', 'model-d']);
+    });
   });
 
   describe('resolveDeprecatedIds', () => {

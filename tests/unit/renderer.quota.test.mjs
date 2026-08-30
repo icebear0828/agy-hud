@@ -192,9 +192,47 @@ describe('renderer / quota lines', () => {
       const config = { display: { quotaStyle: 'compact', unicode: true } };
       const output = renderHUD(state, agyData, config, quotaData);
 
-      assert.match(output, /Google:.*Flash\(H\).*Pro\(L\)/);
+      assert.match(output, /Google:.*Flash.*Pro/);
       assert.match(output, /Anthropic:.*Sonnet/);
       assert.match(output, /OpenAI:.*GPT/);
+    });
+
+    test('deduplicates models by family in compact mini bars', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { display_name: 'Gemini 3.6 Flash (High)' }
+      };
+      const quotaData = [
+        { id: 'gemini-3.6-flash-high', displayName: 'Gemini 3.6 Flash (High)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.8 },
+        { id: 'gemini-3.5-flash-high', displayName: 'Gemini 3.5 Flash (High)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.6 },
+        { id: 'gemini-3.6-flash-medium', displayName: 'Gemini 3.6 Flash (Medium)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.9 },
+        { id: 'gemini-3.1-pro-high', displayName: 'Gemini 3.1 Pro (High)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.7 },
+      ];
+      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: true } }, quotaData)
+        .replace(/\x1b\[[0-9;]*m/g, '');
+      const googleLine = output.split('\n').find(line => line.includes('Google:')) || '';
+
+      assert.equal((googleLine.match(/Flash/g) || []).length, 1);
+      assert.equal((googleLine.match(/Pro/g) || []).length, 1);
+    });
+
+    test('falls back to the same family and tier across model generations', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { display_name: 'Gemini 3.7 Flash (High)', id: 'gemini-3.7-flash-high' }
+      };
+      const quotaData = [{
+        id: 'gemini-3.5-flash-high',
+        displayName: 'Gemini 3.5 Flash (High)',
+        modelProvider: 'MODEL_PROVIDER_GOOGLE',
+        remainingFraction: 0.74,
+        resetTime: new Date(Date.now() + 2 * 3600 * 1000).toISOString(),
+      }];
+      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+
+      assert.match(output, /Quota: 74%/);
     });
 
   });

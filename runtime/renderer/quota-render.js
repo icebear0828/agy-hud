@@ -77,7 +77,15 @@ function createQuotaRenderers(ctx) {
     }
     const segments = [];
     for (const [provider, models] of groups) {
-      const items = models.map(q => {
+      // Family-level dedup: keep the first model for each compact name.
+      const seenFamilies = new Set();
+      const deduped = models.filter(q => {
+        const key = compactModelName(q.displayName || q.id);
+        if (seenFamilies.has(key)) return false;
+        seenFamilies.add(key);
+        return true;
+      });
+      const items = deduped.map(q => {
         const name = sanitizeTerminalText(compactModelName(q.displayName || q.id), 20);
         const pct = formatQuotaPercent(q.remainingFraction);
         const filled = Math.round((pct / 100) * 3);

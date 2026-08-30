@@ -114,6 +114,42 @@ test('getSessionState detects workspace config metadata correctly', async () => 
   }
 });
 
+test('getSessionState prioritizes AGENTS.md over GEMINI.md and CLAUDE.md', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-agents-priority-'));
+  const originalCwd = process.cwd;
+  process.cwd = () => tempDir;
+
+  try { await withScrubbedGitEnv(async () => {
+    fs.writeFileSync(path.join(tempDir, 'AGENTS.md'), '# Agents');
+    fs.writeFileSync(path.join(tempDir, 'GEMINI.md'), '# Gemini');
+    fs.writeFileSync(path.join(tempDir, 'CLAUDE.md'), '# Claude');
+
+    const state = await getSessionState('missing-transcript.jsonl');
+
+    assert.equal(state.memoryFile, 'AGENTS.md');
+  }); } finally {
+    process.cwd = originalCwd;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('getSessionState detects lowercase agents.md', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-agents-lowercase-'));
+  const originalCwd = process.cwd;
+  process.cwd = () => tempDir;
+
+  try { await withScrubbedGitEnv(async () => {
+    fs.writeFileSync(path.join(tempDir, 'agents.md'), '# agents');
+
+    const state = await getSessionState('missing-transcript.jsonl');
+
+    assert.equal(state.memoryFile, 'agents.md');
+  }); } finally {
+    process.cwd = originalCwd;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('getSessionState captures context window token usage from transcript lines', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-usage-'));
   try {

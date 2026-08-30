@@ -255,12 +255,46 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   if (isCompact && quotaData && quotaData.length > 0) {
     const rawName = agyData?.model?.display_name || '';
     const modelId = agyData?.model?.id || '';
+
+    // 1) Exact / normalized match.
     currentModelQuota = quotaData.find(q =>
       (modelId && q.id === modelId) ||
       q.displayName === rawName ||
       simplifyModelName(q.displayName) === modelName ||
       modelNamesMatch(q.displayName, rawName)
     );
+
+    // 2) Family + tier fallback for cross-generation matching.
+    if (!currentModelQuota && (rawName || modelName)) {
+      const extractFamilyAndTier = (name) => {
+        const s = String(name).toLowerCase();
+        let family = '';
+        if (s.includes('flash')) family = 'flash';
+        else if (s.includes('pro')) family = 'pro';
+        else if (s.includes('sonnet')) family = 'sonnet';
+        else if (s.includes('opus')) family = 'opus';
+        else if (s.includes('haiku')) family = 'haiku';
+        else if (s.includes('gpt')) family = 'gpt';
+
+        let tier = '';
+        if (s.includes('high') || s.includes('(h)') || s.includes('thinking') || s.includes('(th)')) tier = 'high';
+        else if (s.includes('medium') || s.includes('(m)')) tier = 'medium';
+        else if (s.includes('low') || s.includes('(l)') || s.includes('extra-low')) tier = 'low';
+
+        return { family, tier };
+      };
+
+      const current = extractFamilyAndTier(rawName || modelName);
+      if (current.family) {
+        currentModelQuota = quotaData.find(q => {
+          const target = extractFamilyAndTier(q.displayName || q.id);
+          return target.family === current.family && current.tier && target.tier === current.tier;
+        }) || quotaData.find(q => {
+          const target = extractFamilyAndTier(q.displayName || q.id);
+          return target.family === current.family;
+        });
+      }
+    }
   }
 
   const formatQuotaPercent = require('./renderer/format.js').formatQuotaPercent;

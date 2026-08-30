@@ -273,15 +273,32 @@ async function getSessionState(transcriptPath) {
   const projectKey = normalizedCwd.replace(/:/g, '').replace(/\//g, '-');
   const projectMemoryDir = path.join(os.homedir(), '.claude', 'projects', projectKey, 'memory');
 
-  // Detect memory files (GEMINI.md first — this is an agy plugin)
+  // Detect memory files (AGENTS.md first).
+  const memoryCandidates = [
+    'AGENTS.md', 'agents.md',
+    'GEMINI.md', 'gemini.md',
+    'CLAUDE.md', 'claude.md',
+    'MEMORY.md', 'memory.md',
+  ];
   let memoryFile;
-  if (fs.existsSync(path.join(cwd, 'GEMINI.md'))) {
-    memoryFile = 'GEMINI.md';
-  } else if (fs.existsSync(path.join(cwd, 'CLAUDE.md'))) {
-    memoryFile = 'CLAUDE.md';
-  } else if (fs.existsSync(path.join(cwd, 'MEMORY.md'))) {
-    memoryFile = 'MEMORY.md';
-  } else {
+  try {
+    const workspaceEntries = new Set(fs.readdirSync(cwd));
+    for (const candidate of memoryCandidates) {
+      if (workspaceEntries.has(candidate)) {
+        memoryFile = candidate;
+        break;
+      }
+    }
+  } catch {}
+  if (memoryFile === undefined) {
+    for (const candidate of memoryCandidates) {
+      if (fs.existsSync(path.join(cwd, candidate))) {
+        memoryFile = candidate;
+        break;
+      }
+    }
+  }
+  if (memoryFile === undefined) {
     const projectMemoryPath = path.join(projectMemoryDir, 'MEMORY.md');
     if (fs.existsSync(projectMemoryPath)) {
       memoryFile = 'MEMORY.md';

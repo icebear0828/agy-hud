@@ -19,11 +19,16 @@ const FALLBACK_AGENT_MODEL_IDS = [
 
 function discoverAgentModelIds(apiResponse) {
   const sorts = apiResponse.agentModelSorts;
-  if (Array.isArray(sorts) && sorts.length > 0) {
-    const ids = sorts[0].groups?.[0]?.modelIds;
-    if (Array.isArray(ids) && ids.length > 0) return ids;
+  if (!Array.isArray(sorts) || sorts.length === 0) return null;
+  const ids = [];
+  for (const sort of sorts) {
+    for (const group of sort.groups || []) {
+      for (const id of group.modelIds || []) {
+        if (id && !ids.includes(id)) ids.push(id);
+      }
+    }
   }
-  return null;
+  return ids.length > 0 ? ids : null;
 }
 
 function resolveDeprecatedIds(ids, apiResponse) {

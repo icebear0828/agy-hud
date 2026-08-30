@@ -29,9 +29,9 @@ describe('renderer / format helpers', () => {
 
   describe('compactModelName', () => {
     test('produces ultra-short names for provider summary', () => {
-      assert.equal(compactModelName('Gemini 3.5 Flash (High)'), 'Flash(H)');
-      assert.equal(compactModelName('Gemini 3.5 Flash (Medium)'), 'Flash(M)');
-      assert.equal(compactModelName('Gemini 3.1 Pro (Low)'), 'Pro(L)');
+      assert.equal(compactModelName('Gemini 3.5 Flash (High)'), 'Flash');
+      assert.equal(compactModelName('Gemini 3.5 Flash (Medium)'), 'Flash');
+      assert.equal(compactModelName('Gemini 3.1 Pro (Low)'), 'Pro');
       assert.equal(compactModelName('Claude Sonnet 4.6 (Thinking)'), 'Sonnet');
       assert.equal(compactModelName('Claude Opus 4.6 (Thinking)'), 'Opus');
       assert.equal(compactModelName('GPT-OSS 120B (Medium)'), 'GPT');
