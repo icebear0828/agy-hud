@@ -66,11 +66,12 @@ describe('renderer / per-turn cache hit rate', () => {
     assert.ok(lines[1].length <= 80, `compact resource line is ${lines[1].length} columns`);
   });
 
-  test('normalizes cache-inclusive Claude, GPT, and DeepSeek input', () => {
+  test('normalizes cache-inclusive Claude, GPT, DeepSeek, and Gemini input', () => {
     for (const displayName of [
       'Claude Sonnet 4.6 (Thinking)',
       'GPT-OSS 120B (Medium)',
       'DeepSeek V3',
+      'Gemini 3.7 Flash (High)',
     ]) {
       const output = render({
         input_tokens: 5000,
@@ -214,7 +215,7 @@ describe('renderer / per-turn cache hit rate', () => {
     assert.equal(enabled.split('\n')[1].split(' | ')[0], disabled.split('\n')[1].split(' | ')[0]);
   });
 
-  test('marks Gemini cache telemetry unavailable until its statusline input semantics are confirmed', () => {
+  test('correctly calculates cache hit rate for Gemini models', () => {
     const output = render({
       input_tokens: 10000,
       cache_creation_input_tokens: 0,
@@ -223,7 +224,7 @@ describe('renderer / per-turn cache hit rate', () => {
       model: { id: 'gemini-3.7-flash-high', display_name: 'Gemini 3.7 Flash (High)' },
     });
 
-    assert.match(output, /\| cache -- \|/);
+    assert.match(output, /\| cache 90\.0% \(9k\/10k\) \|/);
   });
 });
 

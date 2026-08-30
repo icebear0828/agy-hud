@@ -75,7 +75,8 @@ function modelIncludesCacheInInput(nameOrId) {
   if (!nameOrId) return false;
   const name = nameOrId.toLowerCase();
   return name.includes('claude') || name.includes('sonnet') || name.includes('opus') ||
-    name.includes('haiku') || name.includes('gpt') || name.includes('deepseek');
+    name.includes('haiku') || name.includes('gpt') || name.includes('deepseek') ||
+    name.includes('gemini');
 }
 
 function normalizeTokenCount(value) {
