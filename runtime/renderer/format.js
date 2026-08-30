@@ -74,7 +74,45 @@ function modelNamesMatch(left, right) {
 function modelIncludesCacheInInput(nameOrId) {
   if (!nameOrId) return false;
   const name = nameOrId.toLowerCase();
-  return name.includes('claude') || name.includes('sonnet') || name.includes('opus') || name.includes('haiku') || name.includes('gpt');
+  return name.includes('claude') || name.includes('sonnet') || name.includes('opus') ||
+    name.includes('haiku') || name.includes('gpt') || name.includes('deepseek');
+}
+
+function normalizeTokenCount(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+/** Calculate a cache hit rate only when the statusline payload has confirmed semantics. */
+function calculateTurnCacheMetrics(usage, modelName) {
+  if (!usage || typeof usage !== 'object') return null;
+
+  const cacheReadValue = normalizeTokenCount(usage.cache_read_input_tokens);
+  const cacheWriteValue = normalizeTokenCount(usage.cache_creation_input_tokens);
+  if (cacheReadValue === null && cacheWriteValue === null) return null;
+
+  const inputValue = normalizeTokenCount(usage.input_tokens);
+  if (inputValue === null || cacheReadValue === null || cacheWriteValue === null) {
+    return { available: false };
+  }
+
+  const cacheRead = cacheReadValue;
+  const cacheWrite = cacheWriteValue;
+  // Only models already covered by the existing cache-inclusive behavior have
+  // a confirmed agy statusline interpretation. Unknown providers show "--".
+  if (!modelIncludesCacheInInput(modelName) || inputValue === 0 || inputValue < cacheRead + cacheWrite) {
+    return { available: false };
+  }
+
+  const totalPrompt = inputValue;
+
+  return {
+    cacheRead,
+    totalPrompt,
+    hitRate: (cacheRead / totalPrompt) * 100,
+    available: true,
+  };
 }
 
 /**
@@ -97,6 +135,40 @@ function formatTokens(n) {
     return str + 'k';
   }
   return Math.round(n).toString();
+}
+
+function formatTurnCacheBadge(metrics, label, colors, isCompact, thresholds = {}) {
+  const palette = colors || {};
+  const reset = palette.reset || '';
+  const dim = palette.dim || '';
+  const safeLabel = label || 'cache';
+
+  if (!metrics || metrics.available === false) {
+    return `${palette.gray || ''}${dim}${safeLabel} --${reset}`;
+  }
+
+  const levels = thresholds && typeof thresholds === 'object' ? thresholds : {};
+  const excellent = Number.isFinite(levels.excellent) ? levels.excellent : 80;
+  const partial = Number.isFinite(levels.partial) ? levels.partial : 50;
+  const hitRate = Number.isFinite(metrics.hitRate)
+    ? Math.min(100, Math.max(0, metrics.hitRate))
+    : 0;
+
+  let style;
+  if (hitRate >= excellent) {
+    style = `${palette.green || palette.cyan || ''}${palette.bold || ''}`;
+  } else if (hitRate >= partial) {
+    style = palette.yellow || '';
+  } else if (hitRate > 0) {
+    style = `${palette.yellow || ''}${dim}`;
+  } else {
+    style = `${palette.gray || ''}${dim}`;
+  }
+
+  const absolute = isCompact
+    ? ''
+    : ` (${formatTokens(normalizeTokenCount(metrics.cacheRead) ?? 0)}/${formatTokens(normalizeTokenCount(metrics.totalPrompt) ?? 0)})`;
+  return `${style}${safeLabel} ${hitRate.toFixed(1)}%${absolute}${reset}`;
 }
 
 /** Format seconds into "XhYm" / "Ym" / "now" (compact). */
@@ -145,6 +217,8 @@ module.exports = {
   normalizeModelMatchValue,
   modelNamesMatch,
   modelIncludesCacheInInput,
+  calculateTurnCacheMetrics,
+  formatTurnCacheBadge,
   sanitizeTerminalText,
   formatTokens,
   formatDuration,

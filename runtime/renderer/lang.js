@@ -8,6 +8,7 @@ const PROVIDER_LABELS = {
 
 const LANGUAGE_TEXT = {
   en: {
+    cacheLabel: 'cache',
     quotaUnavailable: 'Quota unavailable',
     quotaLoading: 'Quota loading',
     quotaReasons: {
@@ -18,6 +19,7 @@ const LANGUAGE_TEXT = {
     },
   },
   zh: {
+    cacheLabel: 'cache',
     quotaUnavailable: '额度不可用',
     quotaLoading: '额度加载中',
     quotaReasons: {
