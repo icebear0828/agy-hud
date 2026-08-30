@@ -94,12 +94,12 @@ function calculateTurnCacheMetrics(usage, modelName) {
   if (cacheReadValue === null && cacheWriteValue === null) return null;
 
   const inputValue = normalizeTokenCount(usage.input_tokens);
-  if (inputValue === null || cacheReadValue === null || cacheWriteValue === null) {
+  if (inputValue === null || cacheReadValue === null || (usage.cache_creation_input_tokens !== undefined && cacheWriteValue === null)) {
     return { available: false };
   }
 
   const cacheRead = cacheReadValue;
-  const cacheWrite = cacheWriteValue;
+  const cacheWrite = cacheWriteValue ?? 0;
   // Only models already covered by the existing cache-inclusive behavior have
   // a confirmed agy statusline interpretation. Unknown providers show "--".
   if (!modelIncludesCacheInInput(modelName) || inputValue === 0 || inputValue < cacheRead + cacheWrite) {

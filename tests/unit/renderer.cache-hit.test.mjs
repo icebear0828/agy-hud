@@ -226,6 +226,17 @@ describe('renderer / per-turn cache hit rate', () => {
 
     assert.match(output, /\| cache 90\.0% \(9k\/10k\) \|/);
   });
+
+  test('correctly calculates cache hit rate when cache_creation_input_tokens is omitted', () => {
+    const output = render({
+      input_tokens: 10000,
+      cache_read_input_tokens: 9000,
+    }, { unicode: false }, {
+      model: { id: 'gemini-3.7-flash-high', display_name: 'Gemini 3.7 Flash (High)' },
+    });
+
+    assert.match(output, /\| cache 90\.0% \(9k\/10k\) \|/);
+  });
 });
 
 describe('renderer / cache badge temperature scale', () => {

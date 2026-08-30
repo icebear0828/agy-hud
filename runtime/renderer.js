@@ -230,11 +230,10 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     Object.hasOwn(candidate, 'cache_read_input_tokens') ||
     Object.hasOwn(candidate, 'cache_creation_input_tokens')
   );
-  const hasCompleteTurnCacheUsage = candidate => candidate && typeof candidate === 'object' && [
-    candidate.input_tokens,
-    candidate.cache_read_input_tokens,
-    candidate.cache_creation_input_tokens,
-  ].every(value => Number.isFinite(value) && value >= 0);
+  const hasCompleteTurnCacheUsage = candidate => candidate && typeof candidate === 'object' &&
+    Number.isFinite(candidate.input_tokens) && candidate.input_tokens >= 0 &&
+    Number.isFinite(candidate.cache_read_input_tokens) && candidate.cache_read_input_tokens >= 0 &&
+    (candidate.cache_creation_input_tokens === undefined || (Number.isFinite(candidate.cache_creation_input_tokens) && candidate.cache_creation_input_tokens >= 0));
   const turnUsageCandidates = [
     agyCurrentUsage,
     usage,
