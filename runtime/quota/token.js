@@ -231,6 +231,7 @@ function readWindowsCredentialTokens(platform = process.platform, roots = getAnt
       encoding: 'utf8',
       timeout: 5000,
       windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
     const parsed = JSON.parse(raw.trim() || '{"tokens":[]}');
     const valid = selectUsableTokens(parsed.tokens, Date.now())
@@ -272,6 +273,7 @@ function readLinuxKeyringTokens(platform = process.platform, roots = getAntigrav
     ], {
       encoding: 'utf8',
       timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
 
     const trimmed = raw.trim();
