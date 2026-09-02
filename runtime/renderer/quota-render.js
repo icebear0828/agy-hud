@@ -151,8 +151,8 @@ function createQuotaRenderers(ctx) {
     const cw = renderWindowItem('Claude week', providerWindows.Claude.weekly);
 
     const rows = [
-      `  ${g5}   ${gray}${glyph.vbar}${reset} ${c5}`,
-      `  ${gw}  ${gray}${glyph.vbar}${reset} ${cw}`,
+      `  ${g5} ${gray}${glyph.vbar}${reset} ${c5}`,
+      `  ${gw} ${gray}${glyph.vbar}${reset} ${cw}`,
     ];
 
     const dividerLine = `  ${gray}${glyph.hbar.repeat(81)}${reset}`;

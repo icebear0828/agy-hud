@@ -44,6 +44,12 @@ describe('renderer / quota lines', () => {
       assert.match(clean, /Google week\s+\[[█░]+\]\s+74%\s+~4d3h/);
       assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%\s+~4h59m/);
       assert.match(clean, /Claude week\s+\[[█░]+\]\s+100%\s+~6d23h/);
+
+      const lines = clean.split('\n');
+      const g5Line = lines.find(l => l.includes('Google 5h'));
+      const gwLine = lines.find(l => l.includes('Google week'));
+      assert.ok(g5Line && gwLine, 'both provider rows exist');
+      assert.equal(g5Line.indexOf('│'), gwLine.indexOf('│'), 'vertical separator must align perfectly');
     });
 
     test('models mode renders individual model rows in two columns', () => {
