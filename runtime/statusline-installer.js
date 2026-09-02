@@ -42,8 +42,7 @@ function buildShShimContents() {
     ') else (',
     '  set "CMDLINE=%*"',
     ')',
-    'set "CMDLINE=%CMDLINE:\\"="%"',
-    'cmd.exe /d /s /c "%CMDLINE%"',
+    'cmd.exe /d /c "%CMDLINE%"',
     'exit /b %ERRORLEVEL%',
     '',
   ].join('\r\n');
@@ -143,8 +142,7 @@ function writeCmdShim(hudScriptPath, platform = process.platform) {
  */
 function createStatusLineCommand(hudScriptPath, nodePath = process.execPath || 'node', platform = process.platform) {
   if (platform === 'win32') {
-    const shimPath = hudScriptPath.replace(/\.js$/i, '.cmd');
-    return `"${shimPath}"`;
+    return hudScriptPath.replace(/\.js$/i, '.cmd');
   }
   return `"${nodePath}" "${hudScriptPath}"`;
 }

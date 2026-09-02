@@ -47,7 +47,8 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const showBreadcrumbs = display.showBreadcrumbs !== false;
   const showCurrentDir = display.showCurrentDir !== false;
   const showUsername = display.showUsername === true;
-  const showTurnCacheHitRate = display.showTurnCacheHitRate !== false;
+  const showTurnCacheHitRate = display.showTurnCacheHitRate === true;
+  const showImageQuota = display.showImageQuota === true;
   const quotaStyle = display.quotaStyle || 'table';
   const isCompact = quotaStyle === 'compact';
   const text = LANGUAGE_TEXT[resolveLanguage(config)];
@@ -363,7 +364,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     }
   }
 
-  if (!isImageExhaustedDisplayed) {
+  if (!isImageExhaustedDisplayed && showImageQuota) {
     const imgQ = quotaData && quotaData.find(q => (q.id && q.id.includes('image')) || (q.displayName && q.displayName.toLowerCase().includes('image')));
     if (imgQ) {
       const pct = formatQuotaPercent(imgQ.remainingFraction);
@@ -377,7 +378,6 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
       }
       line2Parts.push(`${cyan}${imgIcon}Image Quota: ${bar} ${pctColor}${pct}%${reset}${timeStr}`);
     }
-
   }
 
   const line2 = line2Parts.join(divider);
@@ -404,7 +404,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   if (hooksCount > 0) metaParts.push(`${gray}${hooksCount} hooks${reset}`);
   const line3 = metaParts.length > 0 ? metaParts.join(divider) : '';
 
-  const { renderQuotaColumn, renderCompactQuotaLine } = createQuotaRenderers({
+  const { renderQuotaColumn, renderProviderQuotaTable, renderCompactQuotaLine } = createQuotaRenderers({
     colors: { cyan, reset, gray, red, yellow, green },
     glyph,
     thresholds: { warnThresh, critThresh },
@@ -420,7 +420,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     const now = Date.now();
     if (isCompact) {
       quotaLines = `\n${renderCompactQuotaLine(quotaData, now)}`;
-    } else {
+    } else if (quotaStyle === 'models') {
       const isImageModel = (q) => (q.id && q.id.includes('image')) || (q.displayName && q.displayName.toLowerCase().includes('image'));
       const tableQuota = quotaData.filter(q => !isImageModel(q));
       const cols = tableQuota.map(q => renderQuotaColumn(q, now));
@@ -437,6 +437,8 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
       }
       const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
       quotaLines = `\n${dividerLine}\n` + rows.join('\n') + `\n${dividerLine}`;
+    } else {
+      quotaLines = `\n${renderProviderQuotaTable(quotaData, now)}`;
     }
   } else if (quotaData && quotaData.unavailableReason) {
     const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;

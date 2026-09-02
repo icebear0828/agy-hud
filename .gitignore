@@ -9,3 +9,4 @@ node_modules/
 /state.json
 /.antigravity/
 /.antigravitycli/
+.claude/

@@ -31,7 +31,10 @@ function render(currentUsage, display = {}, options = {}) {
   };
 
   return renderHUD(state, agyData, {
-    display,
+    display: {
+      showTurnCacheHitRate: true,
+      ...display,
+    },
     language: options.language,
   }).replace(ANSI_RE, '');
 }

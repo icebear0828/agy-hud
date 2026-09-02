@@ -11,6 +11,7 @@
     "showGitBranch": true,
     "showCurrentDir": true,
     "breadcrumbCount": 3,
+    "unicode": true,
     "useNerdFonts": false,
     "showUsername": true
   },

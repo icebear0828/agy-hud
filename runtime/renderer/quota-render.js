@@ -31,7 +31,7 @@ const {
  * @param {Function} ctx.createProgressBar  (percent, color, width, isUsage) => string
  * @param {Function} ctx.truncateAndPad     (str, width) => string
  */
-const { pickCriticalWindow } = require('../quota/models.js');
+const { pickCriticalWindow, classifyQuotaWindow, isObservationExpired } = require('../quota/models.js');
 
 function createQuotaRenderers(ctx) {
   const { colors, glyph, thresholds, nameWidth, divider, createProgressBar, truncateAndPad } = ctx;
@@ -68,6 +68,96 @@ function createQuotaRenderers(ctx) {
   };
 
   const isImageModel = (q) => Boolean((q?.id && q.id.includes('image')) || (q?.displayName && q.displayName.toLowerCase().includes('image')));
+
+  const renderProviderQuotaTable = (data, now = Date.now()) => {
+    const providerWindows = {
+      Google: { fiveHour: null, weekly: null },
+      Claude: { fiveHour: null, weekly: null },
+    };
+
+    for (const q of data || []) {
+      if (!q || isImageModel(q)) continue;
+      const isGoogle = q.modelProvider === 'MODEL_PROVIDER_GOOGLE' || /gemini/i.test(q.id || q.displayName);
+      const isClaude = q.modelProvider === 'MODEL_PROVIDER_ANTHROPIC' || /claude/i.test(q.id || q.displayName);
+      const key = isGoogle ? 'Google' : isClaude ? 'Claude' : null;
+      if (!key) continue;
+
+      if (q.windows?.fiveHour && !isObservationExpired(q.windows.fiveHour, now)) {
+        const cur = providerWindows[key].fiveHour;
+        if (!cur || q.windows.fiveHour.remainingFraction < cur.remainingFraction) {
+          providerWindows[key].fiveHour = q.windows.fiveHour;
+        }
+      }
+      if (q.windows?.weekly && !isObservationExpired(q.windows.weekly, now)) {
+        const cur = providerWindows[key].weekly;
+        if (!cur || q.windows.weekly.remainingFraction < cur.remainingFraction) {
+          providerWindows[key].weekly = q.windows.weekly;
+        }
+      }
+
+      if (q.resetTime && !q.windows?.fiveHour && !q.windows?.weekly) {
+        const winType = classifyQuotaWindow(q.resetTime, now);
+        if (winType === 'fiveHour') {
+          const cur = providerWindows[key].fiveHour;
+          if (!cur || q.remainingFraction < cur.remainingFraction) {
+            providerWindows[key].fiveHour = { remainingFraction: q.remainingFraction, resetTime: q.resetTime };
+          }
+        } else if (winType === 'weekly') {
+          const cur = providerWindows[key].weekly;
+          if (!cur || q.remainingFraction < cur.remainingFraction) {
+            providerWindows[key].weekly = { remainingFraction: q.remainingFraction, resetTime: q.resetTime };
+          }
+        }
+      } else if (!q.resetTime && !q.windows?.fiveHour && !q.windows?.weekly) {
+        if (!providerWindows[key].fiveHour) {
+          providerWindows[key].fiveHour = { remainingFraction: q.remainingFraction, resetTime: null };
+        }
+        if (!providerWindows[key].weekly) {
+          providerWindows[key].weekly = { remainingFraction: q.remainingFraction, resetTime: null };
+        }
+      }
+    }
+
+    const renderWindowItem = (label, win) => {
+      const targetWin = win || { remainingFraction: 1.0, resetTime: null };
+      const pct = formatQuotaPercent(targetWin.remainingFraction);
+      const pctColor = pct <= (1 - critThresh) * 100 ? red
+                     : pct <= (1 - warnThresh) * 100 ? yellow
+                     : green;
+
+      const namePart = truncateAndPad(label, 11);
+      const coloredName = `${cyan}${namePart}${reset}`;
+
+      const barPart = createProgressBar(pct, pctColor, 6, false);
+
+      const pctStr = `${pct}%`.padStart(4, ' ');
+      const coloredPct = `${pctColor}${pctStr}${reset}`;
+
+      let rawTime = '';
+      if (targetWin.resetTime) {
+        const resetMs = new Date(targetWin.resetTime).getTime();
+        const secsLeft = Math.max(0, Math.round((resetMs - now) / 1000));
+        rawTime = `~${formatDuration(secsLeft)}`;
+      }
+      const timePart = rawTime.padEnd(6, ' ');
+      const coloredTime = `${gray}${timePart}${reset}`;
+
+      return `${coloredName} ${barPart} ${coloredPct} ${coloredTime}`;
+    };
+
+    const g5 = renderWindowItem('Google 5h', providerWindows.Google.fiveHour);
+    const gw = renderWindowItem('Google week', providerWindows.Google.weekly);
+    const c5 = renderWindowItem('Claude 5h', providerWindows.Claude.fiveHour);
+    const cw = renderWindowItem('Claude week', providerWindows.Claude.weekly);
+
+    const rows = [
+      `  ${g5}   ${gray}${glyph.vbar}${reset} ${c5}`,
+      `  ${gw}  ${gray}${glyph.vbar}${reset} ${cw}`,
+    ];
+
+    const dividerLine = `  ${gray}${glyph.hbar.repeat(81)}${reset}`;
+    return `${dividerLine}\n` + rows.join('\n');
+  };
 
   // Compact: provider-grouped mini bars based on the most constrained quota window.
   const renderCompactQuotaLine = (data, now = Date.now()) => {
@@ -110,6 +200,7 @@ function createQuotaRenderers(ctx) {
 
   return {
     renderQuotaColumn,
+    renderProviderQuotaTable,
     renderCompactQuotaLine,
   };
 }

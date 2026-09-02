@@ -17,18 +17,15 @@
 agy-hud supports two display modes for quota tracking: **Table Mode** (default) and **Compact Mode** (provider-grouped mini bars).
 
 ### Table Mode (Default)
-Useful for detailed side-by-side comparison of multiple models' quota.
+Clean 2x2 provider quota overview (Google 5h/week & Claude 5h/week) matching your active subscription.
 
 ```
-⎇ main │ Gemini 3.5 Flash(L) │ Google AI Pro
-⚿ 83.7k ↑4.8k ↓13.9k ⟳65.1k │ ⛁ 75.4k/1M [█░░░░░░░░░] 8% │ ⚡0 ✓0
-1 GEMINI.md │ 2 hooks
+diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 3.7 Flash(M) │ Google AI Pro
+⚿ Tokens 172.3k (in: 2.8k, out: 35.3k, cache: 134.3k) │ ⛁ 129.2k/1M [█░░░░░░░░░] 12%
+1 MEMORY.md │ 1 hooks
   ─────────────────────────────────────────────────────────────────────────────────
-  Gemini 3.5 Flash(M) [█████░]  80% ~3h22m │ Gemini 3.5 Flash(H) [█████░]  80% ~3h22m
-  Gemini 3.5 Flash(L) [█████░]  80% ~3h22m │ Gemini 3.1 Pro(L)   [█████░]  80% ~3h22m
-  Gemini 3.1 Pro(H)   [█████░]  80% ~3h22m │ Sonnet 4.6(Th)      [██░░░░]  40% ~6d4h
-  Opus 4.6(Th)        [██░░░░]  40% ~6d4h  │ GPT-OSS 120B        [██░░░░]  40% ~6d4h
-  ─────────────────────────────────────────────────────────────────────────────────
+  Google 5h   [█████░]  87% ~22m   │ Claude 5h   [██████] 100% ~4h59m
+  Google week [████░░]  74% ~4d3h  │ Claude week [██████] 100% ~6d23h
 ```
 
 ### Compact Mode

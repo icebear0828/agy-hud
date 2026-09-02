@@ -43,11 +43,25 @@ test('Windows statusLine command points at the .cmd shim, not raw node invocatio
 
   assert.equal(
     command,
-    '"C:\\Users\\testuser\\.gemini\\antigravity-cli\\agy-hud-runtime\\runtime\\bin\\agy-hud.cmd"'
+    'C:\\Users\\testuser\\.gemini\\antigravity-cli\\agy-hud-runtime\\runtime\\bin\\agy-hud.cmd'
   );
-  // The shim path replaces .js with .cmd — no inline node invocation.
+  // The shim path replaces .js with .cmd — no inline node invocation or outer quotes.
   assert.doesNotMatch(command, /^node /);
   assert.doesNotMatch(command, /\.js"$/);
+  assert.doesNotMatch(command, /^"/);
+});
+
+test('Windows statusLine command returns unquoted shim path even with spaces', () => {
+  const command = createStatusLineCommand(
+    'C:\\Users\\John Doe\\.gemini\\antigravity-cli\\agy-hud-runtime\\runtime\\bin\\agy-hud.js',
+    'C:\\Program Files\\nodejs\\node.exe',
+    'win32'
+  );
+
+  assert.equal(
+    command,
+    'C:\\Users\\John Doe\\.gemini\\antigravity-cli\\agy-hud-runtime\\runtime\\bin\\agy-hud.cmd'
+  );
 });
 
 test('Unix statusLine command uses absolute process.execPath', () => {
@@ -68,22 +82,15 @@ test('buildCmdShimContents includes node-on-PATH first then Program Files fallba
   assert.match(body, /\r\n/);
 });
 
-test('buildShShimContents forwards agy sh -c calls to cmd.exe', () => {
+test('buildShShimContents forwards agy sh -c calls to cmd.exe without broken quote manipulation', () => {
   const body = buildShShimContents();
 
   assert.match(body, /^@echo off/);
   assert.match(body, /"%~1"=="-c"/);
   assert.match(body, /set "CMDLINE=%~2"/);
-  assert.ok(body.includes('set "CMDLINE=%CMDLINE:\\"="%"'));
-  assert.match(body, /cmd\.exe \/d \/s \/c "%CMDLINE%"/);
+  assert.doesNotMatch(body, /%CMDLINE:\\"="%/);
+  assert.match(body, /cmd\.exe \/d \/c "%CMDLINE%"/);
   assert.match(body, /\r\n/);
-});
-
-test('buildShShimContents normalizes agy escaped command quotes', () => {
-  const body = buildShShimContents();
-
-  assert.ok(body.includes('set "CMDLINE=%CMDLINE:\\"="%"'));
-  assert.doesNotMatch(body, /cmd\.exe \/d \/s \/c "%~2"/);
 });
 
 test('getWindowsAgyBinDirs only returns LOCALAPPDATA agy bin and PATH dirs with agy.exe', () => {
@@ -137,8 +144,8 @@ test('ensureWindowsShShim writes sh.cmd into discovered agy bin dirs', () => {
     assert.ok(written.includes(path.join(agyBin, 'sh.cmd')));
     assert.ok(written.includes(path.join(agyBin, 'sh.bat')));
     const body = fs.readFileSync(path.join(agyBin, 'sh.cmd'), 'utf8');
-    assert.ok(body.includes('set "CMDLINE=%CMDLINE:\\"="%"'));
-    assert.match(body, /cmd\.exe \/d \/s \/c "%CMDLINE%"/);
+    assert.doesNotMatch(body, /%CMDLINE:\\"="%/);
+    assert.match(body, /cmd\.exe \/d \/c "%CMDLINE%"/);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

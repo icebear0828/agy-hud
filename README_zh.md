@@ -17,18 +17,15 @@
 agy-hud 支持两种额度（Quota）显示模式：**Table 模式**（默认）与 **Compact（紧凑）模式**（按 Provider 分组的迷你进度条）。
 
 ### Table 模式（默认）
-适合需要详细对比多个模型额度余量和重置时间的场景。
+按 Provider 汇聚 2 行 2 列展示配额周期（Google 5h/week 与 Claude 5h/week），清晰紧凑且与会员额度完全对应。
 
 ```
-⎇ main │ Gemini 3.5 Flash(L) │ Google AI Pro
-⚿ 83.7k ↑4.8k ↓13.9k ⟳65.1k │ ⛁ 75.4k/1M [█░░░░░░░░░] 8% │ ⚡0 ✓0
-1 GEMINI.md │ 2 hooks
+diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 3.7 Flash(M) │ Google AI Pro
+⚿ Tokens 172.3k (in: 2.8k, out: 35.3k, cache: 134.3k) │ ⛁ 129.2k/1M [█░░░░░░░░░] 12%
+1 MEMORY.md │ 1 hooks
   ─────────────────────────────────────────────────────────────────────────────────
-  Gemini 3.5 Flash(M) [█████░]  80% ~3h22m │ Gemini 3.5 Flash(H) [█████░]  80% ~3h22m
-  Gemini 3.5 Flash(L) [█████░]  80% ~3h22m │ Gemini 3.1 Pro(L)   [█████░]  80% ~3h22m
-  Gemini 3.1 Pro(H)   [█████░]  80% ~3h22m │ Sonnet 4.6(Th)      [██░░░░]  40% ~6d4h
-  Opus 4.6(Th)        [██░░░░]  40% ~6d4h  │ GPT-OSS 120B        [██░░░░]  40% ~6d4h
-  ─────────────────────────────────────────────────────────────────────────────────
+  Google 5h   [█████░]  87% ~22m   │ Claude 5h   [██████] 100% ~4h59m
+  Google week [████░░]  74% ~4d3h  │ Claude week [██████] 100% ~6d23h
 ```
 
 ### Compact（紧凑）模式
