@@ -197,6 +197,9 @@ module.exports = {
   fetchTierFromCloud,
   fetchAccountEmail,
   extractTierName: cloudMod.extractTierName,
+  parseQuotaSummary: cloudMod.parseQuotaSummary,
+  enrichModelsWithQuotaSummary: cloudMod.enrichModelsWithQuotaSummary,
+  fetchUserQuotaSummaryFromCloud: cloudMod.fetchUserQuotaSummaryFromCloud,
   // models module
   normalizeQuotaModels: modelsMod.normalizeQuotaModels,
   discoverAgentModelIds: modelsMod.discoverAgentModelIds,

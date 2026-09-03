@@ -7,6 +7,8 @@ const {
   fetchTierFromCloud,
   fetchAccountEmail,
   extractTierName,
+  parseQuotaSummary,
+  enrichModelsWithQuotaSummary,
 } = quotaModule;
 
 describe('quota / cloud', () => {
@@ -274,6 +276,78 @@ describe('quota / cloud', () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+  });
+
+  describe('parseQuotaSummary', () => {
+    test('parses standard retrieveUserQuotaSummary response correctly', () => {
+      const sample = {
+        groups: [
+          {
+            displayName: 'Gemini Models',
+            buckets: [
+              { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0.94, resetTime: '2026-09-10T08:00:00Z' },
+              { bucketId: 'gemini-5h', window: '5h', remainingFraction: 0.65, resetTime: '2026-09-03T17:00:00Z' },
+            ],
+          },
+          {
+            displayName: 'Claude and GPT models',
+            buckets: [
+              { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 1.0, resetTime: '2026-09-10T08:00:00Z' },
+              { bucketId: '3p-5h', window: '5h', remainingFraction: 0.8, resetTime: '2026-09-03T18:00:00Z' },
+            ],
+          },
+        ],
+      };
+      const parsed = parseQuotaSummary(sample);
+      assert.ok(parsed, 'should parse summary');
+      assert.equal(parsed.google.weekly.remainingFraction, 0.94);
+      assert.equal(parsed.google.weekly.resetTime, '2026-09-10T08:00:00Z');
+      assert.equal(parsed.google.fiveHour.remainingFraction, 0.65);
+      assert.equal(parsed.google.fiveHour.resetTime, '2026-09-03T17:00:00Z');
+
+      assert.equal(parsed.claude.weekly.remainingFraction, 1.0);
+      assert.equal(parsed.claude.fiveHour.remainingFraction, 0.8);
+    });
+
+    test('returns null for empty or invalid data', () => {
+      assert.equal(parseQuotaSummary(null), null);
+      assert.equal(parseQuotaSummary({}), null);
+      assert.equal(parseQuotaSummary({ groups: [] }), null);
+      assert.equal(parseQuotaSummary({ groups: [{ displayName: 'Unknown', buckets: [] }] }), null);
+    });
+  });
+
+  describe('enrichModelsWithQuotaSummary', () => {
+    test('enriches models with provider weekly and 5h windows', () => {
+      const models = [
+        { id: 'gemini-3.6-flash', modelProvider: 'MODEL_PROVIDER_GOOGLE', windows: {} },
+        { id: 'claude-sonnet-4-6', modelProvider: 'MODEL_PROVIDER_ANTHROPIC', windows: {} },
+        { id: 'other-model', modelProvider: 'MODEL_PROVIDER_OTHER', windows: {} },
+      ];
+      const summary = {
+        google: {
+          weekly: { remainingFraction: 0.92, resetTime: '2026-09-10T00:00:00Z' },
+          fiveHour: { remainingFraction: 0.55, resetTime: '2026-09-03T17:00:00Z' },
+        },
+        claude: {
+          weekly: { remainingFraction: 1.0, resetTime: '2026-09-10T00:00:00Z' },
+        },
+      };
+      const enriched = enrichModelsWithQuotaSummary(models, summary, 123456);
+      assert.equal(enriched[0].windows.weekly.remainingFraction, 0.92);
+      assert.equal(enriched[0].windows.weekly.observedAt, 123456);
+      assert.equal(enriched[0].windows.fiveHour.remainingFraction, 0.55);
+
+      assert.equal(enriched[1].windows.weekly.remainingFraction, 1.0);
+      assert.equal(enriched[1].windows.fiveHour, undefined);
+
+      assert.deepEqual(enriched[2].windows, {});
+    });
+
+    test('returns original models when summary is null', () => {
+      const models = [{ id: 'm1' }];
+      assert.equal(enrichModelsWithQuotaSummary(models, null), models);
     });
   });
 });
