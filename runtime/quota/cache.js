@@ -88,6 +88,9 @@ function readCache(tokenOrAccessToken) {
     const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
     if (!isCachePayloadFresh(raw)) return null;
     if (!doesCachePayloadMatchToken(raw, tokenOrAccessToken)) return null;
+    if (raw.providerQuota && Array.isArray(raw.data)) {
+      raw.data.providerQuota = raw.providerQuota;
+    }
     return raw.data;
   } catch {
     return null;
@@ -118,7 +121,7 @@ function readCacheRaw() {
  * only when the cache belongs to the same credential identity (token rotation
  * is fine, account switch is not).
  */
-function writeCache(data, tokenOrAccessToken, tier = null, accountEmail = null) {
+function writeCache(data, tokenOrAccessToken, tier = null, accountEmail = null, providerQuota = null) {
   const now = Date.now();
   const previousRaw = readCacheRaw();
   let sameIdentity = previousRaw && doesCachePayloadMatchToken(previousRaw, tokenOrAccessToken);
@@ -163,6 +166,8 @@ function writeCache(data, tokenOrAccessToken, tier = null, accountEmail = null) 
   // Same as tier: account-level, preserved across token rotation but dropped on
   // an account switch (different identity) so a stale email never outlives it.
   const resolvedEmail = accountEmail || (sameIdentity ? (previousRaw.accountEmail || null) : null);
+  const resolvedProviderQuota = providerQuota || data?.providerQuota ||
+    (sameIdentity ? (previousRaw.providerQuota || null) : null);
   const payload = {
     version: CACHE_VERSION,
     expiresAt,
@@ -171,6 +176,7 @@ function writeCache(data, tokenOrAccessToken, tier = null, accountEmail = null) 
     tokenHash,
     tier: resolvedTier,
     accountEmail: resolvedEmail,
+    providerQuota: resolvedProviderQuota,
     data: merged,
   };
   try {
@@ -217,7 +223,11 @@ function getCachedAccountEmail(tokenOrAccessToken) {
 function readCachePayload(tokenOrAccessToken) {
   try {
     const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+    if (!isCachePayloadFresh(raw)) return null;
     if (!doesCachePayloadMatchToken(raw, tokenOrAccessToken)) return null;
+    if (raw.providerQuota && Array.isArray(raw.data)) {
+      raw.data.providerQuota = raw.providerQuota;
+    }
     return raw;
   } catch {
     return null;
@@ -241,6 +251,9 @@ function readCacheFallback() {
   try {
     const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
     if (!raw || !Array.isArray(raw.data) || raw.version !== CACHE_VERSION) return null;
+    if (raw.providerQuota && Array.isArray(raw.data)) {
+      raw.data.providerQuota = raw.providerQuota;
+    }
     return raw;
   } catch {
     return null;

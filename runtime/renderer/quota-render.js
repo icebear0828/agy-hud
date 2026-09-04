@@ -78,20 +78,24 @@ function createQuotaRenderers(ctx) {
     for (const q of data || []) {
       if (!q || isImageModel(q)) continue;
       const isGoogle = q.modelProvider === 'MODEL_PROVIDER_GOOGLE' || /gemini/i.test(q.id || q.displayName);
-      const isClaude = q.modelProvider === 'MODEL_PROVIDER_ANTHROPIC' || /claude/i.test(q.id || q.displayName);
+      const isClaude = q.modelProvider === 'MODEL_PROVIDER_ANTHROPIC' || /claude/i.test(q.id || q.displayName) || /gpt/i.test(q.id || q.displayName);
       const key = isGoogle ? 'Google' : isClaude ? 'Claude' : null;
       if (!key) continue;
 
       if (q.windows?.fiveHour && !isObservationExpired(q.windows.fiveHour, now)) {
         const cur = providerWindows[key].fiveHour;
-        if (!cur || q.windows.fiveHour.remainingFraction < cur.remainingFraction) {
-          providerWindows[key].fiveHour = q.windows.fiveHour;
+        const win = q.windows.fiveHour;
+        if (!cur || (win.observedAt || 0) > (cur.observedAt || 0) ||
+            ((win.observedAt || 0) === (cur.observedAt || 0) && win.remainingFraction < cur.remainingFraction)) {
+          providerWindows[key].fiveHour = win;
         }
       }
       if (q.windows?.weekly && !isObservationExpired(q.windows.weekly, now)) {
         const cur = providerWindows[key].weekly;
-        if (!cur || q.windows.weekly.remainingFraction < cur.remainingFraction) {
-          providerWindows[key].weekly = q.windows.weekly;
+        const win = q.windows.weekly;
+        if (!cur || (win.observedAt || 0) > (cur.observedAt || 0) ||
+            ((win.observedAt || 0) === (cur.observedAt || 0) && win.remainingFraction < cur.remainingFraction)) {
+          providerWindows[key].weekly = win;
         }
       }
 
@@ -116,6 +120,15 @@ function createQuotaRenderers(ctx) {
           providerWindows[key].weekly = { remainingFraction: q.remainingFraction, resetTime: null };
         }
       }
+    }
+
+    // Provider summaries are authoritative and must win over model-derived data.
+    const pq = data?.providerQuota;
+    if (pq && typeof pq === 'object') {
+      if (pq.google?.fiveHour && !isObservationExpired(pq.google.fiveHour, now)) providerWindows.Google.fiveHour = pq.google.fiveHour;
+      if (pq.google?.weekly && !isObservationExpired(pq.google.weekly, now)) providerWindows.Google.weekly = pq.google.weekly;
+      if (pq.claude?.fiveHour && !isObservationExpired(pq.claude.fiveHour, now)) providerWindows.Claude.fiveHour = pq.claude.fiveHour;
+      if (pq.claude?.weekly && !isObservationExpired(pq.claude.weekly, now)) providerWindows.Claude.weekly = pq.claude.weekly;
     }
 
     const renderWindowItem = (label, win) => {

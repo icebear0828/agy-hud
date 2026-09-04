@@ -177,21 +177,19 @@ function parseQuotaSummary(data) {
     else continue;
 
     for (const b of buckets) {
-      if (!b || typeof b.remainingFraction !== 'number' || typeof b.resetTime !== 'string') continue;
+      if (!b || typeof b.resetTime !== 'string') continue;
+      const ts = Date.parse(b.resetTime);
+      if (!Number.isFinite(ts)) continue;
       const bucketId = b.bucketId || '';
       const windowRaw = b.window || '';
       let winType = null;
       if (windowRaw === 'weekly' || bucketId.includes('weekly')) winType = 'weekly';
       else if (windowRaw === '5h' || bucketId.includes('5h') || bucketId.includes('fiveHour')) winType = 'fiveHour';
       else continue;
-      // Validate resetTime is parseable
-      const ts = Date.parse(b.resetTime);
-      if (!Number.isFinite(ts)) continue;
       if (!result[target][winType]) {
-        // Clamp remainingFraction 0..1
-        let rf = b.remainingFraction;
-        if (typeof rf !== 'number' || !Number.isFinite(rf)) rf = 0;
-        if (rf < 0) rf = 0;
+        // Proto3 may omit a default 0 remainingFraction.
+        let rf = typeof b.remainingFraction === 'number' ? b.remainingFraction : 0;
+        if (!Number.isFinite(rf) || rf < 0) rf = 0;
         if (rf > 1) rf = 1;
         result[target][winType] = {
           remainingFraction: rf,
@@ -360,6 +358,7 @@ async function fetchQuotaFromCloud(accessToken) {
     const summary = await summaryPromise;
     if (summary) {
       normalized = enrichModelsWithQuotaSummary(normalized, summary, Date.now());
+      normalized.providerQuota = summary;
     }
   } catch {
     /* graceful downgrade: return models-only */

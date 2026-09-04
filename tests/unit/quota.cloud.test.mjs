@@ -166,6 +166,47 @@ describe('quota / cloud', () => {
         delete process.env.AGY_HUD_INTERESTING_MODELS;
       }
     });
+
+    test('preserves the authoritative providerQuota summary on the returned models', async () => {
+      const originalFetch = globalThis.fetch;
+      const resetTime = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+      const summary = {
+        groups: [{
+          displayName: 'Gemini Models',
+          buckets: [{ bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0.9906, resetTime }],
+        }],
+      };
+      globalThis.fetch = async (url) => {
+        if (String(url).includes('retrieveUserQuotaSummary')) {
+          return { ok: true, status: 200, json: async () => summary };
+        }
+        if (String(url).includes('fetchAvailableModels')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              models: {
+                'gemini-3-flash-agent': {
+                  displayName: 'Gemini 3 Flash Agent',
+                  modelProvider: 'MODEL_PROVIDER_GOOGLE',
+                  quotaInfo: { remainingFraction: 0.9, resetTime },
+                },
+              },
+            }),
+          };
+        }
+        return { ok: false, status: 404, json: async () => ({}) };
+      };
+
+      try {
+        const quotas = await fetchQuotaFromCloud('token');
+        assert.equal(quotas.length, 1);
+        assert.equal(quotas.providerQuota.google.weekly.remainingFraction, 0.9906);
+        assert.equal(quotas.providerQuota.google.weekly.resetTime, resetTime);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe('extractTierName', () => {
@@ -315,6 +356,22 @@ describe('quota / cloud', () => {
       assert.equal(parseQuotaSummary({}), null);
       assert.equal(parseQuotaSummary({ groups: [] }), null);
       assert.equal(parseQuotaSummary({ groups: [{ displayName: 'Unknown', buckets: [] }] }), null);
+    });
+
+    test('preserves explicit and omitted Proto3 zero remainingFraction values', () => {
+      const resetTime = '2026-09-10T08:00:00Z';
+      const parsed = parseQuotaSummary({
+        groups: [{
+          displayName: 'Claude and GPT models',
+          buckets: [
+            { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime },
+            { bucketId: '3p-5h', window: '5h', resetTime },
+          ],
+        }],
+      });
+
+      assert.equal(parsed.claude.weekly.remainingFraction, 0);
+      assert.equal(parsed.claude.fiveHour.remainingFraction, 0);
     });
   });
 
