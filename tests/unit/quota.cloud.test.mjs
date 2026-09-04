@@ -7,6 +7,8 @@ const {
   fetchTierFromCloud,
   fetchAccountEmail,
   extractTierName,
+  parseQuotaSummary,
+  enrichModelsWithQuotaSummary,
 } = quotaModule;
 
 describe('quota / cloud', () => {
@@ -164,6 +166,47 @@ describe('quota / cloud', () => {
         delete process.env.AGY_HUD_INTERESTING_MODELS;
       }
     });
+
+    test('preserves the authoritative providerQuota summary on the returned models', async () => {
+      const originalFetch = globalThis.fetch;
+      const resetTime = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+      const summary = {
+        groups: [{
+          displayName: 'Gemini Models',
+          buckets: [{ bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0.9906, resetTime }],
+        }],
+      };
+      globalThis.fetch = async (url) => {
+        if (String(url).includes('retrieveUserQuotaSummary')) {
+          return { ok: true, status: 200, json: async () => summary };
+        }
+        if (String(url).includes('fetchAvailableModels')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              models: {
+                'gemini-3-flash-agent': {
+                  displayName: 'Gemini 3 Flash Agent',
+                  modelProvider: 'MODEL_PROVIDER_GOOGLE',
+                  quotaInfo: { remainingFraction: 0.9, resetTime },
+                },
+              },
+            }),
+          };
+        }
+        return { ok: false, status: 404, json: async () => ({}) };
+      };
+
+      try {
+        const quotas = await fetchQuotaFromCloud('token');
+        assert.equal(quotas.length, 1);
+        assert.equal(quotas.providerQuota.google.weekly.remainingFraction, 0.9906);
+        assert.equal(quotas.providerQuota.google.weekly.resetTime, resetTime);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe('extractTierName', () => {
@@ -274,6 +317,94 @@ describe('quota / cloud', () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+  });
+
+  describe('parseQuotaSummary', () => {
+    test('parses standard retrieveUserQuotaSummary response correctly', () => {
+      const sample = {
+        groups: [
+          {
+            displayName: 'Gemini Models',
+            buckets: [
+              { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0.94, resetTime: '2026-09-10T08:00:00Z' },
+              { bucketId: 'gemini-5h', window: '5h', remainingFraction: 0.65, resetTime: '2026-09-03T17:00:00Z' },
+            ],
+          },
+          {
+            displayName: 'Claude and GPT models',
+            buckets: [
+              { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 1.0, resetTime: '2026-09-10T08:00:00Z' },
+              { bucketId: '3p-5h', window: '5h', remainingFraction: 0.8, resetTime: '2026-09-03T18:00:00Z' },
+            ],
+          },
+        ],
+      };
+      const parsed = parseQuotaSummary(sample);
+      assert.ok(parsed, 'should parse summary');
+      assert.equal(parsed.google.weekly.remainingFraction, 0.94);
+      assert.equal(parsed.google.weekly.resetTime, '2026-09-10T08:00:00Z');
+      assert.equal(parsed.google.fiveHour.remainingFraction, 0.65);
+      assert.equal(parsed.google.fiveHour.resetTime, '2026-09-03T17:00:00Z');
+
+      assert.equal(parsed.claude.weekly.remainingFraction, 1.0);
+      assert.equal(parsed.claude.fiveHour.remainingFraction, 0.8);
+    });
+
+    test('returns null for empty or invalid data', () => {
+      assert.equal(parseQuotaSummary(null), null);
+      assert.equal(parseQuotaSummary({}), null);
+      assert.equal(parseQuotaSummary({ groups: [] }), null);
+      assert.equal(parseQuotaSummary({ groups: [{ displayName: 'Unknown', buckets: [] }] }), null);
+    });
+
+    test('preserves explicit and omitted Proto3 zero remainingFraction values', () => {
+      const resetTime = '2026-09-10T08:00:00Z';
+      const parsed = parseQuotaSummary({
+        groups: [{
+          displayName: 'Claude and GPT models',
+          buckets: [
+            { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime },
+            { bucketId: '3p-5h', window: '5h', resetTime },
+          ],
+        }],
+      });
+
+      assert.equal(parsed.claude.weekly.remainingFraction, 0);
+      assert.equal(parsed.claude.fiveHour.remainingFraction, 0);
+    });
+  });
+
+  describe('enrichModelsWithQuotaSummary', () => {
+    test('enriches models with provider weekly and 5h windows', () => {
+      const models = [
+        { id: 'gemini-3.6-flash', modelProvider: 'MODEL_PROVIDER_GOOGLE', windows: {} },
+        { id: 'claude-sonnet-4-6', modelProvider: 'MODEL_PROVIDER_ANTHROPIC', windows: {} },
+        { id: 'other-model', modelProvider: 'MODEL_PROVIDER_OTHER', windows: {} },
+      ];
+      const summary = {
+        google: {
+          weekly: { remainingFraction: 0.92, resetTime: '2026-09-10T00:00:00Z' },
+          fiveHour: { remainingFraction: 0.55, resetTime: '2026-09-03T17:00:00Z' },
+        },
+        claude: {
+          weekly: { remainingFraction: 1.0, resetTime: '2026-09-10T00:00:00Z' },
+        },
+      };
+      const enriched = enrichModelsWithQuotaSummary(models, summary, 123456);
+      assert.equal(enriched[0].windows.weekly.remainingFraction, 0.92);
+      assert.equal(enriched[0].windows.weekly.observedAt, 123456);
+      assert.equal(enriched[0].windows.fiveHour.remainingFraction, 0.55);
+
+      assert.equal(enriched[1].windows.weekly.remainingFraction, 1.0);
+      assert.equal(enriched[1].windows.fiveHour, undefined);
+
+      assert.deepEqual(enriched[2].windows, {});
+    });
+
+    test('returns original models when summary is null', () => {
+      const models = [{ id: 'm1' }];
+      assert.equal(enrichModelsWithQuotaSummary(models, null), models);
     });
   });
 });

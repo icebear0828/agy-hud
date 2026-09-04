@@ -52,6 +52,39 @@ describe('renderer / quota lines', () => {
       assert.equal(g5Line.indexOf('│'), gwLine.indexOf('│'), 'vertical separator must align perfectly');
     });
 
+    test('reads providerQuota directly instead of stale lower model windows', () => {
+      const state = { steps: 5, branch: 'dev' };
+      const agyData = {
+        context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 },
+      };
+      const now = Date.now();
+      const quotaData = [{
+        id: 'gemini-3-flash-agent',
+        displayName: 'Gemini 3 Flash Agent',
+        modelProvider: 'MODEL_PROVIDER_GOOGLE',
+        remainingFraction: 0.9,
+        windows: {
+          fiveHour: { remainingFraction: 0.95, resetTime: new Date(now + 4 * 60 * 60 * 1000).toISOString(), observedAt: now - 60_000 },
+          weekly: { remainingFraction: 0.9, resetTime: new Date(now + 6 * 24 * 60 * 60 * 1000).toISOString(), observedAt: now - 60_000 },
+        },
+      }];
+      quotaData.providerQuota = {
+        google: {
+          fiveHour: { remainingFraction: 0.9439, resetTime: new Date(now + (4 * 60 + 10) * 60 * 1000).toISOString() },
+          weekly: { remainingFraction: 0.9906, resetTime: new Date(now + (6 * 24 + 23) * 60 * 60 * 1000).toISOString() },
+        },
+      };
+
+      const clean = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData)
+        .replace(/\x1b\[[0-9;]*m/g, '');
+      const googleFiveHour = clean.split('\n').find(line => line.includes('Google 5h')) || '';
+      const googleWeekly = clean.split('\n').find(line => line.includes('Google week')) || '';
+
+      assert.match(googleFiveHour, /94%\s+~4h10m/);
+      assert.match(googleWeekly, /99%\s+~6d23h/);
+      assert.doesNotMatch(googleWeekly, /90%/);
+    });
+
     test('models mode renders individual model rows in two columns', () => {
       const state = { steps: 5, branch: 'dev' };
       const agyData = {

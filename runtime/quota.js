@@ -160,7 +160,7 @@ if (process.argv.includes('--refresh')) {
         if (fresh && fresh.unavailableReason === 'auth_failed') {
           tokenMod.clearTokenTemp();
         } else if (fresh.length > 0 || accountEmail) {
-          writeCache(fresh, tok, tier, accountEmail);
+          writeCache(fresh, tok, tier, accountEmail, fresh.providerQuota);
         }
       }
     } catch {}
@@ -197,6 +197,9 @@ module.exports = {
   fetchTierFromCloud,
   fetchAccountEmail,
   extractTierName: cloudMod.extractTierName,
+  parseQuotaSummary: cloudMod.parseQuotaSummary,
+  enrichModelsWithQuotaSummary: cloudMod.enrichModelsWithQuotaSummary,
+  fetchUserQuotaSummaryFromCloud: cloudMod.fetchUserQuotaSummaryFromCloud,
   // models module
   normalizeQuotaModels: modelsMod.normalizeQuotaModels,
   discoverAgentModelIds: modelsMod.discoverAgentModelIds,
