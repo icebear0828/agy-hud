@@ -42,8 +42,9 @@ describe('renderer / quota lines', () => {
       assert.match(clean, /───/);
       assert.match(clean, /Google 5h\s+\[[█░]+\]\s+87%\s+~22m/);
       assert.match(clean, /Google week\s+\[[█░]+\]\s+74%\s+~4d3h/);
-      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%\s+~4h59m/);
-      assert.match(clean, /Claude week\s+\[[█░]+\]\s+100%\s+~6d23h/);
+      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%/);
+      assert.match(clean, /Claude week\s+\[[█░]+\]\s+100%/);
+      assert.doesNotMatch(clean, /Claude 5h.*~4h/);
 
       const lines = clean.split('\n');
       const g5Line = lines.find(l => l.includes('Google 5h'));
@@ -187,6 +188,60 @@ describe('renderer / quota lines', () => {
       const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
       assert.match(output, /Quota: 50%/);
+    });
+
+    test('appends current model critical window quota to line 2 instead of top-level remainingFraction', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: {
+          display_name: 'Gemini 3.8 Flash (Medium)',
+          id: 'gemini-3.8-flash-tiered',
+        }
+      };
+      const now = Date.now();
+      const quotaData = [
+        {
+          id: 'gemini-3.8-flash-tiered',
+          displayName: 'gemini-3.8-flash-tiered',
+          modelProvider: 'MODEL_PROVIDER_GOOGLE',
+          remainingFraction: 1.0, // Top-level is 1.0
+          resetTime: new Date(now + 4 * 3600 * 1000).toISOString(),
+          windows: {
+            fiveHour: { remainingFraction: 1.0, resetTime: new Date(now + 4 * 3600 * 1000).toISOString(), observedAt: now },
+            weekly: { remainingFraction: 0.82, resetTime: new Date(now + 6 * 86400 * 1000).toISOString(), observedAt: now },
+          },
+        },
+      ];
+
+      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+
+      // Must pick the binding weekly window (82%), not top-level 100%
+      assert.match(output, /Quota: 82%/);
+      assert.doesNotMatch(output, /Quota: 100%/);
+    });
+
+    test('omits reset countdown on line 2 when model quota is 100%', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { display_name: 'Claude Sonnet 4.6 (Thinking)' }
+      };
+      const now = Date.now();
+      const quotaData = [
+        {
+          id: 'claude-sonnet-4-6',
+          displayName: 'Claude Sonnet 4.6 (Thinking)',
+          modelProvider: 'MODEL_PROVIDER_ANTHROPIC',
+          remainingFraction: 1.0,
+          resetTime: new Date(now + 4 * 3600 * 1000).toISOString(),
+        },
+      ];
+
+      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+
+      assert.match(output, /Quota: 100%/);
+      assert.doesNotMatch(output, /Quota: 100%.*~4h/);
     });
 
     test('renders provider-grouped mini bars', () => {

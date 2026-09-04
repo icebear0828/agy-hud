@@ -5,10 +5,11 @@ const path = require('path');
 const os = require('os');
 const https = require('https');
 const { spawn } = require('child_process');
-const { getSessionState, parseAgyInput } = require('../parser.js');
+const { getSessionState, parseAgyInput, parseAgyQuota } = require('../parser.js');
 const { renderHUD } = require('../renderer.js');
 const { loadConfig } = require('../config.js');
-const { getQuota, getCachedTier } = require('../quota.js');
+const { getQuota, getCachedTier, writeCache, readToken } = require('../quota.js');
+const { enrichModelsWithQuotaSummary } = require('../quota/cloud.js');
 const { resolveAntigravityPath } = require('../paths.js');
 
 async function handleSelfUpdate() {
@@ -107,16 +108,23 @@ async function main() {
     // Render a baseline HUD instead of returning an empty successful result.
     const agyData = inputStr.trim() ? parseAgyInput(inputStr) : null;
 
-    // Fallback transcript path if not provided in stdin — uses paths.js so we
-    // honour XDG_DATA_HOME / APPDATA / LOCALAPPDATA in addition to ~/.gemini.
-    const transcriptPath = agyData?.transcript_path ||
-      resolveAntigravityPath(path.join(
+    const targetCwd = agyData?.workspace?.current_dir || agyData?.cwd || process.cwd();
+
+    // Fallback transcript path if not provided in stdin or if path does not exist — uses paths.js
+    // so we honour XDG_DATA_HOME / APPDATA / LOCALAPPDATA in addition to ~/.gemini.
+    let transcriptPath = agyData?.transcript_path;
+    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+      const candidate = resolveAntigravityPath(path.join(
         'brain',
         agyData?.conversation_id || '',
         '.system_generated',
         'logs',
         'transcript.jsonl'
       ));
+      if (fs.existsSync(candidate) || !transcriptPath) {
+        transcriptPath = candidate;
+      }
+    }
 
     try {
       const updateStatusPath = resolveAntigravityPath('agy-hud-update-status.json');
@@ -128,13 +136,23 @@ async function main() {
       } catch {}
 
       const [state, config, quotaData, tierName] = await Promise.all([
-        getSessionState(transcriptPath),
+        getSessionState(transcriptPath, targetCwd),
         loadConfig(),
         getQuota({ fast: true }).catch(() => []),
         getCachedTier(),
       ]);
 
-      const hudOutput = renderHUD(state, agyData, config, quotaData, tierName, updateInfo);
+      let effectiveQuotaData = quotaData;
+      // Authoritative live quota passed directly in stdin by agy CLI
+      const stdinProviderQuota = parseAgyQuota(agyData?.quota);
+      if (stdinProviderQuota) {
+        if (Array.isArray(effectiveQuotaData)) {
+          effectiveQuotaData = enrichModelsWithQuotaSummary(effectiveQuotaData, stdinProviderQuota);
+          effectiveQuotaData.providerQuota = { ...(quotaData.providerQuota || {}), ...stdinProviderQuota };
+        }
+      }
+
+      const hudOutput = renderHUD(state, agyData, config, effectiveQuotaData, tierName, updateInfo);
       process.stdout.write(hudOutput);
 
       // Trigger background check for updates after writing output

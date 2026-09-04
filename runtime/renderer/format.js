@@ -42,15 +42,21 @@ function simplifyModelName(name) {
 }
 
 const COMPACT_NAME_RULES = [
-  [/^Gemini [\d.]+ (Flash|Pro).*/, (_, fam) => fam],
-  [/^Claude (\w+) [\d.]+ \((\w+)\)/, (_, fam) => fam],
-  [/^GPT-OSS .+/, () => 'GPT'],
+  [/^Gemini [\d.]+ (Flash|Pro).*/i, (_, fam) => fam],
+  [/^Claude (\w+) [\d.]+ \((\w+)\)/i, (_, fam) => fam],
+  [/^GPT-OSS .*/i, () => 'GPT'],
+  [/gemini-.*flash/i, () => 'Flash'],
+  [/gemini-.*pro/i, () => 'Pro'],
+  [/claude-.*sonnet/i, () => 'Sonnet'],
+  [/claude-.*opus/i, () => 'Opus'],
+  [/claude-.*haiku/i, () => 'Haiku'],
+  [/gpt/i, () => 'GPT'],
 ];
 
 function compactModelName(displayName) {
   for (const [re, replacer] of COMPACT_NAME_RULES) {
     const m = re.exec(displayName);
-    if (m) return displayName.replace(re, replacer);
+    if (m) return replacer(...m);
   }
   return displayName.slice(0, 6);
 }

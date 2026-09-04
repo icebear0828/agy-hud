@@ -12,7 +12,7 @@ const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-test-parser-'
 process.env.AGY_HUD_DATA_DIR = testDataDir;
 
 const require = createRequire(import.meta.url);
-const { getSessionState } = require('../../runtime/parser.js');
+const { getSessionState, parseAgyQuota } = require('../../runtime/parser.js');
 
 process.on('exit', () => {
   try {
@@ -474,5 +474,62 @@ test('getSessionState does NOT false-positive on entries that only contain "429"
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('getSessionState accepts an explicit cwd and resolves metadata from that directory', async () => {
+  const tempWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-workspace-'));
+  try {
+    fs.writeFileSync(path.join(tempWorkspace, 'AGENTS.md'), '# Agents');
+    const rulesDir = path.join(tempWorkspace, '.claude', 'rules');
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, 'rule.md'), 'rule content');
+
+    const state = await getSessionState('missing-transcript.jsonl', tempWorkspace);
+    assert.equal(state.currentDir, path.basename(tempWorkspace));
+    assert.equal(state.memoryFile, 'AGENTS.md');
+    assert.equal(state.rulesCount, 1);
+  } finally {
+    fs.rmSync(tempWorkspace, { recursive: true, force: true });
+  }
+});
+
+test('parseAgyQuota parses stdin quota objects into providerQuota structure', () => {
+  const stdinQuota = {
+    'gemini-5h': {
+      remaining_fraction: 0.9495,
+      reset_time: '2026-09-04T23:36:33Z',
+      reset_in_seconds: 17380,
+    },
+    'gemini-weekly': {
+      remaining_fraction: 0.8252,
+      reset_time: '2026-09-10T22:02:44Z',
+      reset_in_seconds: 530151,
+    },
+    '3p-5h': {
+      remaining_fraction: 1,
+      reset_time: '2026-09-04T23:44:15Z',
+      reset_in_seconds: 17842,
+    },
+    '3p-weekly': {
+      remaining_fraction: 1,
+      reset_time: '2026-09-11T18:44:15Z',
+      reset_in_seconds: 604642,
+    },
+  };
+
+  const parsed = parseAgyQuota(stdinQuota);
+  assert.ok(parsed);
+  assert.equal(parsed.google.fiveHour.remainingFraction, 0.9495);
+  assert.equal(parsed.google.fiveHour.resetTime, '2026-09-04T23:36:33Z');
+  assert.equal(parsed.google.weekly.remainingFraction, 0.8252);
+  assert.equal(parsed.google.weekly.resetTime, '2026-09-10T22:02:44Z');
+  assert.equal(parsed.claude.fiveHour.remainingFraction, 1);
+  assert.equal(parsed.claude.weekly.remainingFraction, 1);
+});
+
+test('parseAgyQuota returns null for missing or invalid quota', () => {
+  assert.equal(parseAgyQuota(null), null);
+  assert.equal(parseAgyQuota({}), null);
+  assert.equal(parseAgyQuota('invalid'), null);
 });
 

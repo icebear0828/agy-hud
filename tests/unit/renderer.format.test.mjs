@@ -35,6 +35,10 @@ describe('renderer / format helpers', () => {
       assert.equal(compactModelName('Claude Sonnet 4.6 (Thinking)'), 'Sonnet');
       assert.equal(compactModelName('Claude Opus 4.6 (Thinking)'), 'Opus');
       assert.equal(compactModelName('GPT-OSS 120B (Medium)'), 'GPT');
+      assert.equal(compactModelName('gemini-3.8-flash-tiered'), 'Flash');
+      assert.equal(compactModelName('gemini-3.1-pro-low'), 'Pro');
+      assert.equal(compactModelName('claude-sonnet-4-6'), 'Sonnet');
+      assert.equal(compactModelName('claude-opus-4-6-thinking'), 'Opus');
     });
   });
 
