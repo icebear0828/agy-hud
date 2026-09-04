@@ -186,11 +186,13 @@ function parseQuotaSummary(data) {
       if (windowRaw === 'weekly' || bucketId.includes('weekly')) winType = 'weekly';
       else if (windowRaw === '5h' || bucketId.includes('5h') || bucketId.includes('fiveHour')) winType = 'fiveHour';
       else continue;
-      if (!result[target][winType]) {
-        // Proto3 may omit a default 0 remainingFraction.
-        let rf = typeof b.remainingFraction === 'number' ? b.remainingFraction : 0;
-        if (!Number.isFinite(rf) || rf < 0) rf = 0;
-        if (rf > 1) rf = 1;
+      // Proto3 may omit a default 0 remainingFraction.
+      let rf = typeof b.remainingFraction === 'number' ? b.remainingFraction : 0;
+      if (!Number.isFinite(rf) || rf < 0) rf = 0;
+      if (rf > 1) rf = 1;
+
+      const existing = result[target][winType];
+      if (!existing || rf < existing.remainingFraction) {
         result[target][winType] = {
           remainingFraction: rf,
           resetTime: b.resetTime,

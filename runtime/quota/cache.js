@@ -163,11 +163,12 @@ function writeCache(data, tokenOrAccessToken, tier = null, accountEmail = null, 
   // cache belongs to the same identity — fetchTierFromCloud transient failures
   // must not wipe 'Google AI Pro' down to 'Free'.
   const resolvedTier = tier || (sameIdentity ? (previousRaw.tier || null) : null);
-  // Same as tier: account-level, preserved across token rotation but dropped on
-  // an account switch (different identity) so a stale email never outlives it.
   const resolvedEmail = accountEmail || (sameIdentity ? (previousRaw.accountEmail || null) : null);
-  const resolvedProviderQuota = providerQuota || data?.providerQuota ||
-    (sameIdentity ? (previousRaw.providerQuota || null) : null);
+  const incomingProviderQuota = providerQuota || data?.providerQuota || null;
+  const previousProviderQuota = sameIdentity && previousRaw?.providerQuota ? previousRaw.providerQuota : null;
+  const resolvedProviderQuota = incomingProviderQuota
+    ? (previousProviderQuota ? { ...previousProviderQuota, ...incomingProviderQuota } : incomingProviderQuota)
+    : (previousProviderQuota || null);
   const payload = {
     version: CACHE_VERSION,
     expiresAt,
@@ -223,7 +224,6 @@ function getCachedAccountEmail(tokenOrAccessToken) {
 function readCachePayload(tokenOrAccessToken) {
   try {
     const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
-    if (!isCachePayloadFresh(raw)) return null;
     if (!doesCachePayloadMatchToken(raw, tokenOrAccessToken)) return null;
     if (raw.providerQuota && Array.isArray(raw.data)) {
       raw.data.providerQuota = raw.providerQuota;

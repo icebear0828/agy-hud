@@ -373,6 +373,25 @@ describe('quota / cloud', () => {
       assert.equal(parsed.claude.weekly.remainingFraction, 0);
       assert.equal(parsed.claude.fiveHour.remainingFraction, 0);
     });
+
+    test('selects the most constrained (lowest remainingFraction) bucket when multiple buckets exist for the same window', () => {
+      const resetTime = '2026-09-10T08:00:00Z';
+      const parsed = parseQuotaSummary({
+        groups: [{
+          displayName: 'Gemini Models',
+          buckets: [
+            { bucketId: 'gemini-flash-weekly', window: 'weekly', remainingFraction: 0.95, resetTime },
+            { bucketId: 'gemini-pro-weekly', window: 'weekly', remainingFraction: 0.40, resetTime },
+            { bucketId: 'gemini-flash-5h', window: '5h', remainingFraction: 0.85, resetTime },
+            { bucketId: 'gemini-pro-5h', window: '5h', remainingFraction: 0.20, resetTime },
+          ],
+        }],
+      });
+
+      assert.ok(parsed?.google);
+      assert.equal(parsed.google.weekly.remainingFraction, 0.40, 'must pick lower remainingFraction for weekly');
+      assert.equal(parsed.google.fiveHour.remainingFraction, 0.20, 'must pick lower remainingFraction for 5h');
+    });
   });
 
   describe('enrichModelsWithQuotaSummary', () => {

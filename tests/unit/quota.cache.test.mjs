@@ -245,6 +245,64 @@ describe('quota / cache', () => {
         else fs.writeFileSync(CACHE_PATH, previousCache);
       }
     });
+
+    test('readCachePayload returns stale payload when token matches even if expired', () => {
+      const { readCachePayload } = quotaModule;
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const data = [{ id: 'm', remainingFraction: 0.5, resetTime: null, windows: {} }];
+        writeCache(data, 'tok');
+
+        // Artificially expire the cache payload
+        const rawOnDisk = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+        rawOnDisk.expiresAt = Date.now() - 10_000;
+        rawOnDisk.providerQuota = {
+          google: { weekly: { remainingFraction: 0.95, resetTime: '2026-09-10T00:00:00Z' } },
+        };
+        fs.writeFileSync(CACHE_PATH, JSON.stringify(rawOnDisk));
+
+        // readCache requires fresh data -> must return null
+        assert.equal(readCache('tok'), null);
+
+        // readCachePayload is for SWR and token rotation checks -> must return payload even if stale
+        const stalePayload = readCachePayload('tok');
+        assert.ok(stalePayload, 'stale payload must not be null');
+        assert.equal(stalePayload.data.providerQuota, stalePayload.providerQuota);
+        assert.equal(stalePayload.data[0].id, 'm');
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('writeCache preserves existing provider quota when new response omits a provider', () => {
+      const { readCachePayload } = quotaModule;
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const data = [{ id: 'm', remainingFraction: 0.5, resetTime: null, windows: {} }];
+        const fullProviderQuota = {
+          google: { weekly: { remainingFraction: 0.9, resetTime: '2026-09-10T00:00:00Z' } },
+          claude: { weekly: { remainingFraction: 0.8, resetTime: '2026-09-10T00:00:00Z' } },
+        };
+        writeCache(data, 'tok', null, null, fullProviderQuota);
+
+        // Second write only carries google provider quota (claude missing/timed out)
+        const partialProviderQuota = {
+          google: { weekly: { remainingFraction: 0.85, resetTime: '2026-09-10T00:00:00Z' } },
+        };
+        writeCache(data, 'tok', null, null, partialProviderQuota);
+
+        const payload = readCachePayload('tok');
+        assert.ok(payload);
+        assert.equal(payload.providerQuota.google.weekly.remainingFraction, 0.85);
+        assert.equal(payload.providerQuota.claude.weekly.remainingFraction, 0.8, 'claude provider quota must be preserved');
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
   });
 
   describe('getCachedAccountEmail', () => {
