@@ -42,9 +42,8 @@ describe('renderer / quota lines', () => {
       assert.match(clean, /───/);
       assert.match(clean, /Google 5h\s+\[[█░]+\]\s+87%\s+~22m/);
       assert.match(clean, /Google week\s+\[[█░]+\]\s+74%\s+~4d3h/);
-      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%/);
-      assert.match(clean, /Claude week\s+\[[█░]+\]\s+100%/);
-      assert.doesNotMatch(clean, /Claude 5h.*~4h/);
+      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%\s+~4h59m/);
+      assert.match(clean, /Claude week\s+\[[█░]+\]\s+100%\s+~6d23h/);
 
       const lines = clean.split('\n');
       const g5Line = lines.find(l => l.includes('Google 5h'));
@@ -221,7 +220,7 @@ describe('renderer / quota lines', () => {
       assert.doesNotMatch(output, /Quota: 100%/);
     });
 
-    test('omits reset countdown on line 2 when model quota is 100%', () => {
+    test('renders reset countdown on line 2 even when model quota is 100% if resetTime is present', () => {
       const state = { steps: 1, branch: 'main' };
       const agyData = {
         context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
@@ -240,8 +239,7 @@ describe('renderer / quota lines', () => {
 
       const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
-      assert.match(output, /Quota: 100%/);
-      assert.doesNotMatch(output, /Quota: 100%.*~4h/);
+      assert.match(output, /Quota: 100%.*~4h/);
     });
 
     test('renders provider-grouped mini bars', () => {

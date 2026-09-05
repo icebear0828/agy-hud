@@ -344,7 +344,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
     let timeStr = '';
     const resetTime = critical.resetTime || currentModelQuota.resetTime;
-    if (resetTime && pct < 100) {
+    if (resetTime) {
       const secsLeft = Math.max(0, Math.round((new Date(resetTime).getTime() - Date.now()) / 1000));
       timeStr = ` ${gray}~${formatDuration(secsLeft)}${reset}`;
     }

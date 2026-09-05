@@ -56,7 +56,7 @@ function createQuotaRenderers(ctx) {
 
     let rawTime = '';
     const resetTime = critical.resetTime || q.resetTime;
-    if (resetTime && pct < 100) {
+    if (resetTime) {
       const resetMs = new Date(resetTime).getTime();
       const secsLeft = Math.max(0, Math.round((resetMs - now) / 1000));
       rawTime = `~${formatDuration(secsLeft)}`;
@@ -147,7 +147,7 @@ function createQuotaRenderers(ctx) {
       const coloredPct = `${pctColor}${pctStr}${reset}`;
 
       let rawTime = '';
-      if (targetWin.resetTime && pct < 100) {
+      if (targetWin.resetTime) {
         const resetMs = new Date(targetWin.resetTime).getTime();
         const secsLeft = Math.max(0, Math.round((resetMs - now) / 1000));
         rawTime = `~${formatDuration(secsLeft)}`;
