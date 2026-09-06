@@ -8,7 +8,7 @@ const { spawn } = require('child_process');
 const { getSessionState, parseAgyInput, parseAgyQuota } = require('../parser.js');
 const { renderHUD } = require('../renderer.js');
 const { loadConfig } = require('../config.js');
-const { getQuota, getCachedTier, writeCache, readToken } = require('../quota.js');
+const { getQuota, getCachedTier } = require('../quota.js');
 const { enrichModelsWithQuotaSummary } = require('../quota/cloud.js');
 const { resolveAntigravityPath } = require('../paths.js');
 

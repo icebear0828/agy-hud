@@ -10,7 +10,7 @@ const {
   createUnavailableQuotaResult,
 } = require('./models.js');
 
-// The same endpoints agy uses (daily first — confirmed authoritative source, prod fallback)
+// Authoritative quota endpoint (daily-cloudcode-pa confirmed source)
 const DEFAULT_ENDPOINTS = [
   'https://daily-cloudcode-pa.googleapis.com',
 ];

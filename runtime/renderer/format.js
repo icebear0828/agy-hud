@@ -54,6 +54,7 @@ const COMPACT_NAME_RULES = [
 ];
 
 function compactModelName(displayName) {
+  if (!displayName || typeof displayName !== 'string') return '';
   for (const [re, replacer] of COMPACT_NAME_RULES) {
     const m = re.exec(displayName);
     if (m) return replacer(...m);

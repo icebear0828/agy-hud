@@ -131,7 +131,11 @@ function run(command, args, options = {}) {
     const child = spawn(command, args, {
       cwd: options.cwd || projectRoot,
       env: options.env || process.env,
+      shell: options.shell || false,
     });
+    if (options.stdin !== undefined) {
+      child.stdin.end(options.stdin);
+    }
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -373,7 +377,7 @@ async function main() {
       if (!cmd) {
         observation = { stdout: '', stderr: 'no statusLine.command in settings.json', mode: 'no-auth-direct', status: 1 };
       } else {
-        const direct = await run('bash', ['-c', `echo '' | ${cmd}`], { env, timeout: 10_000 });
+        const direct = await run(cmd, [], { env, stdin: '\n', shell: true, timeout: 10_000 });
         observation = {
           stdout: direct.stdout,
           stderr: direct.stderr,

@@ -40,6 +40,13 @@ describe('renderer / format helpers', () => {
       assert.equal(compactModelName('claude-sonnet-4-6'), 'Sonnet');
       assert.equal(compactModelName('claude-opus-4-6-thinking'), 'Opus');
     });
+
+    test('handles null, undefined, empty, and non-string inputs gracefully', () => {
+      assert.equal(compactModelName(null), '');
+      assert.equal(compactModelName(undefined), '');
+      assert.equal(compactModelName(''), '');
+      assert.equal(compactModelName(123), '');
+    });
   });
 
   describe('formatQuotaPercent', () => {

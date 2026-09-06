@@ -419,7 +419,8 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
 
   // Build quota lines
   let quotaLines = '';
-  if (quotaData && quotaData.length > 0) {
+  const hasProviderQuota = Boolean(quotaData?.providerQuota && (!isCompact && quotaStyle !== 'models'));
+  if (quotaData && (quotaData.length > 0 || hasProviderQuota)) {
     const now = Date.now();
     if (isCompact) {
       quotaLines = `\n${renderCompactQuotaLine(quotaData, now)}`;
