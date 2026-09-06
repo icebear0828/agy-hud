@@ -174,7 +174,7 @@ function deepFind(obj, key, maxDepth = 6) {
   return undefined;
 }
 
-async function getSessionState(transcriptPath) {
+async function getSessionState(transcriptPath, customCwd = null) {
   let steps = 0;
   let branch = 'main';
   let gitPath = null;
@@ -254,13 +254,15 @@ async function getSessionState(transcriptPath) {
     // File might not exist yet
   }
 
+  const cwd = customCwd || process.cwd();
+
   try {
     gitPath = resolveSafeExecutable('git');
     if (gitPath) {
       const gitBranch = execFileSync(gitPath, ['rev-parse', '--abbrev-ref', 'HEAD'], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
-        cwd: process.cwd(),
+        cwd,
       }).trim();
       branch = gitBranch;
     }
@@ -268,7 +270,6 @@ async function getSessionState(transcriptPath) {
     // Not a git repo or git not found
   }
 
-  const cwd = process.cwd();
   const normalizedCwd = cwd.replace(/\\/g, '/');
   const projectKey = normalizedCwd.replace(/:/g, '').replace(/\//g, '-');
   const projectMemoryDir = path.join(os.homedir(), '.claude', 'projects', projectKey, 'memory');
@@ -395,7 +396,53 @@ function parseAgyInput(jsonStr) {
   }
 }
 
+/**
+ * Parses agy stdin `quota` map into internal providerQuota structure.
+ * Supports gemini-5h, gemini-weekly, 3p-5h, 3p-weekly.
+ * @param {Object} quotaObj
+ * @returns {Object|null}
+ */
+function parseAgyQuota(quotaObj) {
+  if (!quotaObj || typeof quotaObj !== 'object') return null;
+  const result = {};
+
+  if (quotaObj['gemini-5h'] || quotaObj['gemini-weekly']) {
+    result.google = {};
+    if (quotaObj['gemini-5h'] && typeof quotaObj['gemini-5h'] === 'object') {
+      result.google.fiveHour = {
+        remainingFraction: quotaObj['gemini-5h'].remaining_fraction,
+        resetTime: quotaObj['gemini-5h'].reset_time,
+      };
+    }
+    if (quotaObj['gemini-weekly'] && typeof quotaObj['gemini-weekly'] === 'object') {
+      result.google.weekly = {
+        remainingFraction: quotaObj['gemini-weekly'].remaining_fraction,
+        resetTime: quotaObj['gemini-weekly'].reset_time,
+      };
+    }
+  }
+
+  if (quotaObj['3p-5h'] || quotaObj['3p-weekly']) {
+    result.claude = {};
+    if (quotaObj['3p-5h'] && typeof quotaObj['3p-5h'] === 'object') {
+      result.claude.fiveHour = {
+        remainingFraction: quotaObj['3p-5h'].remaining_fraction,
+        resetTime: quotaObj['3p-5h'].reset_time,
+      };
+    }
+    if (quotaObj['3p-weekly'] && typeof quotaObj['3p-weekly'] === 'object') {
+      result.claude.weekly = {
+        remainingFraction: quotaObj['3p-weekly'].remaining_fraction,
+        resetTime: quotaObj['3p-weekly'].reset_time,
+      };
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 module.exports = {
   getSessionState,
-  parseAgyInput
+  parseAgyInput,
+  parseAgyQuota,
 };

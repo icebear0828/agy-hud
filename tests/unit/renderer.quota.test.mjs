@@ -85,6 +85,33 @@ describe('renderer / quota lines', () => {
       assert.doesNotMatch(googleWeekly, /90%/);
     });
 
+    test('renders provider quota table even when models array is empty if providerQuota is present', () => {
+      const state = { steps: 5, branch: 'dev' };
+      const agyData = {
+        context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 }
+      };
+      const now = Date.now();
+      const quotaData = [];
+      quotaData.providerQuota = {
+        google: {
+          fiveHour: { remainingFraction: 0.95, resetTime: new Date(now + 4 * 3600 * 1000).toISOString() },
+          weekly: { remainingFraction: 0.82, resetTime: new Date(now + 6 * 86400 * 1000).toISOString() },
+        },
+        claude: {
+          fiveHour: { remainingFraction: 1.0, resetTime: new Date(now + 4 * 3600 * 1000).toISOString() },
+          weekly: { remainingFraction: 1.0, resetTime: new Date(now + 6 * 86400 * 1000).toISOString() },
+        },
+      };
+
+      const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+      const clean = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
+
+      assert.doesNotMatch(clean, /Quota loading/);
+      assert.match(clean, /Google 5h\s+\[[█░]+\]\s+95%/);
+      assert.match(clean, /Google week\s+\[[█░]+\]\s+82%/);
+      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%/);
+    });
+
     test('models mode renders individual model rows in two columns', () => {
       const state = { steps: 5, branch: 'dev' };
       const agyData = {
@@ -187,6 +214,59 @@ describe('renderer / quota lines', () => {
       const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
       assert.match(output, /Quota: 50%/);
+    });
+
+    test('appends current model critical window quota to line 2 instead of top-level remainingFraction', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: {
+          display_name: 'Gemini 3.8 Flash (Medium)',
+          id: 'gemini-3.8-flash-tiered',
+        }
+      };
+      const now = Date.now();
+      const quotaData = [
+        {
+          id: 'gemini-3.8-flash-tiered',
+          displayName: 'gemini-3.8-flash-tiered',
+          modelProvider: 'MODEL_PROVIDER_GOOGLE',
+          remainingFraction: 1.0, // Top-level is 1.0
+          resetTime: new Date(now + 4 * 3600 * 1000).toISOString(),
+          windows: {
+            fiveHour: { remainingFraction: 1.0, resetTime: new Date(now + 4 * 3600 * 1000).toISOString(), observedAt: now },
+            weekly: { remainingFraction: 0.82, resetTime: new Date(now + 6 * 86400 * 1000).toISOString(), observedAt: now },
+          },
+        },
+      ];
+
+      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+
+      // Must pick the binding weekly window (82%), not top-level 100%
+      assert.match(output, /Quota: 82%/);
+      assert.doesNotMatch(output, /Quota: 100%/);
+    });
+
+    test('renders reset countdown on line 2 even when model quota is 100% if resetTime is present', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { display_name: 'Claude Sonnet 4.6 (Thinking)' }
+      };
+      const now = Date.now();
+      const quotaData = [
+        {
+          id: 'claude-sonnet-4-6',
+          displayName: 'Claude Sonnet 4.6 (Thinking)',
+          modelProvider: 'MODEL_PROVIDER_ANTHROPIC',
+          remainingFraction: 1.0,
+          resetTime: new Date(now + 4 * 3600 * 1000).toISOString(),
+        },
+      ];
+
+      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+
+      assert.match(output, /Quota: 100%.*~4h/);
     });
 
     test('renders provider-grouped mini bars', () => {

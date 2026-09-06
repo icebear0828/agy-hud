@@ -420,5 +420,29 @@ describe('quota / cache', () => {
         else fs.writeFileSync(CACHE_PATH, previousCache);
       }
     });
+
+    test('attaches providerQuota to result.data when present in raw payload', () => {
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        const payload = {
+          version: 3,
+          expiresAt: Date.now() + 60000,
+          lastRefreshed: Date.now(),
+          cacheKeyHash: 'any',
+          tokenHash: 'any',
+          providerQuota: {
+            google: { weekly: { remainingFraction: 0.85, resetTime: '2026-09-10T00:00:00Z' } },
+          },
+          data: [{ id: 'test', remainingFraction: 0.8 }],
+        };
+        fs.writeFileSync(CACHE_PATH, JSON.stringify(payload), { mode: 0o600 });
+        const result = readCacheFallback();
+        assert.ok(result);
+        assert.deepEqual(result.data.providerQuota, payload.providerQuota);
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
   });
 });

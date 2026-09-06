@@ -23,6 +23,7 @@ const {
   resolveLanguage,
 } = require('./renderer/lang.js');
 const { createQuotaRenderers } = require('./renderer/quota-render.js');
+const { pickCriticalWindow } = require('./quota/models.js');
 
 /**
  * Renders the HUD string for the status line using native ANSI escape codes.
@@ -304,8 +305,8 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
 
         let tier = '';
         if (s.includes('high') || s.includes('(h)') || s.includes('thinking') || s.includes('(th)')) tier = 'high';
-        else if (s.includes('medium') || s.includes('(m)')) tier = 'medium';
-        else if (s.includes('low') || s.includes('(l)') || s.includes('extra-low')) tier = 'low';
+        else if (s.includes('medium') || s.includes('(m)') || s.includes('tiered')) tier = 'medium';
+        else if (s.includes('low') || s.includes('(l)') || s.includes('extra-low') || s.includes('lite')) tier = 'low';
 
         return { family, tier };
       };
@@ -338,11 +339,13 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   }
   line2Parts.push(ctxStr);
   if (isCompact && currentModelQuota) {
-    const pct = formatQuotaPercent(currentModelQuota.remainingFraction);
+    const critical = pickCriticalWindow(currentModelQuota.windows, Date.now()) || currentModelQuota;
+    const pct = formatQuotaPercent(critical.remainingFraction);
     const pctColor = pct <= (1 - critThresh) * 100 ? red : pct <= (1 - warnThresh) * 100 ? yellow : green;
     let timeStr = '';
-    if (currentModelQuota.resetTime) {
-      const secsLeft = Math.max(0, Math.round((new Date(currentModelQuota.resetTime).getTime() - Date.now()) / 1000));
+    const resetTime = critical.resetTime || currentModelQuota.resetTime;
+    if (resetTime) {
+      const secsLeft = Math.max(0, Math.round((new Date(resetTime).getTime() - Date.now()) / 1000));
       timeStr = ` ${gray}~${formatDuration(secsLeft)}${reset}`;
     }
     line2Parts.push(`${pctColor}Quota: ${pct}%${reset}${timeStr}`);
@@ -416,7 +419,8 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
 
   // Build quota lines
   let quotaLines = '';
-  if (quotaData && quotaData.length > 0) {
+  const hasProviderQuota = Boolean(quotaData?.providerQuota && (!isCompact && quotaStyle !== 'models'));
+  if (quotaData && (quotaData.length > 0 || hasProviderQuota)) {
     const now = Date.now();
     if (isCompact) {
       quotaLines = `\n${renderCompactQuotaLine(quotaData, now)}`;

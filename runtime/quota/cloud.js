@@ -10,10 +10,9 @@ const {
   createUnavailableQuotaResult,
 } = require('./models.js');
 
-// The same endpoints agy uses (daily first — confirmed authoritative source, prod fallback)
+// Authoritative quota endpoint (daily-cloudcode-pa confirmed source)
 const DEFAULT_ENDPOINTS = [
   'https://daily-cloudcode-pa.googleapis.com',
-  'https://cloudcode-pa.googleapis.com',
 ];
 
 // ─── Runtime User-Agent ──────────────────────────────────────────────────────
@@ -52,11 +51,11 @@ function buildHeaders(accessToken) {
   };
 }
 
-function resolveEndpoints(config) {
+function resolveEndpoints(config = {}) {
   if (process.env.AGY_HUD_ENDPOINTS) {
     return process.env.AGY_HUD_ENDPOINTS.split(',').map(s => s.trim()).filter(Boolean);
   }
-  return config.endpoints || DEFAULT_ENDPOINTS;
+  return (config && config.endpoints) || DEFAULT_ENDPOINTS;
 }
 
 /**
@@ -268,7 +267,7 @@ async function fetchUserQuotaSummaryFromCloud(accessToken, injectedConfig) {
   const endpoints = resolveEndpoints(config);
   for (const endpoint of endpoints) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       const r = await fetch(`${endpoint}/v1internal:retrieveUserQuotaSummary`, {
         method: 'POST',
@@ -319,7 +318,7 @@ async function fetchQuotaFromCloud(accessToken) {
   let normalized = null;
   for (const endpoint of endpoints) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       const r = await fetch(`${endpoint}/v1internal:fetchAvailableModels`, {
         method: 'POST',
