@@ -10,11 +10,11 @@ const {
   createUnavailableQuotaResult,
 } = require('./models.js');
 
-// The same endpoints agy uses (daily first — confirmed authoritative source, prod fallback)
+// Authoritative endpoint used by Antigravity CLI. Daily environment is isolated from Prod.
 const DEFAULT_ENDPOINTS = [
   'https://daily-cloudcode-pa.googleapis.com',
-  'https://cloudcode-pa.googleapis.com',
 ];
+const REQUEST_TIMEOUT_MS = 5000;
 
 // ─── Runtime User-Agent ──────────────────────────────────────────────────────
 let _pkg = null;
@@ -122,7 +122,7 @@ async function fetchTierFromCloud(accessToken) {
 
   for (const endpoint of endpoints) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const r = await fetch(`${endpoint}/v1internal:loadCodeAssist`, {
         method: 'POST',
@@ -266,7 +266,7 @@ async function fetchUserQuotaSummaryFromCloud(accessToken, injectedConfig) {
   const endpoints = resolveEndpoints(config);
   for (const endpoint of endpoints) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const r = await fetch(`${endpoint}/v1internal:retrieveUserQuotaSummary`, {
         method: 'POST',
@@ -317,7 +317,7 @@ async function fetchQuotaFromCloud(accessToken) {
   let normalized = null;
   for (const endpoint of endpoints) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const r = await fetch(`${endpoint}/v1internal:fetchAvailableModels`, {
         method: 'POST',
