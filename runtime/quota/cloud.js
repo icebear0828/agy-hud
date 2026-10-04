@@ -91,7 +91,7 @@ const USERINFO_ENDPOINTS = [
 async function fetchAccountEmail(accessToken) {
   for (const endpoint of USERINFO_ENDPOINTS) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const r = await fetch(endpoint, {
         headers: { 'Authorization': `Bearer ${accessToken}` },
@@ -189,6 +189,7 @@ function parseQuotaSummary(data) {
       if (!result[target][winType]) {
         // Proto3 may omit a default 0 remainingFraction.
         let rf = typeof b.remainingFraction === 'number' ? b.remainingFraction : 0;
+        if (b.disabled === true) rf = 0;
         if (!Number.isFinite(rf) || rf < 0) rf = 0;
         if (rf > 1) rf = 1;
         result[target][winType] = {

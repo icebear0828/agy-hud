@@ -373,6 +373,22 @@ describe('quota / cloud', () => {
       assert.equal(parsed.claude.weekly.remainingFraction, 0);
       assert.equal(parsed.claude.fiveHour.remainingFraction, 0);
     });
+
+    test('handles disabled bucket by treating remainingFraction as 0', () => {
+      const resetTime = '2026-09-10T08:00:00Z';
+      const parsed = parseQuotaSummary({
+        groups: [{
+          displayName: 'Claude and GPT models',
+          buckets: [
+            { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime },
+            { bucketId: '3p-5h', window: '5h', remainingFraction: 1, disabled: true, resetTime },
+          ],
+        }],
+      });
+
+      assert.equal(parsed.claude.weekly.remainingFraction, 0);
+      assert.equal(parsed.claude.fiveHour.remainingFraction, 0);
+    });
   });
 
   describe('enrichModelsWithQuotaSummary', () => {
