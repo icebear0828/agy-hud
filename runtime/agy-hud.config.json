@@ -13,7 +13,11 @@
     "breadcrumbCount": 3,
     "unicode": true,
     "useNerdFonts": false,
-    "showUsername": true
+    "showUsername": true,
+    "showSpeed": false,
+    "showCost": false,
+    "showDailyCost": false,
+    "showWeeklyCost": false
   },
   "thresholds": {
     "warning": 0.7,

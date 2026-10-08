@@ -172,10 +172,30 @@ test('getSessionState captures context window token usage from transcript lines'
 
     const state = await getSessionState(transcriptPath);
 
+    assert.equal(state.transcriptPath, transcriptPath);
     assert.equal(state.usage.total_input_tokens, 138206000);
     assert.equal(state.usage.total_output_tokens, 202000);
     assert.equal(state.usage.current_usage.input_tokens, 6000);
     assert.equal(state.usage.current_usage.cache_read_input_tokens, 138200000);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('getSessionState accumulates totalApiDurationMs from PLANNER_RESPONSE steps', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-timing-'));
+  try {
+    const transcriptPath = path.join(tempDir, 'transcript.jsonl');
+    fs.writeFileSync(transcriptPath, [
+      JSON.stringify({ step_index: 0, type: 'USER_INPUT', created_at: '2026-10-08T10:00:00Z' }),
+      JSON.stringify({ step_index: 1, type: 'PLANNER_RESPONSE', created_at: '2026-10-08T10:00:05Z' }), // 5000ms
+      JSON.stringify({ step_index: 2, type: 'GENERIC', created_at: '2026-10-08T10:00:08Z' }),
+      JSON.stringify({ step_index: 3, type: 'PLANNER_RESPONSE', created_at: '2026-10-08T10:00:11Z' }), // 3000ms
+      '',
+    ].join('\n'));
+
+    const state = await getSessionState(transcriptPath);
+    assert.equal(state.totalApiDurationMs, 8000);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

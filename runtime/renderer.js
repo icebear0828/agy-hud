@@ -24,6 +24,9 @@ const {
 } = require('./renderer/lang.js');
 const { createQuotaRenderers } = require('./renderer/quota-render.js');
 const { pickCriticalWindow } = require('./quota/models.js');
+const { getSessionCostUsd, formatUsd } = require('./cost.js');
+const { getCostTotals } = require('./daily-cost.js');
+const { getOutputSpeed } = require('./speed.js');
 
 /**
  * Renders the HUD string for the status line using native ANSI escape codes.
@@ -50,6 +53,10 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const showUsername = display.showUsername === true;
   const showTurnCacheHitRate = display.showTurnCacheHitRate === true;
   const showImageQuota = display.showImageQuota === true;
+  const showCost = display.showCost === true;
+  const showDailyCost = display.showDailyCost === true;
+  const showWeeklyCost = display.showWeeklyCost === true;
+  const showSpeed = display.showSpeed === true;
   const quotaStyle = display.quotaStyle || 'table';
   const isCompact = quotaStyle === 'compact';
   const text = LANGUAGE_TEXT[resolveLanguage(config)];
@@ -194,6 +201,39 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   if (showUsername && username) {
     line1Parts.unshift(`${cyan}${username}${reset}`);
   }
+  // Cost tracking & formatting
+  let sevenDayResetAt = null;
+  if (quotaData?.providerQuota?.google?.weekly?.resetTime) {
+    sevenDayResetAt = quotaData.providerQuota.google.weekly.resetTime;
+  } else if (Array.isArray(quotaData)) {
+    const weeklyQ = quotaData.find(q => q.windows?.weekly?.resetTime);
+    if (weeklyQ) sevenDayResetAt = weeklyQ.windows.weekly.resetTime;
+  }
+
+  const sessionCost = showCost ? getSessionCostUsd(agyData, state, { allowRoutedCost: display.showRoutedCost }) : null;
+  const costTotals = state?.costTotals ?? ((showDailyCost || showWeeklyCost)
+    ? getCostTotals(agyData, { allowRoutedCost: display.showRoutedCost, sevenDayResetAt }, undefined, state)
+    : null);
+
+  const costSegments = [
+    sessionCost !== null ? `${text.costLabel} ${formatUsd(sessionCost)}` : null,
+    showDailyCost && costTotals ? `${text.todayLabel} ${formatUsd(costTotals.todayUsd)}` : null,
+    showWeeklyCost && costTotals?.weekUsd != null ? `${text.weekLabel} ${formatUsd(costTotals.weekUsd)}` : null,
+  ].filter(Boolean);
+
+  if (costSegments.length > 0) {
+    line1Parts.push(`${gray}${costSegments.join(' | ')}${reset}`);
+  }
+
+  // Token speed calculation & formatting
+  const outputSpeed = state?.outputSpeed !== undefined
+    ? state.outputSpeed
+    : (showSpeed ? getOutputSpeed(agyData, null, state) : null);
+
+  if (showSpeed && outputSpeed !== null && Number.isFinite(outputSpeed)) {
+    line1Parts.push(`${gray}${text.outLabel}: ${outputSpeed.toFixed(1)} ${text.tokPerSec}${reset}`);
+  }
+
   if (updateInfo && updateInfo.updateAvailable) {
     const updateIcon = unicode ? '⟳' : '[UP]';
     line1Parts.push(`${yellow}${updateIcon} v${updateInfo.latestVersion}${reset}`);

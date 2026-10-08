@@ -9,6 +9,11 @@ const PROVIDER_LABELS = {
 const LANGUAGE_TEXT = {
   en: {
     cacheLabel: 'cache',
+    costLabel: 'Cost',
+    todayLabel: 'Today',
+    weekLabel: 'Week',
+    outLabel: 'out',
+    tokPerSec: 'tok/s',
     quotaUnavailable: 'Quota unavailable',
     quotaLoading: 'Quota loading',
     quotaReasons: {
@@ -20,6 +25,11 @@ const LANGUAGE_TEXT = {
   },
   zh: {
     cacheLabel: 'cache',
+    costLabel: '费用',
+    todayLabel: '今日',
+    weekLabel: '本周',
+    outLabel: '输出',
+    tokPerSec: 'tok/s',
     quotaUnavailable: '额度不可用',
     quotaLoading: '额度加载中',
     quotaReasons: {

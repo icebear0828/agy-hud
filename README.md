@@ -228,6 +228,10 @@ Optional. Create `agy-hud.config.json` at the workspace root to override default
   - `showCurrentDir`: Whether to display the base name of the current working directory.
   - `showUsername`: Whether to display the username/email at the start of the HUD statusline.
   - `username`: A custom string to override the resolved OS or login username/email.
+  - `showSpeed`: Whether to display output token generation speed (`out: X tok/s`).
+  - `showCost`: Whether to display current session cost (`Cost $X`).
+  - `showDailyCost`: Whether to display today's accumulated cost (`Today $X`).
+  - `showWeeklyCost`: Whether to display this week's accumulated cost (`Week $X`).
   - `breadcrumbCount`: Number of files to show in breadcrumbs.
   - `useNerdFonts`: Set to `true` to use premium developer icons from [Nerd Fonts](https://www.nerdfonts.com/).
   - `columnWidth`: Max column width for the quota table layout (defaults to `40`).
@@ -246,6 +250,8 @@ agy-hud/
 │   ├── bin/agy-hud.js         # statusLine entry (stdin JSON → ANSI HUD)
 │   ├── config-wizard.js       # configuration wizard (--config)
 │   ├── config.js              # config loader & writer
+│   ├── cost.js                # session cost calculation & model pricing
+│   ├── daily-cost.js          # daily & weekly cost ledger tracking
 │   ├── encoding.js            # console encoding & Unicode detector
 │   ├── parser.js              # scans workspace metadata & session transcript
 │   ├── paths.js               # cross-platform path resolution helpers
@@ -260,6 +266,7 @@ agy-hud/
 │   │   ├── format.js          # colors, abbreviator, duration formatting
 │   │   ├── lang.js            # internationalization (zh/en auto-detection)
 │   │   └── quota-render.js    # column bars & single-row columns (PR #61)
+│   ├── speed.js               # token output speed calculation
 │   ├── statusline-installer.js# writes settings.json statusLine settings
 │   ├── uninstall.js           # cleans and purges runtime files
 │   └── update-checker.js      # checks for new GitHub releases

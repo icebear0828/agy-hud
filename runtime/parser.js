@@ -181,6 +181,8 @@ async function getSessionState(transcriptPath, customCwd = null) {
   let usage;
   let maxHistoricalCache = 0;
   let imageExhausted = null;
+  let totalApiDurationMs = 0;
+  let lastStepTimeMs = null;
 
   try {
     const fileContent = fs.readFileSync(transcriptPath, 'utf8');
@@ -190,6 +192,13 @@ async function getSessionState(transcriptPath, customCwd = null) {
         const entry = JSON.parse(line);
         if (entry.step_index > steps) {
           steps = entry.step_index;
+        }
+        const entryTimeMs = entry.created_at ? Date.parse(entry.created_at) : null;
+        if (entry.type === 'PLANNER_RESPONSE' && lastStepTimeMs !== null && entryTimeMs !== null && entryTimeMs >= lastStepTimeMs) {
+          totalApiDurationMs += (entryTimeMs - lastStepTimeMs);
+        }
+        if (entryTimeMs !== null && Number.isFinite(entryTimeMs)) {
+          lastStepTimeMs = entryTimeMs;
         }
         const contextWindow = findContextWindow(entry);
         if (contextWindow) {
@@ -377,9 +386,10 @@ async function getSessionState(transcriptPath, customCwd = null) {
 
   const username = getActiveAccountEmail() || getFallbackUsername();
   const currentDir = path.basename(cwd);
-  const state = { steps, branch, memoryFile, rulesCount, mcpCount, hooksCount, currentDir, username, maxHistoricalCache };
+  const state = { steps, branch, memoryFile, rulesCount, mcpCount, hooksCount, currentDir, username, maxHistoricalCache, transcriptPath };
   if (usage) state.usage = usage;
   if (imageExhausted) state.imageExhausted = imageExhausted;
+  if (totalApiDurationMs > 0) state.totalApiDurationMs = totalApiDurationMs;
   return state;
 }
 

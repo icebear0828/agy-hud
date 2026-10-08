@@ -14,6 +14,11 @@ const mockState = {
   rulesCount: 4,
   mcpCount: 2,
   hooksCount: 3,
+  outputSpeed: 43.4,
+  costTotals: {
+    todayUsd: 0.45,
+    weekUsd: 1.82,
+  },
   usage: {
     current_usage: {
       input_tokens: 4800,
@@ -28,6 +33,10 @@ const mockAgyData = {
   model: {
     display_name: 'Gemini 3.5 Flash (Low)',
     id: 'gemini-3.5-flash-low'
+  },
+  cost: {
+    total_cost_usd: 0.085,
+    total_api_duration_ms: 3200,
   },
   context_window: {
     total_input_tokens: 69900,
@@ -209,6 +218,38 @@ async function startWizard() {
       toggle: () => {
         const val = config.display.breadcrumbCount !== undefined ? config.display.breadcrumbCount : 3;
         config.display.breadcrumbCount = (val % 5) + 1; // rotates 1, 2, 3, 4, 5
+      }
+    },
+    {
+      key: 'showSpeed',
+      label: 'Show Output Speed',
+      getValue: () => (config.display.showSpeed === true ? 'Enabled' : 'Disabled'),
+      toggle: () => {
+        config.display.showSpeed = config.display.showSpeed === true ? false : true;
+      }
+    },
+    {
+      key: 'showCost',
+      label: 'Show Session Cost',
+      getValue: () => (config.display.showCost === true ? 'Enabled' : 'Disabled'),
+      toggle: () => {
+        config.display.showCost = config.display.showCost === true ? false : true;
+      }
+    },
+    {
+      key: 'showDailyCost',
+      label: 'Show Daily Cost',
+      getValue: () => (config.display.showDailyCost === true ? 'Enabled' : 'Disabled'),
+      toggle: () => {
+        config.display.showDailyCost = config.display.showDailyCost === true ? false : true;
+      }
+    },
+    {
+      key: 'showWeeklyCost',
+      label: 'Show Weekly Cost',
+      getValue: () => (config.display.showWeeklyCost === true ? 'Enabled' : 'Disabled'),
+      toggle: () => {
+        config.display.showWeeklyCost = config.display.showWeeklyCost === true ? false : true;
       }
     },
     {
