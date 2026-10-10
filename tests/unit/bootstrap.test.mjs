@@ -52,6 +52,9 @@ test('bootstrap installs runtime files and writes statusLine from a source direc
 
     assert.ok(fs.existsSync(path.join(runtime, 'package.json')));
     assert.ok(fs.existsSync(path.join(runtime, 'runtime', 'bin', 'agy-hud.js')));
+    assert.ok(fs.existsSync(path.join(runtime, 'runtime', 'cost.js')));
+    assert.ok(fs.existsSync(path.join(runtime, 'runtime', 'daily-cost.js')));
+    assert.ok(fs.existsSync(path.join(runtime, 'runtime', 'speed.js')));
     assert.ok(fs.existsSync(path.join(runtime, 'runtime', 'statusline-installer.js')));
     assert.equal(settings.statusLine.type, 'command');
     assert.match(settings.statusLine.command, /agy-hud-runtime/);

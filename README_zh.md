@@ -228,6 +228,10 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
   - `showCurrentDir`：是否在 HUD 中显示当前工作目录的文件夹名称。
   - `showUsername`：是否在 HUD 第一行显示用户名/登录邮箱。
   - `username`：自定义显示用户名以覆盖系统用户名或登录邮箱。
+  - `showSpeed`：是否显示 Token 输出生成速率（`输出: X tok/s`）。
+  - `showCost`：是否显示当前会话费用（`费用 $X`）。
+  - `showDailyCost`：是否显示今日累计费用（`今日 $X`）。
+  - `showWeeklyCost`：是否显示本周累计费用（`本周 $X`）。
   - `breadcrumbCount`：导航栏中最多展示的文件项数。
   - `useNerdFonts`：开启后（设为 `true`），将使用 [Nerd Fonts](https://www.nerdfonts.com/) 的高保真开发者图标，体验更佳。
   - `columnWidth`：Table 模式下每一列的最大宽度（默认为 `40`）。
@@ -246,6 +250,8 @@ agy-hud/
 │   ├── bin/agy-hud.js         # statusLine 入口（stdin JSON → ANSI HUD）
 │   ├── config-wizard.js       # HUD 命令行配置向导（--config）
 │   ├── config.js              # 全局/局部配置文件加载器
+│   ├── cost.js                # 会话费用计算与模型费率表
+│   ├── daily-cost.js          # 今日与本周费用账本持久化与汇总
 │   ├── encoding.js            # 控制台编码与 Unicode 检测器
 │   ├── parser.js              # 工作区元数据扫描与 transcript 日志解析
 │   ├── paths.js               # 跨平台路径解析工具集
@@ -260,6 +266,7 @@ agy-hud/
 │   │   ├── format.js          # ANSI 配色、大数进位及重置时长格式化
 │   │   ├── lang.js            # 多语言（中文/英文）及本地化诊断支持
 │   │   └── quota-render.js    # 配额进度条与单行双列对齐排版 (PR #61)
+│   ├── speed.js               # Token 输出生成速率计算
 │   ├── statusline-installer.js# 向 settings.json 写入 statusLine 命令
 │   ├── uninstall.js           # 清理与卸载 HUD 运行时文件
 │   └── update-checker.js      # 检查新版本 Github Release 的微服务

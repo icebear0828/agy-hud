@@ -73,6 +73,8 @@ function removeExtraFiles(root) {
     path.join(root, 'agy-hud-token.json'),
     path.join(root, 'agy-hud-quota-cache.json'),
     path.join(root, 'agy-hud-error.log'),
+    path.join(root, 'daily-cost.json'),
+    path.join(root, 'speed-cache'),
     path.join(root, 'hud'),
   ];
   for (const target of targets) {

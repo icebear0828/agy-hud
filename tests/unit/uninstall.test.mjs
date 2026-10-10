@@ -16,6 +16,8 @@ test('removeExtraFiles removes agy-hud-payload.json and hud directory', () => {
     const tokenFile = path.join(tmp, 'agy-hud-token.json');
     const cacheFile = path.join(tmp, 'agy-hud-quota-cache.json');
     const errorFile = path.join(tmp, 'agy-hud-error.log');
+    const dailyCostFile = path.join(tmp, 'daily-cost.json');
+    const speedCacheDir = path.join(tmp, 'speed-cache');
     const hudDir = path.join(tmp, 'hud');
     const otherFile = path.join(tmp, 'other.json');
 
@@ -23,6 +25,9 @@ test('removeExtraFiles removes agy-hud-payload.json and hud directory', () => {
     fs.writeFileSync(tokenFile, '{}');
     fs.writeFileSync(cacheFile, '{}');
     fs.writeFileSync(errorFile, '{}');
+    fs.writeFileSync(dailyCostFile, '{}');
+    fs.mkdirSync(speedCacheDir, { recursive: true });
+    fs.writeFileSync(path.join(speedCacheDir, 'cache.json'), '{}');
     fs.mkdirSync(hudDir, { recursive: true });
     fs.writeFileSync(path.join(hudDir, 'file.txt'), 'hello');
     fs.writeFileSync(otherFile, '{}');
@@ -33,11 +38,15 @@ test('removeExtraFiles removes agy-hud-payload.json and hud directory', () => {
     assert.ok(removed.includes(tokenFile));
     assert.ok(removed.includes(cacheFile));
     assert.ok(removed.includes(errorFile));
+    assert.ok(removed.includes(dailyCostFile));
+    assert.ok(removed.includes(speedCacheDir));
     assert.ok(removed.includes(hudDir));
     assert.ok(!fs.existsSync(payloadFile));
     assert.ok(!fs.existsSync(tokenFile));
     assert.ok(!fs.existsSync(cacheFile));
     assert.ok(!fs.existsSync(errorFile));
+    assert.ok(!fs.existsSync(dailyCostFile));
+    assert.ok(!fs.existsSync(speedCacheDir));
     assert.ok(!fs.existsSync(hudDir));
     assert.ok(fs.existsSync(otherFile));
   } finally {
