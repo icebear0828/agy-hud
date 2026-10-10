@@ -25,8 +25,8 @@ function localDateKey(now) {
 }
 
 function getDailyCostLedgerPath(rootDir = null) {
-  const baseDir = rootDir || resolveAntigravityPath('');
-  return path.join(baseDir, 'daily-cost.json');
+  if (rootDir) return path.join(rootDir, 'daily-cost.json');
+  return resolveAntigravityPath('daily-cost.json');
 }
 
 function readLedger(ledgerPath) {

@@ -72,5 +72,5 @@ test('formatUsd formats currencies across thresholds', () => {
   assert.equal(formatUsd(1.2345), '$1.23');
   assert.equal(formatUsd(0.4567), '$0.457');
   assert.equal(formatUsd(0.01234), '$0.0123');
-  assert.equal(formatUsd(0), '$0.0000');
+  assert.equal(formatUsd(0), '$0.00');
 });

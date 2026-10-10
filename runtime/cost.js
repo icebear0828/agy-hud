@@ -128,7 +128,7 @@ function getSessionCostUsd(agyData, state = null, options = {}) {
  * @returns {string}
  */
 function formatUsd(amount) {
-  if (typeof amount !== 'number' || !Number.isFinite(amount)) return '$0.00';
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) return '$0.00';
   if (amount >= 1) return `$${amount.toFixed(2)}`;
   if (amount >= 0.1) return `$${amount.toFixed(3)}`;
   return `$${amount.toFixed(4)}`;

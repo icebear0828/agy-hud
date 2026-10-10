@@ -15,7 +15,11 @@ function isCount(value) {
 function getSpeedCachePath(rootDir, transcriptPath) {
   const baseDir = rootDir || resolveAntigravityPath('speed-cache');
   const cacheDir = path.basename(baseDir) === 'speed-cache' ? baseDir : path.join(baseDir, 'speed-cache');
-  const key = createHash('sha256').update(path.resolve(transcriptPath)).digest('hex');
+  const str = String(transcriptPath || '');
+  const target = (path.isAbsolute(str) || str.includes('/') || str.includes('\\'))
+    ? path.resolve(str)
+    : str;
+  const key = createHash('sha256').update(target).digest('hex');
   return path.join(cacheDir, `${key}.json`);
 }
 
