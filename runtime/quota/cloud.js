@@ -162,16 +162,18 @@ async function fetchTierFromCloud(accessToken) {
  */
 function parseQuotaSummary(data) {
   if (!data || !Array.isArray(data.groups)) return null;
-  const result = { google: {}, claude: {} };
+  const result = { google: {}, claude: {}, argon: {} };
   let hasAny = false;
   for (const group of data.groups) {
     if (!group || !Array.isArray(group.buckets)) continue;
     const buckets = group.buckets;
     const displayName = (group.displayName || '').toLowerCase();
-    const hasGeminiBucket = buckets.some(b => b && typeof b.bucketId === 'string' && b.bucketId.startsWith('gemini-'));
+    const hasArgonBucket = buckets.some(b => b && typeof b.bucketId === 'string' && b.bucketId.includes('argon'));
+    const hasGeminiBucket = buckets.some(b => b && typeof b.bucketId === 'string' && b.bucketId.startsWith('gemini-') && !b.bucketId.includes('argon'));
     const has3pBucket = buckets.some(b => b && typeof b.bucketId === 'string' && b.bucketId.startsWith('3p-'));
     let target = null;
-    if (displayName.includes('gemini') || hasGeminiBucket) target = 'google';
+    if (displayName.includes('argon') || hasArgonBucket) target = 'argon';
+    else if (displayName.includes('gemini') || hasGeminiBucket) target = 'google';
     else if (displayName.includes('claude') || displayName.includes('3p') || has3pBucket) target = 'claude';
     else continue;
 
@@ -204,8 +206,9 @@ function parseQuotaSummary(data) {
   // Prune empty provider keys so callers can distinguish
   if (!result.google.weekly && !result.google.fiveHour) delete result.google;
   if (!result.claude.weekly && !result.claude.fiveHour) delete result.claude;
-  // If both deleted, return null
-  if (!result.google && !result.claude) return null;
+  if (!result.argon.weekly && !result.argon.fiveHour) delete result.argon;
+  // If all deleted, return null
+  if (!result.google && !result.claude && !result.argon) return null;
   // Ensure at least one exists
   if (Object.keys(result).length === 0) return null;
   return result;
@@ -213,9 +216,9 @@ function parseQuotaSummary(data) {
 
 /**
  * Enrich normalized models with provider-level weekly/5h windows from summary.
- * Provider mapping: GOOGLE/gemini -> google summary, ANTHROPIC/claude/gpt -> claude summary.
+ * Provider mapping: GOOGLE/gemini -> google summary, ANTHROPIC/claude/gpt -> claude summary, ARGON -> argon summary.
  * @param {Array} models
- * @param {{google:Object, claude:Object}|null} summary
+ * @param {{google:Object, claude:Object, argon:Object}|null} summary
  * @param {number} now
  * @returns {Array}
  */
@@ -223,12 +226,14 @@ function enrichModelsWithQuotaSummary(models, summary, now = Date.now()) {
   if (!Array.isArray(models) || !summary) return models;
   const hasGoogle = summary.google && (summary.google.weekly || summary.google.fiveHour);
   const hasClaude = summary.claude && (summary.claude.weekly || summary.claude.fiveHour);
-  if (!hasGoogle && !hasClaude) return models;
+  const hasArgon = summary.argon && (summary.argon.weekly || summary.argon.fiveHour);
+  if (!hasGoogle && !hasClaude && !hasArgon) return models;
   return models.map(m => {
     if (!m || !m.id) return m;
-    const isGoogle = m.modelProvider === 'MODEL_PROVIDER_GOOGLE' || /gemini/i.test(m.id) || /gemini/i.test(m.displayName || '');
+    const isArgon = /argon/i.test(m.id) || /argon/i.test(m.displayName || '');
+    const isGoogle = !isArgon && (m.modelProvider === 'MODEL_PROVIDER_GOOGLE' || /gemini/i.test(m.id) || /gemini/i.test(m.displayName || ''));
     const isClaude = m.modelProvider === 'MODEL_PROVIDER_ANTHROPIC' || /claude/i.test(m.id) || /claude/i.test(m.displayName || '') || /gpt/i.test(m.id) || /gpt/i.test(m.displayName || '');
-    const key = isGoogle ? 'google' : isClaude ? 'claude' : null;
+    const key = isArgon ? 'argon' : isGoogle ? 'google' : isClaude ? 'claude' : null;
     if (!key) return m;
     const providerSummary = summary[key];
     if (!providerSummary) return m;

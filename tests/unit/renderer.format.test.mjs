@@ -10,6 +10,9 @@ describe('renderer / format helpers', () => {
       assert.equal(abbreviateDisplayName('Gemini 3.5 Flash (Low)'), 'Gemini 3.5 Flash(L)');
       assert.equal(abbreviateDisplayName('Gemini 3.1 Pro (High)'), 'Gemini 3.1 Pro(H)');
       assert.equal(abbreviateDisplayName('Gemini 3.1 Pro (Low)'), 'Gemini 3.1 Pro(L)');
+      assert.equal(abbreviateDisplayName('Gemini 4 Argon (Medium)'), 'Gemini 4 Argon(M)');
+      assert.equal(abbreviateDisplayName('Gemini 4 Argon (High)'), 'Gemini 4 Argon(H)');
+      assert.equal(abbreviateDisplayName('Gemini 4 Argon (Low)'), 'Gemini 4 Argon(L)');
       assert.equal(abbreviateDisplayName('Claude Sonnet 4.6 (Thinking)'), 'Sonnet 4.6(Th)');
       assert.equal(abbreviateDisplayName('Claude Opus 4.6 (Thinking)'), 'Opus 4.6(Th)');
       assert.equal(abbreviateDisplayName('GPT-OSS 120B (Medium)'), 'GPT-OSS 120B');
@@ -32,11 +35,14 @@ describe('renderer / format helpers', () => {
       assert.equal(compactModelName('Gemini 3.5 Flash (High)'), 'Flash');
       assert.equal(compactModelName('Gemini 3.5 Flash (Medium)'), 'Flash');
       assert.equal(compactModelName('Gemini 3.1 Pro (Low)'), 'Pro');
+      assert.equal(compactModelName('Gemini 4 Argon (Medium)'), 'Argon');
       assert.equal(compactModelName('Claude Sonnet 4.6 (Thinking)'), 'Sonnet');
       assert.equal(compactModelName('Claude Opus 4.6 (Thinking)'), 'Opus');
       assert.equal(compactModelName('GPT-OSS 120B (Medium)'), 'GPT');
       assert.equal(compactModelName('gemini-3.8-flash-tiered'), 'Flash');
       assert.equal(compactModelName('gemini-3.1-pro-low'), 'Pro');
+      assert.equal(compactModelName('gemini-4-argon'), 'Argon');
+      assert.equal(compactModelName('gemini-4-argon-high'), 'Argon');
       assert.equal(compactModelName('claude-sonnet-4-6'), 'Sonnet');
       assert.equal(compactModelName('claude-opus-4-6-thinking'), 'Opus');
     });

@@ -21,7 +21,7 @@ const QUOTA_CHROME_WIDTH = 21;
 const TIER_ABBREVS = { Thinking: 'Th', High: 'H', Medium: 'M', Low: 'L' };
 
 const ABBREVIATION_RULES = [
-  [/^Gemini (\d+\.\d+) (Flash|Pro) \((\w+)\)/, (_, ver, fam, tier) =>
+  [/^Gemini ([\d.]+) (Flash|Pro|Argon) \((\w+)\)/, (_, ver, fam, tier) =>
     `Gemini ${ver} ${fam}(${TIER_ABBREVS[tier] || tier[0]})`],
   [/^Claude (\w+) ([\d.]+) \((\w+)\)/, (_, fam, ver, tier) =>
     `${fam} ${ver}(${TIER_ABBREVS[tier] || tier[0]})`],
@@ -42,9 +42,10 @@ function simplifyModelName(name) {
 }
 
 const COMPACT_NAME_RULES = [
-  [/^Gemini [\d.]+ (Flash|Pro).*/i, (_, fam) => fam],
+  [/^Gemini [\d.]+ (Flash|Pro|Argon).*/i, (_, fam) => fam],
   [/^Claude (\w+) [\d.]+ \((\w+)\)/i, (_, fam) => fam],
   [/^GPT-OSS .*/i, () => 'GPT'],
+  [/gemini-.*argon/i, () => 'Argon'],
   [/gemini-.*flash/i, () => 'Flash'],
   [/gemini-.*pro/i, () => 'Pro'],
   [/claude-.*sonnet/i, () => 'Sonnet'],

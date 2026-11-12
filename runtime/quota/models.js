@@ -12,6 +12,7 @@ const FALLBACK_AGENT_MODEL_IDS = [
   'gemini-3.5-flash-extra-low',
   'gemini-pro-agent',
   'gemini-3.1-pro-low',
+  'gemini-4-argon',
   'claude-sonnet-4-6',
   'claude-opus-4-6-thinking',
   'gpt-oss-120b-medium',

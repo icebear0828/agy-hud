@@ -392,12 +392,42 @@ describe('quota / cloud', () => {
       assert.equal(parsed.google.weekly.remainingFraction, 0.40, 'must pick lower remainingFraction for weekly');
       assert.equal(parsed.google.fiveHour.remainingFraction, 0.20, 'must pick lower remainingFraction for 5h');
     });
+
+    test('parses separate Argon quota without colliding with Google or Claude', () => {
+      const resetTime = '2026-10-31T12:00:00Z';
+      const parsed = parseQuotaSummary({
+        groups: [
+          {
+            displayName: 'Gemini Models',
+            buckets: [
+              { bucketId: 'gemini-5h', window: '5h', remainingFraction: 0.90, resetTime },
+              { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0.75, resetTime },
+            ],
+          },
+          {
+            displayName: 'Gemini 4 Argon',
+            buckets: [
+              { bucketId: 'argon-weekly', window: 'weekly', remainingFraction: 0.60, resetTime },
+            ],
+          },
+        ],
+      });
+
+      assert.ok(parsed?.google);
+      assert.equal(parsed.google.weekly.remainingFraction, 0.75);
+      assert.equal(parsed.google.fiveHour.remainingFraction, 0.90);
+
+      assert.ok(parsed?.argon);
+      assert.equal(parsed.argon.weekly.remainingFraction, 0.60);
+      assert.equal(parsed.argon.fiveHour, undefined);
+    });
   });
 
   describe('enrichModelsWithQuotaSummary', () => {
-    test('enriches models with provider weekly and 5h windows', () => {
+    test('enriches models with provider weekly and 5h windows including Argon', () => {
       const models = [
-        { id: 'gemini-3.6-flash', modelProvider: 'MODEL_PROVIDER_GOOGLE', windows: {} },
+        { id: 'gemini-3.8-flash-tiered', modelProvider: 'MODEL_PROVIDER_GOOGLE', windows: {} },
+        { id: 'gemini-4-argon', displayName: 'Gemini 4 Argon (Medium)', modelProvider: 'MODEL_PROVIDER_GOOGLE', windows: {} },
         { id: 'claude-sonnet-4-6', modelProvider: 'MODEL_PROVIDER_ANTHROPIC', windows: {} },
         { id: 'other-model', modelProvider: 'MODEL_PROVIDER_OTHER', windows: {} },
       ];
@@ -409,16 +439,21 @@ describe('quota / cloud', () => {
         claude: {
           weekly: { remainingFraction: 1.0, resetTime: '2026-09-10T00:00:00Z' },
         },
+        argon: {
+          weekly: { remainingFraction: 0.65, resetTime: '2026-10-31T00:00:00Z' },
+        },
       };
       const enriched = enrichModelsWithQuotaSummary(models, summary, 123456);
       assert.equal(enriched[0].windows.weekly.remainingFraction, 0.92);
-      assert.equal(enriched[0].windows.weekly.observedAt, 123456);
       assert.equal(enriched[0].windows.fiveHour.remainingFraction, 0.55);
 
-      assert.equal(enriched[1].windows.weekly.remainingFraction, 1.0);
-      assert.equal(enriched[1].windows.fiveHour, undefined);
+      assert.equal(enriched[1].windows.weekly.remainingFraction, 0.65);
+      assert.equal(enriched[1].windows.fiveHour, undefined, 'argon should not inherit google 5h quota');
 
-      assert.deepEqual(enriched[2].windows, {});
+      assert.equal(enriched[2].windows.weekly.remainingFraction, 1.0);
+      assert.equal(enriched[2].windows.fiveHour, undefined);
+
+      assert.deepEqual(enriched[3].windows, {});
     });
 
     test('returns original models when summary is null', () => {

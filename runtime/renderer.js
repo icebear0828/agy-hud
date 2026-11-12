@@ -336,7 +336,8 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
       const extractFamilyAndTier = (name) => {
         const s = String(name).toLowerCase();
         let family = '';
-        if (s.includes('flash')) family = 'flash';
+        if (s.includes('argon')) family = 'argon';
+        else if (s.includes('flash')) family = 'flash';
         else if (s.includes('pro')) family = 'pro';
         else if (s.includes('sonnet')) family = 'sonnet';
         else if (s.includes('opus')) family = 'opus';

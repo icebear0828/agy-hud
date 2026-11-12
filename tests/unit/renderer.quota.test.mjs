@@ -112,6 +112,36 @@ describe('renderer / quota lines', () => {
       assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%/);
     });
 
+    test('renders Argon row in provider table when argon quota is present', () => {
+      const state = { steps: 5, branch: 'dev' };
+      const agyData = {
+        context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 },
+      };
+      const now = Date.now();
+      const quotaData = [];
+      quotaData.providerQuota = {
+        google: {
+          fiveHour: { remainingFraction: 0.95, resetTime: new Date(now + 4 * 3600 * 1000).toISOString() },
+          weekly: { remainingFraction: 0.82, resetTime: new Date(now + 6 * 86400 * 1000).toISOString() },
+        },
+        claude: {
+          fiveHour: { remainingFraction: 1.0, resetTime: new Date(now + 4 * 3600 * 1000).toISOString() },
+          weekly: { remainingFraction: 1.0, resetTime: new Date(now + 6 * 86400 * 1000).toISOString() },
+        },
+        argon: {
+          weekly: { remainingFraction: 0.65, resetTime: new Date(now + 5 * 86400 * 1000).toISOString() },
+        },
+      };
+
+      const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+      const clean = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
+
+      assert.match(clean, /Google 5h\s+\[[█░]+\]\s+95%/);
+      assert.match(clean, /Google week\s+\[[█░]+\]\s+82%/);
+      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%/);
+      assert.match(clean, /Argon week\s+\[[█░]+\]\s+65%\s+~5d/);
+    });
+
     test('models mode renders individual model rows in two columns', () => {
       const state = { steps: 5, branch: 'dev' };
       const agyData = {
@@ -403,6 +433,45 @@ describe('renderer / quota lines', () => {
       const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
       assert.match(output, /Quota: 74%/);
+    });
+
+    test('matches Argon family and tier when active model is Gemini 4 Argon', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { display_name: 'Gemini 4 Argon (Medium)', id: 'gemini-4-argon-medium' }
+      };
+      const quotaData = [{
+        id: 'gemini-4-argon',
+        displayName: 'Gemini 4 Argon (Medium)',
+        modelProvider: 'MODEL_PROVIDER_GOOGLE',
+        remainingFraction: 0.65,
+        resetTime: new Date(Date.now() + 5 * 86400 * 1000).toISOString(),
+      }];
+      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+
+      assert.match(output, /Quota: 65%/);
+      assert.match(output, /~5d/);
+    });
+
+    test('renders Argon alongside Flash and Pro under Google in compact mini bars', () => {
+      const state = { steps: 1, branch: 'main' };
+      const agyData = {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { display_name: 'Gemini 4 Argon (Medium)' }
+      };
+      const quotaData = [
+        { id: 'gemini-3.8-flash-tiered', displayName: 'Gemini 3.8 Flash (High)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.9 },
+        { id: 'gemini-3.1-pro-low', displayName: 'Gemini 3.1 Pro (Low)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.7 },
+        { id: 'gemini-4-argon', displayName: 'Gemini 4 Argon (Medium)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.5 },
+      ];
+      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: true } }, quotaData)
+        .replace(/\x1b\[[0-9;]*m/g, '');
+      const googleLine = output.split('\n').find(line => line.includes('Google:')) || '';
+
+      assert.match(googleLine, /Flash/);
+      assert.match(googleLine, /Pro/);
+      assert.match(googleLine, /Argon/);
     });
 
   });

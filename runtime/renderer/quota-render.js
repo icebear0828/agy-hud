@@ -73,13 +73,15 @@ function createQuotaRenderers(ctx) {
     const providerWindows = {
       Google: { fiveHour: null, weekly: null },
       Claude: { fiveHour: null, weekly: null },
+      Argon: { fiveHour: null, weekly: null },
     };
 
     for (const q of data || []) {
       if (!q || isImageModel(q)) continue;
-      const isGoogle = q.modelProvider === 'MODEL_PROVIDER_GOOGLE' || /gemini/i.test(q.id || q.displayName);
+      const isArgon = /argon/i.test(q.id || q.displayName);
+      const isGoogle = !isArgon && (q.modelProvider === 'MODEL_PROVIDER_GOOGLE' || /gemini/i.test(q.id || q.displayName));
       const isClaude = q.modelProvider === 'MODEL_PROVIDER_ANTHROPIC' || /claude/i.test(q.id || q.displayName) || /gpt/i.test(q.id || q.displayName);
-      const key = isGoogle ? 'Google' : isClaude ? 'Claude' : null;
+      const key = isArgon ? 'Argon' : isGoogle ? 'Google' : isClaude ? 'Claude' : null;
       if (!key) continue;
 
       if (q.windows?.fiveHour && !isObservationExpired(q.windows.fiveHour, now)) {
@@ -113,7 +115,7 @@ function createQuotaRenderers(ctx) {
           }
         }
       } else if (!q.resetTime && !q.windows?.fiveHour && !q.windows?.weekly) {
-        if (!providerWindows[key].fiveHour) {
+        if (!providerWindows[key].fiveHour && key !== 'Argon') {
           providerWindows[key].fiveHour = { remainingFraction: q.remainingFraction, resetTime: null };
         }
         if (!providerWindows[key].weekly) {
@@ -129,6 +131,8 @@ function createQuotaRenderers(ctx) {
       if (pq.google?.weekly && !isObservationExpired(pq.google.weekly, now)) providerWindows.Google.weekly = pq.google.weekly;
       if (pq.claude?.fiveHour && !isObservationExpired(pq.claude.fiveHour, now)) providerWindows.Claude.fiveHour = pq.claude.fiveHour;
       if (pq.claude?.weekly && !isObservationExpired(pq.claude.weekly, now)) providerWindows.Claude.weekly = pq.claude.weekly;
+      if (pq.argon?.fiveHour && !isObservationExpired(pq.argon.fiveHour, now)) providerWindows.Argon.fiveHour = pq.argon.fiveHour;
+      if (pq.argon?.weekly && !isObservationExpired(pq.argon.weekly, now)) providerWindows.Argon.weekly = pq.argon.weekly;
     }
 
     const renderWindowItem = (label, win) => {
@@ -167,6 +171,18 @@ function createQuotaRenderers(ctx) {
       `  ${g5} ${gray}${glyph.vbar}${reset} ${c5}`,
       `  ${gw} ${gray}${glyph.vbar}${reset} ${cw}`,
     ];
+
+    const hasArgon = Boolean(providerWindows.Argon.weekly || providerWindows.Argon.fiveHour);
+    if (hasArgon) {
+      if (providerWindows.Argon.fiveHour && providerWindows.Argon.weekly) {
+        const a5 = renderWindowItem('Argon 5h', providerWindows.Argon.fiveHour);
+        const aw = renderWindowItem('Argon week', providerWindows.Argon.weekly);
+        rows.push(`  ${a5} ${gray}${glyph.vbar}${reset} ${aw}`);
+      } else {
+        const aw = renderWindowItem('Argon week', providerWindows.Argon.weekly || providerWindows.Argon.fiveHour);
+        rows.push(`  ${aw}`);
+      }
+    }
 
     const dividerLine = `  ${gray}${glyph.hbar.repeat(81)}${reset}`;
     return `${dividerLine}\n` + rows.join('\n');
