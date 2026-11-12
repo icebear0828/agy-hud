@@ -187,6 +187,8 @@ module.exports = {
   readWindowsCredentialTokens,
   readLinuxKeyringTokens: tokenMod.readLinuxKeyringTokens,
   probeLinuxKeyringAvailability: tokenMod.probeLinuxKeyringAvailability,
+  readMacosKeychainTokens: tokenMod.readMacosKeychainTokens,
+  probeMacosKeychainAvailability: tokenMod.probeMacosKeychainAvailability,
   isTokenExpired,
   getTokenCandidates: tokenMod.getTokenCandidates,
   parseTokenPayload: tokenMod.parseTokenPayload,

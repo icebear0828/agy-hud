@@ -22,12 +22,44 @@ const WINDOWS_CREDENTIAL_TARGETS = [
   'LegacyGeneric:target=gemini:antigravity',
 ];
 
-// agy stores its OAuth token in the Linux system keyring (D-Bus Secret
-// Service) under this service/username pair, via the python `keyring` library.
-// These mirror the arguments agy passes to `keyring.set_password(...)`; update
-// here if a future agy version changes the target.
-const LINUX_KEYRING_SERVICE = 'gemini';
-const LINUX_KEYRING_USERNAME = 'antigravity';
+// agy stores its OAuth token in system keyrings (macOS Keychain, Linux
+// Secret Service via python keyring or go-keyring) under this service/account pair.
+const KEYCHAIN_SERVICE = 'gemini';
+const KEYCHAIN_ACCOUNT = 'antigravity';
+const LINUX_KEYRING_SERVICE = KEYCHAIN_SERVICE;
+const LINUX_KEYRING_USERNAME = KEYCHAIN_ACCOUNT;
+
+function decodeKeyringRaw(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  let decoded = trimmed;
+  if (trimmed.startsWith('go-keyring-base64:')) {
+    try {
+      decoded = Buffer.from(trimmed.slice(18), 'base64').toString('utf8');
+    } catch {
+      return null;
+    }
+  }
+  try {
+    return JSON.parse(decoded);
+  } catch {
+    return decoded;
+  }
+}
+
+function extractEmailFromIdToken(idToken) {
+  if (!idToken || typeof idToken !== 'string') return undefined;
+  const parts = idToken.split('.');
+  if (parts.length !== 3) return undefined;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+    if (payload && typeof payload.email === 'string' && payload.email.includes('@')) {
+      return payload.email;
+    }
+  } catch {}
+  return undefined;
+}
 
 function getTokenCandidates(roots = getAntigravityRoots()) {
   const candidates = [];
@@ -70,6 +102,7 @@ function tokenResultFromTokens(tokens) {
     accessToken: tokens[0].accessToken,
     expiry: tokens[0].expiry,
     sourceFormat: tokens[0].sourceFormat,
+    email: tokens[0].email,
     all: tokens,
   };
 }
@@ -121,11 +154,18 @@ function normalizeExpiryDate(value) {
 function parseTokenPayload(raw) {
   if (!raw || typeof raw !== 'object') return null;
 
+  const rawEmail = (typeof raw.id_token_email === 'string' && raw.id_token_email.includes('@'))
+    ? raw.id_token_email
+    : ((typeof raw.email === 'string' && raw.email.includes('@'))
+      ? raw.email
+      : extractEmailFromIdToken(raw.id_token || (raw.token && raw.token.id_token)));
+
   if (raw.token && typeof raw.token === 'object' && raw.token.access_token) {
     return {
       accessToken: raw.token.access_token,
       expiry: normalizeExpiryDate(raw.token.expiry),
       sourceFormat: 'antigravity-cli',
+      ...(rawEmail ? { email: rawEmail } : {}),
     };
   }
 
@@ -134,6 +174,7 @@ function parseTokenPayload(raw) {
       accessToken: raw.access_token,
       expiry: normalizeExpiryDate(raw.expiry || raw.expiry_date),
       sourceFormat: 'oauth-creds',
+      ...(rawEmail ? { email: rawEmail } : {}),
     };
   }
 
@@ -279,12 +320,8 @@ function readLinuxKeyringTokens(platform = process.platform, roots = getAntigrav
     const trimmed = raw.trim();
     if (!trimmed) return null;
 
-    let parsed;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      parsed = trimmed;
-    }
+    const parsed = decodeKeyringRaw(trimmed);
+    if (!parsed) return null;
 
     const token = typeof parsed === 'string'
       ? (!/\s/.test(parsed) ? { accessToken: parsed } : null)
@@ -297,6 +334,7 @@ function readLinuxKeyringTokens(platform = process.platform, roots = getAntigrav
       accessToken: token.accessToken,
       expiry: token.expiry,
       sourceFormat: 'linux-keyring',
+      ...(token.email ? { email: token.email } : {}),
     }];
     writeWindowsTokenTemp(tokens, roots);
 
@@ -304,6 +342,70 @@ function readLinuxKeyringTokens(platform = process.platform, roots = getAntigrav
   } catch {
     return null;
   }
+}
+
+/**
+ * Reads the OAuth token stored in macOS Keychain by delegating to /usr/bin/security.
+ * agy stores its token under service "gemini" and account "antigravity" via go-keyring.
+ *
+ * @param {string} [platform]
+ * @param {string[]} [roots]
+ * @returns {{ accessToken: string, expiry?: string, sourceFormat?: string, email?: string, all: Array<{ accessToken: string, expiry?: string, email?: string }> } | null}
+ */
+function readMacosKeychainTokens(platform = process.platform, roots = getAntigravityRoots()) {
+  if (platform !== 'darwin') return null;
+
+  try {
+    const securityPath = resolveSafeExecutable('security') || '/usr/bin/security';
+    if (!fs.existsSync(securityPath)) return null;
+
+    const raw = execFileSync(securityPath, [
+      'find-generic-password',
+      '-s',
+      KEYCHAIN_SERVICE,
+      '-a',
+      KEYCHAIN_ACCOUNT,
+      '-w',
+    ], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+
+    const parsed = decodeKeyringRaw(raw);
+    if (!parsed) return null;
+
+    const token = typeof parsed === 'string'
+      ? (!/\s/.test(parsed) ? { accessToken: parsed } : null)
+      : parseTokenPayload(parsed);
+    if (!token) return null;
+
+    const tokens = [{
+      accessToken: token.accessToken,
+      expiry: token.expiry,
+      sourceFormat: 'macos-keychain',
+      ...(token.email ? { email: token.email } : {}),
+    }];
+
+    return { ...token, sourceFormat: 'macos-keychain', all: tokens };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Probes whether the macOS security CLI is available.
+ *
+ * @param {string} [platform]
+ * @returns {{ available: boolean, security?: string } | null}
+ */
+function probeMacosKeychainAvailability(platform = process.platform) {
+  if (platform !== 'darwin') return null;
+  const securityPath = resolveSafeExecutable('security') || '/usr/bin/security';
+  return {
+    available: fs.existsSync(securityPath),
+    security: securityPath,
+  };
 }
 
 /**
@@ -342,16 +444,26 @@ function probeLinuxKeyringAvailability(platform = process.platform) {
 }
 
 /**
- * @returns {{ accessToken: string, expiry?: string, sourceFormat?: string, sourcePath?: string, all?: Array<{ accessToken: string, expiry?: string }> } | null}
+ * @returns {{ accessToken: string, expiry?: string, sourceFormat?: string, sourcePath?: string, email?: string, all?: Array<{ accessToken: string, expiry?: string, email?: string }> } | null}
  */
 function readToken(options = {}) {
   const {
     platform = process.platform,
     roots = getAntigravityRoots(),
     skipWindowsCredential = false,
+    skipKeychain = false,
     credentialReader = readWindowsCredentialTokens,
     keyringReader = readLinuxKeyringTokens,
+    keychainReader = readMacosKeychainTokens,
   } = options;
+
+  // macOS: agy stores its OAuth token in macOS Keychain (login keychain).
+  // Keychain lookups via /usr/bin/security take ~13ms, so query live credentials
+  // directly without a disk cache mirror that would mask account switches.
+  if (platform === 'darwin' && !skipKeychain) {
+    const keychainToken = keychainReader(platform, roots);
+    if (keychainToken) return keychainToken;
+  }
 
   // Windows: agy stores its OAuth token in Credential Manager. Keep a short
   // JSON mirror so normal statusline renders do not spawn PowerShell every time.
@@ -407,6 +519,8 @@ module.exports = {
   WINDOWS_TOKEN_TEMP_TTL_MS,
   WINDOWS_TOKEN_EXPIRY_SKEW_MS,
   WINDOWS_CREDENTIAL_TARGETS,
+  KEYCHAIN_SERVICE,
+  KEYCHAIN_ACCOUNT,
   LINUX_KEYRING_SERVICE,
   LINUX_KEYRING_USERNAME,
   getTokenCandidates,
@@ -416,6 +530,8 @@ module.exports = {
   tokenResultFromTokens,
   normalizeExpiryDate,
   parseTokenPayload,
+  decodeKeyringRaw,
+  extractEmailFromIdToken,
   writeWindowsTokenTemp,
   readWindowsTokenTemp,
   clearTokenTemp,
@@ -423,6 +539,8 @@ module.exports = {
   readWindowsCredentialTokens,
   readLinuxKeyringTokens,
   probeLinuxKeyringAvailability,
+  readMacosKeychainTokens,
+  probeMacosKeychainAvailability,
   readToken,
   anyTokenFileExists,
 };

@@ -12,6 +12,8 @@ const {
   readToken,
   clearTokenTemp,
 } = quotaModule;
+const tokenModule = quotaModule.tokenMod || (await import('../../runtime/quota/token.js'));
+const { decodeKeyringRaw, extractEmailFromIdToken } = tokenModule;
 
 describe('quota / token', () => {
   describe('selectUsableTokens', () => {
@@ -79,6 +81,27 @@ describe('quota / token', () => {
           accessToken: 'oauth-creds-token',
           expiry: '2026-05-20T12:10:00.000Z',
           sourceFormat: 'oauth-creds'
+        }
+      );
+    });
+
+    test('extracts email from id_token in token payload', () => {
+      const mockIdToken = 'eyJhbGciOiJSUzI1NiJ9.' +
+        Buffer.from(JSON.stringify({ email: 'active@example.com' })).toString('base64') +
+        '.signature';
+      assert.deepEqual(
+        parseTokenPayload({
+          token: {
+            access_token: 'cli-token',
+            expiry: '2026-05-20T20:10:00Z',
+          },
+          id_token: mockIdToken,
+        }),
+        {
+          accessToken: 'cli-token',
+          expiry: '2026-05-20T20:10:00Z',
+          sourceFormat: 'antigravity-cli',
+          email: 'active@example.com',
         }
       );
     });
@@ -322,6 +345,88 @@ describe('quota / token', () => {
       }
     });
 
+    test('prefers macOS Keychain reader over file tokens on darwin', () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-token-darwin-'));
+      try {
+        const home = path.join(tmp, 'home');
+        fs.mkdirSync(path.join(home, '.gemini', 'antigravity-cli'), { recursive: true });
+        fs.writeFileSync(
+          path.join(home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token'),
+          JSON.stringify({ token: { access_token: 'stale-file-token' } })
+        );
+
+        withEnv({
+          HOME: home,
+          USERPROFILE: home,
+          XDG_DATA_HOME: undefined,
+          APPDATA: undefined,
+          LOCALAPPDATA: undefined,
+        }, () => {
+          const token = readToken({
+            platform: 'darwin',
+            keychainReader: () => ({
+              accessToken: 'active-keychain-token',
+              sourceFormat: 'macos-keychain',
+              email: 'active@example.com',
+              all: [{ accessToken: 'active-keychain-token', email: 'active@example.com' }],
+            }),
+          });
+
+          assert.equal(token.accessToken, 'active-keychain-token');
+          assert.equal(token.sourceFormat, 'macos-keychain');
+          assert.equal(token.email, 'active@example.com');
+        });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    test('macOS Keychain reader is not shadowed by stale temp token file', () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-token-darwin-temp-'));
+      try {
+        const home = path.join(tmp, 'home');
+        const cliDir = path.join(home, '.gemini', 'antigravity-cli');
+        fs.mkdirSync(cliDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(cliDir, 'agy-hud-token.json'),
+          JSON.stringify({
+            tokens: [{
+              accessToken: 'stale-temp-token',
+              expiry: '2026-10-30T22:00:00Z',
+              sourceFormat: 'macos-keychain',
+              email: 'stale@example.com',
+            }],
+            writtenAt: Date.now(),
+          })
+        );
+
+        withEnv({
+          HOME: home,
+          USERPROFILE: home,
+          XDG_DATA_HOME: undefined,
+          APPDATA: undefined,
+          LOCALAPPDATA: undefined,
+        }, () => {
+          const token = readToken({
+            platform: 'darwin',
+            roots: [cliDir],
+            keychainReader: () => ({
+              accessToken: 'live-keychain-token',
+              sourceFormat: 'macos-keychain',
+              email: 'live@example.com',
+              all: [{ accessToken: 'live-keychain-token', email: 'live@example.com' }],
+            }),
+          });
+
+          assert.equal(token.accessToken, 'live-keychain-token');
+          assert.equal(token.sourceFormat, 'macos-keychain');
+          assert.equal(token.email, 'live@example.com');
+        });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
     test('clearTokenTemp removes existing temporary token cache file', () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-token-clear-'));
       try {
@@ -344,6 +449,29 @@ describe('quota / token', () => {
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe('decodeKeyringRaw', () => {
+    test('decodes go-keyring-base64 prefixed JSON string', () => {
+      const payload = { token: { access_token: 'go-token' } };
+      const raw = 'go-keyring-base64:' + Buffer.from(JSON.stringify(payload)).toString('base64');
+      assert.deepEqual(decodeKeyringRaw(raw), payload);
+    });
+
+    test('decodes standard JSON string', () => {
+      const payload = { token: { access_token: 'json-token' } };
+      assert.deepEqual(decodeKeyringRaw(JSON.stringify(payload)), payload);
+    });
+
+    test('returns plain trimmed string when not JSON', () => {
+      assert.equal(decodeKeyringRaw('  plain-token  '), 'plain-token');
+    });
+
+    test('returns null on empty or invalid inputs', () => {
+      assert.equal(decodeKeyringRaw(''), null);
+      assert.equal(decodeKeyringRaw(null), null);
+      assert.equal(decodeKeyringRaw('   '), null);
     });
   });
 });

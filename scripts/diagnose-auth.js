@@ -11,6 +11,7 @@ const {
   parseTokenPayload,
   readToken,
   probeLinuxKeyringAvailability,
+  probeMacosKeychainAvailability,
 } = require('../runtime/quota.js');
 
 function compactObject(value) {
@@ -150,6 +151,7 @@ function sanitizeReadTokenResult(token) {
     sourceFormat: token.sourceFormat || undefined,
     sourcePath: token.sourcePath || undefined,
     hasExpiry: Boolean(token.expiry),
+    hasEmail: Boolean(token.email),
     tokenCount: Array.isArray(token.all) ? token.all.length : 1,
   });
 }
@@ -159,6 +161,7 @@ function buildAuthDiagnostic(options = {}) {
   const resolveAgy = options.resolveAgyInfo || resolveAgyInfo;
   const platform = options.platform || process.platform;
   const keyringProbe = options.keyringProbe || probeLinuxKeyringAvailability;
+  const keychainProbe = options.keychainProbe || probeMacosKeychainAvailability;
 
   return {
     schemaVersion: 1,
@@ -173,8 +176,13 @@ function buildAuthDiagnostic(options = {}) {
       exists: pathExists(root),
     })),
     tokenCandidates: getTokenCandidates(roots).map(summarizeTokenCandidate),
-    readToken: sanitizeReadTokenResult(readToken({ platform, keyringReader: options.keyringReader })),
+    readToken: sanitizeReadTokenResult(readToken({
+      platform,
+      keyringReader: options.keyringReader,
+      keychainReader: options.keychainReader,
+    })),
     keyringProbe: keyringProbe(platform),
+    keychainProbe: keychainProbe(platform),
   };
 }
 

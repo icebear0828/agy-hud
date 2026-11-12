@@ -136,3 +136,41 @@ test('auth diagnostic surfaces Linux keyring probe result', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('auth diagnostic reports macOS Keychain source and probe without leaking token values', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-diagnose-macos-'));
+  try {
+    const home = path.join(tmp, 'home');
+    fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
+
+    withEnv({
+      HOME: home,
+      USERPROFILE: home,
+      XDG_DATA_HOME: undefined,
+      APPDATA: undefined,
+      LOCALAPPDATA: undefined,
+    }, () => {
+      const diagnostic = buildAuthDiagnostic({
+        resolveAgyInfo: () => ({ found: false, candidates: [] }),
+        platform: 'darwin',
+        keychainReader: () => ({
+          accessToken: 'secret-keychain-token',
+          sourceFormat: 'macos-keychain',
+          email: 'secret-user@example.com',
+          all: [{ accessToken: 'secret-keychain-token' }],
+        }),
+        keychainProbe: () => ({ available: true, security: '/usr/bin/security' }),
+      });
+      const serialized = JSON.stringify(diagnostic);
+
+      assert.equal(diagnostic.readToken.found, true);
+      assert.equal(diagnostic.readToken.sourceFormat, 'macos-keychain');
+      assert.equal(diagnostic.readToken.hasEmail, true);
+      assert.equal(diagnostic.keychainProbe.available, true);
+      assert.doesNotMatch(serialized, /secret-keychain-token/);
+      assert.doesNotMatch(serialized, /secret-user@example.com/);
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

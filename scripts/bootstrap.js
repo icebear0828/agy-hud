@@ -200,7 +200,9 @@ function replaceRuntimeDirAtomically(runtimeDir, tempRuntimeDir) {
 async function installRuntime(options = {}) {
   const env = options.env || process.env;
   const homeDir = options.homeDir || os.homedir();
-  const sourceDir = options.sourceDir || env.AGY_HUD_SETUP_SOURCE_DIR || '';
+  const repoCandidate = path.resolve(__dirname, '..');
+  const hasLocalRuntime = fs.existsSync(path.join(repoCandidate, 'runtime', 'bin', 'agy-hud.js'));
+  const sourceDir = options.sourceDir || env.AGY_HUD_SETUP_SOURCE_DIR || (hasLocalRuntime ? repoCandidate : '');
   const sourceBase = options.sourceBase || env.AGY_HUD_REPO_RAW || env.AGY_HUD_SETUP_SOURCE_BASE || DEFAULT_SOURCE_BASE;
   const antigravityRoot = options.antigravityRoot || pickAntigravityRoot(env, homeDir);
   const runtimeDir = path.join(antigravityRoot, 'agy-hud-runtime');
@@ -208,6 +210,14 @@ async function installRuntime(options = {}) {
 
   const stalePluginFiles = cleanStalePluginFiles(antigravityRoot, { env, homeDir });
   fs.rmSync(tempRuntimeDir, { recursive: true, force: true });
+
+  // Clean stale temp token cache on macOS since darwin queries Keychain directly
+  if ((options.platform || process.platform) === 'darwin') {
+    const legacyTempToken = path.join(antigravityRoot, 'agy-hud-token.json');
+    if (fs.existsSync(legacyTempToken)) {
+      try { fs.rmSync(legacyTempToken, { force: true }); } catch {}
+    }
+  }
 
   try {
     for (const relativePath of RUNTIME_FILES) {

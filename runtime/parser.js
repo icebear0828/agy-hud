@@ -9,18 +9,6 @@ function getGeminiHome() {
   return path.join(home, '.gemini');
 }
 
-function getActiveAccountFromRegistry() {
-  try {
-    const registryPath = path.join(getGeminiHome(), 'google_accounts.json');
-    if (!fs.existsSync(registryPath)) return null;
-    const registry = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
-    if (registry && typeof registry.active === 'string' && registry.active.includes('@')) {
-      return registry.active;
-    }
-  } catch {}
-  return null;
-}
-
 /**
  * Last-resort email source: the id_token in ~/.gemini/oauth_creds.json. This is
  * the Gemini-CLI credential file, NOT agy's active-account source — agy neither
@@ -83,10 +71,17 @@ function getActiveAccountEmail() {
   try {
     const { readToken } = require('./quota/token.js');
     const { getCachedAccountEmail } = require('./quota/cache.js');
-    const tok = readToken();
+    const geminiHome = getGeminiHome();
+    const isCustomHome = geminiHome !== path.join(os.homedir(), '.gemini');
+    const tok = readToken({
+      roots: [path.join(geminiHome, 'antigravity-cli')],
+      skipKeychain: isCustomHome,
+    });
     if (tok) {
+      if (tok.email && tok.sourceFormat !== 'oauth-creds') return tok.email;
       const email = getCachedAccountEmail(tok);
       if (email) return email;
+      if (tok.email) return tok.email;
     }
   } catch {}
   return getActiveAccountFromRegistry() || getOauthCredsEmail();

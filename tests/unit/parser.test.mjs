@@ -404,6 +404,27 @@ test('getSessionState prefers google_accounts.json active over the oauth_creds i
   });
 });
 
+test('getSessionState prefers live active token email over stale google_accounts.json', async () => {
+  await withTempHome(async (geminiDir) => {
+    // google_accounts.json has stale user, but active antigravity token has live user.
+    fs.writeFileSync(path.join(geminiDir, 'google_accounts.json'), JSON.stringify({
+      active: 'stale-user@gmail.com',
+      old: []
+    }));
+    const cliDir = path.join(geminiDir, 'antigravity-cli');
+    fs.mkdirSync(cliDir, { recursive: true });
+    fs.writeFileSync(path.join(cliDir, 'antigravity-oauth-token'), JSON.stringify({
+      token: {
+        access_token: 'live-access-token',
+        expiry: '2026-10-30T20:00:00Z',
+      },
+      id_token: mockIdToken({ email: 'live-user@gmail.com' }),
+    }));
+    const state = await getSessionState('missing-transcript-nonexistent.jsonl');
+    assert.strictEqual(state.username, 'live-user@gmail.com');
+  });
+});
+
 test('getSessionState returns the oauth_creds email even when the id_token is expired', async () => {
   // Real-world state: oauth_creds is the Gemini-CLI file agy never refreshes, so
   // its id_token is routinely expired while the email is still the right account.
