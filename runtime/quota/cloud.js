@@ -287,7 +287,7 @@ const USERINFO_ENDPOINTS = [
 async function fetchAccountEmail(accessToken) {
   for (const endpoint of USERINFO_ENDPOINTS) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       const r = await cloudFetch(endpoint, {
         headers: { 'Authorization': `Bearer ${accessToken}` },
@@ -318,7 +318,7 @@ async function fetchTierFromCloud(accessToken) {
 
   for (const endpoint of endpoints) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       const r = await cloudFetch(`${endpoint}/v1internal:loadCodeAssist`, {
         method: 'POST',
