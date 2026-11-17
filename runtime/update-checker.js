@@ -32,23 +32,53 @@ function fetchRemoteVersion() {
   });
 }
 
+function parseVersionParts(version) {
+  if (typeof version !== 'string') return null;
+  const cleaned = version.trim().replace(/^v/i, '').split('-')[0];
+  if (!/^\d+(?:\.\d+)*$/.test(cleaned)) return null;
+  return cleaned.split('.').map(n => parseInt(n, 10));
+}
+
+function isRemoteVersionNewer(remoteVersion, localVersion) {
+  const remote = parseVersionParts(remoteVersion);
+  const local = parseVersionParts(localVersion);
+  if (!remote || !local) return false;
+  const len = Math.max(remote.length, local.length);
+  for (let i = 0; i < len; i++) {
+    const r = remote[i] || 0;
+    const l = local[i] || 0;
+    if (r > l) return true;
+    if (r < l) return false;
+  }
+  return false;
+}
+
+function getLocalPackageVersion() {
+  const candidates = [
+    path.join(__dirname, '..', 'package.json'),
+    path.join(__dirname, '..', '..', 'package.json'),
+  ];
+  for (const pkgPath of candidates) {
+    try {
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg && typeof pkg.version === 'string') return pkg.version;
+      }
+    } catch {}
+  }
+  return null;
+}
+
 async function main() {
   try {
-    let localPkgPath = path.join(__dirname, '..', 'package.json');
-    if (!fs.existsSync(localPkgPath)) {
-      // In dev or test environments, package.json might be in the root directory
-      localPkgPath = path.join(__dirname, '..', '..', 'package.json');
-    }
-    if (!fs.existsSync(localPkgPath)) {
+    const localVersion = getLocalPackageVersion();
+    if (!localVersion) {
       return;
     }
-    const localPkg = JSON.parse(fs.readFileSync(localPkgPath, 'utf8'));
-    const localVersion = localPkg.version;
 
     const remoteVersion = await fetchRemoteVersion();
 
-    // Simple version comparison: remote !== local
-    const updateAvailable = remoteVersion !== localVersion;
+    const updateAvailable = isRemoteVersionNewer(remoteVersion, localVersion);
 
     const status = {
       lastCheck: Date.now(),
@@ -71,4 +101,11 @@ async function main() {
   process.exit(0);
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  isRemoteVersionNewer,
+  getLocalPackageVersion,
+};

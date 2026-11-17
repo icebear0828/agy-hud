@@ -11,6 +11,7 @@ const { loadConfig } = require('../config.js');
 const { getQuota, getCachedTier } = require('../quota.js');
 const { enrichModelsWithQuotaSummary } = require('../quota/cloud.js');
 const { resolveAntigravityPath } = require('../paths.js');
+const { isRemoteVersionNewer, getLocalPackageVersion } = require('../update-checker.js');
 
 async function handleSelfUpdate() {
   console.log('Checking for latest installer...');
@@ -156,6 +157,10 @@ async function main() {
       try {
         if (fs.existsSync(updateStatusPath)) {
           updateInfo = JSON.parse(fs.readFileSync(updateStatusPath, 'utf8'));
+          const localVersion = getLocalPackageVersion();
+          if (updateInfo && updateInfo.updateAvailable && localVersion) {
+            updateInfo.updateAvailable = isRemoteVersionNewer(updateInfo.latestVersion, localVersion);
+          }
         }
       } catch {}
 
