@@ -403,6 +403,15 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     line2Parts.push(cacheBadge);
   }
   line2Parts.push(ctxStr);
+  if (showMemoryUsage && state?.memoryUsage && Number.isFinite(state.memoryUsage.totalBytes) && state.memoryUsage.totalBytes > 0) {
+    const mem = state.memoryUsage;
+    const memPct = Math.max(0, Math.min(100, Math.round(mem.usedPercent ?? ((mem.usedBytes / mem.totalBytes) * 100))));
+    const memCompleted = Math.round((memPct / 100) * 10);
+    const memRemaining = 10 - memCompleted;
+    const memColor = memPct >= critThresh * 100 ? red : memPct >= warnThresh * 100 ? yellow : green;
+    const memBar = `${memColor}${glyph.bar.repeat(memCompleted)}${gray}${glyph.empty.repeat(memRemaining)}${reset}`;
+    line2Parts.push(`${gray}${text.memoryLabel}${reset} ${memBar} ${formatBytes(mem.usedBytes)} / ${formatBytes(mem.totalBytes)} (${memColor}${memPct}%${reset})`);
+  }
   if (isCompact && currentModelQuota) {
     const critical = pickCriticalWindow(currentModelQuota.windows, Date.now()) || currentModelQuota;
     const pct = formatQuotaPercent(critical.remainingFraction);
@@ -449,18 +458,6 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   }
 
   const line2 = line2Parts.join(divider);
-
-  // Optional Memory Usage Line: 内存   █████░░░░░ 11 GB / 22 GB (49%)
-  let memoryLine = '';
-  if (showMemoryUsage && state?.memoryUsage && Number.isFinite(state.memoryUsage.totalBytes) && state.memoryUsage.totalBytes > 0) {
-    const mem = state.memoryUsage;
-    const memPct = Math.max(0, Math.min(100, Math.round(mem.usedPercent ?? ((mem.usedBytes / mem.totalBytes) * 100))));
-    const memCompleted = Math.round((memPct / 100) * 10);
-    const memRemaining = 10 - memCompleted;
-    const memColor = memPct >= critThresh * 100 ? red : memPct >= warnThresh * 100 ? yellow : green;
-    const memBar = `${memColor}${glyph.bar.repeat(memCompleted)}${gray}${glyph.empty.repeat(memRemaining)}${reset}`;
-    memoryLine = `${gray}${text.memoryLabel}${reset} ${memBar} ${formatBytes(mem.usedBytes)} / ${formatBytes(mem.totalBytes)} (${memColor}${memPct}%${reset})`;
-  }
 
   // Layer 3: project metadata (non-zero items only)
   const metaParts = [];
@@ -531,7 +528,6 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   }
 
   const lines = [line1, line2];
-  if (memoryLine) lines.push(memoryLine);
   if (line3) lines.push(line3);
   return lines.join('\n') + quotaLines;
 }

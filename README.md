@@ -21,8 +21,7 @@ Clean 2x2 provider quota overview (Google 5h/week & Claude 5h/week) matching you
 
 ```
 diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 4 Argon(High) │ auto │ Google AI Pro │ out: 65.4 tok/s
-⚿ Tokens 172.3k (in: 2.8k, out: 35.3k, cache: 134.3k) │ ⛁ 129.2k/1M [█░░░░░░░░░] 12%
-Approx RAM █████░░░░░ 11 GB / 22 GB (49%)
+⚿ Tokens 172.3k (in: 2.8k, out: 35.3k, cache: 134.3k) │ ⛁ 129.2k/1M [█░░░░░░░░░] 12% │ Approx RAM █████░░░░░ 11 GB / 22 GB (49%)
 1 MEMORY.md │ 1 hooks
   ─────────────────────────────────────────────────────────────────────────────────
   Google 5h   [█████░]  96.69% ~22m   │ Claude 5h   [██████]  97.99% ~4h59m

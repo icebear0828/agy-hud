@@ -103,13 +103,13 @@ describe('renderer / line composition', () => {
     }));
 
     assert.match(outZh.split('\n')[0], /Gemini 4 Argon\(High\) │ accept-edits/);
-    assert.match(outZh, /内存 {3}█████░░░░░ 11 GB \/ 22 GB \(49%\)/);
+    assert.match(outZh.split('\n')[1], /⛁ 1k\/0 \[█░░░░░░░░░\] 5% │ 内存 █████░░░░░ 11 GB \/ 22 GB \(49%\)/);
 
     const outEn = stripAnsi(renderHUD(state, agyData, {
       language: 'en',
       display: { unicode: true, showMode: true, showMemoryUsage: true },
     }));
-    assert.match(outEn, /Approx RAM █████░░░░░ 11 GB \/ 22 GB \(49%\)/);
+    assert.match(outEn.split('\n')[1], /⛁ 1k\/0 \[█░░░░░░░░░\] 5% │ Approx RAM █████░░░░░ 11 GB \/ 22 GB \(49%\)/);
   });
 
   test('should correctly render update notices', () => {

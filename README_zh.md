@@ -21,8 +21,7 @@ agy-hud 支持两种额度（Quota）显示模式：**Table 模式**（默认）
 
 ```
 diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 4 Argon(High) │ auto │ Google AI Pro │ 输出: 65.4 tok/s
-⚿ Tokens 172.3k (in: 2.8k, out: 35.3k, cache: 134.3k) │ ⛁ 129.2k/1M [█░░░░░░░░░] 12%
-内存   █████░░░░░ 11 GB / 22 GB (49%)
+⚿ Tokens 172.3k (in: 2.8k, out: 35.3k, cache: 134.3k) │ ⛁ 129.2k/1M [█░░░░░░░░░] 12% │ 内存 █████░░░░░ 11 GB / 22 GB (49%)
 1 MEMORY.md │ 1 hooks
   ─────────────────────────────────────────────────────────────────────────────────
   Google 5h   [█████░]  96.69% ~22m   │ Claude 5h   [██████]  97.99% ~4h59m
