@@ -162,8 +162,8 @@ describe('renderer / quota lines', () => {
       // Verify vertical grid lines
       assert.match(output, /───/);
       // Verify simplified names
-      assert.match(output, /Gemini 3\.5 Flash\(H\)/);
-      assert.match(output, /Sonnet 4\.6\(Th\)/);
+      assert.match(output, /Gemini 3\.5 Flash\(H/);
+      assert.match(output, /Sonnet 4\.6\(Thinkin/);
       assert.match(output, /GPT-OSS 120B/);
       // Verify reset times
       assert.match(output, /~14m/);
@@ -187,7 +187,7 @@ describe('renderer / quota lines', () => {
       };
       const output = renderHUD(state, agyData, config, quotaData);
       assert.match(output, /─{91}/);
-      assert.match(output, /Gemini 3\.5 Flash\(H\) {5}/);
+      assert.match(output, /Gemini 3\.5 Flash\(High\) {2}/);
     });
 
     test('uses warning/critical colors for both percent text and progress bar', () => {

@@ -5,16 +5,17 @@ import { abbreviateDisplayName, compactModelName, formatQuotaPercent } from '../
 describe('renderer / format helpers', () => {
   describe('abbreviateDisplayName', () => {
     test('handles all known agent model patterns', () => {
-      assert.equal(abbreviateDisplayName('Gemini 3.5 Flash (High)'), 'Gemini 3.5 Flash(H)');
-      assert.equal(abbreviateDisplayName('Gemini 3.5 Flash (Medium)'), 'Gemini 3.5 Flash(M)');
-      assert.equal(abbreviateDisplayName('Gemini 3.5 Flash (Low)'), 'Gemini 3.5 Flash(L)');
-      assert.equal(abbreviateDisplayName('Gemini 3.1 Pro (High)'), 'Gemini 3.1 Pro(H)');
-      assert.equal(abbreviateDisplayName('Gemini 3.1 Pro (Low)'), 'Gemini 3.1 Pro(L)');
-      assert.equal(abbreviateDisplayName('Gemini 4 Argon (Medium)'), 'Gemini 4 Argon(M)');
-      assert.equal(abbreviateDisplayName('Gemini 4 Argon (High)'), 'Gemini 4 Argon(H)');
-      assert.equal(abbreviateDisplayName('Gemini 4 Argon (Low)'), 'Gemini 4 Argon(L)');
-      assert.equal(abbreviateDisplayName('Claude Sonnet 4.6 (Thinking)'), 'Sonnet 4.6(Th)');
-      assert.equal(abbreviateDisplayName('Claude Opus 4.6 (Thinking)'), 'Opus 4.6(Th)');
+      assert.equal(abbreviateDisplayName('Gemini 3.5 Flash (High)'), 'Gemini 3.5 Flash(High)');
+      assert.equal(abbreviateDisplayName('Gemini 3.5 Flash (Medium)'), 'Gemini 3.5 Flash(Medium)');
+      assert.equal(abbreviateDisplayName('Gemini 3.5 Flash (Low)'), 'Gemini 3.5 Flash(Low)');
+      assert.equal(abbreviateDisplayName('Gemini 3.1 Pro (High)'), 'Gemini 3.1 Pro(High)');
+      assert.equal(abbreviateDisplayName('Gemini 3.1 Pro (Low)'), 'Gemini 3.1 Pro(Low)');
+      assert.equal(abbreviateDisplayName('Gemini 4 Argon (Medium)'), 'Gemini 4 Argon(Medium)');
+      assert.equal(abbreviateDisplayName('Gemini 4 Argon (High)'), 'Gemini 4 Argon(High)');
+      assert.equal(abbreviateDisplayName('Gemini 4 Argon (Low)'), 'Gemini 4 Argon(Low)');
+      assert.equal(abbreviateDisplayName('Gemini 4 Hydrogen (Medium)'), 'Gemini 4 Hydrogen(Medium)');
+      assert.equal(abbreviateDisplayName('Claude Sonnet 4.6 (Thinking)'), 'Sonnet 4.6(Thinking)');
+      assert.equal(abbreviateDisplayName('Claude Opus 4.6 (Thinking)'), 'Opus 4.6(Thinking)');
       assert.equal(abbreviateDisplayName('GPT-OSS 120B (Medium)'), 'GPT-OSS 120B');
     });
 
@@ -24,8 +25,8 @@ describe('renderer / format helpers', () => {
     });
 
     test('handles hypothetical future models', () => {
-      assert.equal(abbreviateDisplayName('Gemini 4.0 Flash (High)'), 'Gemini 4.0 Flash(H)');
-      assert.equal(abbreviateDisplayName('Claude Haiku 5.0 (Thinking)'), 'Haiku 5.0(Th)');
+      assert.equal(abbreviateDisplayName('Gemini 4.0 Flash (High)'), 'Gemini 4.0 Flash(High)');
+      assert.equal(abbreviateDisplayName('Claude Haiku 5.0 (Thinking)'), 'Haiku 5.0(Thinking)');
       assert.equal(abbreviateDisplayName('GPT-OSS 200B (Low)'), 'GPT-OSS 200B');
     });
   });

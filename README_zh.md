@@ -20,7 +20,7 @@ agy-hud 支持两种额度（Quota）显示模式：**Table 模式**（默认）
 按 Provider 汇聚 2 行 2 列展示配额周期（Google 5h/week 与 Claude 5h/week），百分比精确保留两位小数，清晰紧凑且与会员额度完全对应。
 
 ```
-diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 4 Argon(H) │ auto │ Google AI Pro │ 输出: 65.4 tok/s
+diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 4 Argon(High) │ auto │ Google AI Pro │ 输出: 65.4 tok/s
 ⚿ Tokens 172.3k (in: 2.8k, out: 35.3k, cache: 134.3k) │ ⛁ 129.2k/1M [█░░░░░░░░░] 12%
 内存   █████░░░░░ 11 GB / 22 GB (49%)
 1 MEMORY.md │ 1 hooks

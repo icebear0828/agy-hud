@@ -223,8 +223,8 @@ Provides pure, self-contained layout, styling, and color functions.
 
 ### Methods
 - `colors`: Direct access to ANSI 8-color helper wrappers (`green`, `red`, `yellow`, `gray`, `cyan`, etc.).
-- `abbreviateDisplayName(name)`: Strips verbose tags like `Family` or `Tier` to shorten model names (e.g., `Gemini 3.5 Flash (Low)` → `Gemini 3.5 Flash(L)`).
-- `compactModelName(displayName)`: Generates ultra-shortened names for compact-mode grouping (e.g. `Gemini 3.1 Pro(L)` → `Pro(L)`).
+- `abbreviateDisplayName(name)`: Formats model names while preserving full effort/thinking intensity labels (e.g., `Gemini 3.5 Flash (Low)` → `Gemini 3.5 Flash(Low)`).
+- `compactModelName(displayName)`: Generates ultra-shortened names for compact-mode grouping (e.g. `Gemini 3.1 Pro(Low)` → `Pro`).
 - `formatTokens(tokens)`: Formats large numbers to units like `k` and `M` (e.g., `83724` → `83.7k`, `1000000` → `1.0M` without rounding spikes).
 - `formatDuration(ms)`: Formats reset time remaining (e.g., `~3h22m`, `~6d4h`).
 - `applyCacheSmoothing(inTokens, cacheRead)`: Smoothing adapter that gracefully handles temporary cache misses across execution cycles.

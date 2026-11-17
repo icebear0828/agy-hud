@@ -19,23 +19,23 @@ const DEFAULT_COLUMN_WIDTH = 40;
 const QUOTA_CHROME_WIDTH = 21;
 
 const TIER_ABBREVS = {
-  Thinking: 'Th',
-  High: 'H',
-  Medium: 'M',
-  Low: 'L',
-  Minimal: 'Min',
+  Thinking: 'Thinking',
+  High: 'High',
+  Medium: 'Medium',
+  Low: 'Low',
+  Minimal: 'Minimal',
   Max: 'Max',
-  XHigh: 'XH',
+  XHigh: 'XHigh',
 };
 
 const ABBREVIATION_RULES = [
-  [/^Gemini ([\d.]+) (Flash|Pro|Argon) \(([^)]+)\)/, (_, ver, fam, rawTier) => {
+  [/^Gemini ([\d.]+) (Flash|Pro|Argon|Hydrogen) \(([^)]+)\)/, (_, ver, fam, rawTier) => {
     const tier = rawTier.replace(/\s+thinking$/i, '').trim();
-    return `Gemini ${ver} ${fam}(${TIER_ABBREVS[tier] || tier[0]})`;
+    return `Gemini ${ver} ${fam}(${TIER_ABBREVS[tier] || tier})`;
   }],
   [/^Claude (\w+) ([\d.]+) \(([^)]+)\)/, (_, fam, ver, rawTier) => {
     const tier = rawTier.replace(/\s+thinking$/i, '').trim();
-    return `${fam} ${ver}(${TIER_ABBREVS[tier] || tier[0]})`;
+    return `${fam} ${ver}(${TIER_ABBREVS[tier] || tier})`;
   }],
   [/^GPT-OSS (.+?) \(\w+\)/, (_, spec) => `GPT-OSS ${spec}`],
 ];
@@ -71,7 +71,7 @@ function inferEffortFromModelId(modelId) {
 
 function humanizeModelId(modelId) {
   if (!modelId || typeof modelId !== 'string') return '';
-  let m = /^gemini-([\d.]+)-(flash|pro|argon)(?:-(.+))?$/i.exec(modelId);
+  let m = /^gemini-([\d.]+)-(flash|pro|argon|hydrogen)(?:-(.+))?$/i.exec(modelId);
   if (m) {
     const fam = m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase();
     const effort = inferEffortFromModelId(m[3] || '');
@@ -176,9 +176,10 @@ function simplifyModelName(name) {
 }
 
 const COMPACT_NAME_RULES = [
-  [/^Gemini [\d.]+ (Flash|Pro|Argon).*/i, (_, fam) => fam],
+  [/^Gemini [\d.]+ (Flash|Pro|Argon|Hydrogen).*/i, (_, fam) => fam],
   [/^Claude (\w+) [\d.]+ \((\w+)\)/i, (_, fam) => fam],
   [/^GPT-OSS .*/i, () => 'GPT'],
+  [/gemini-.*hydrogen/i, () => 'Hydrogen'],
   [/gemini-.*argon/i, () => 'Argon'],
   [/gemini-.*flash/i, () => 'Flash'],
   [/gemini-.*pro/i, () => 'Pro'],

@@ -20,7 +20,7 @@ agy-hud supports two display modes for quota tracking: **Table Mode** (default) 
 Clean 2x2 provider quota overview (Google 5h/week & Claude 5h/week) matching your active subscription with two-decimal percentage precision.
 
 ```
-diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 4 Argon(H) │ auto │ Google AI Pro │ out: 65.4 tok/s
+diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 4 Argon(High) │ auto │ Google AI Pro │ out: 65.4 tok/s
 ⚿ Tokens 172.3k (in: 2.8k, out: 35.3k, cache: 134.3k) │ ⛁ 129.2k/1M [█░░░░░░░░░] 12%
 Approx RAM █████░░░░░ 11 GB / 22 GB (49%)
 1 MEMORY.md │ 1 hooks

@@ -26,7 +26,7 @@ describe('renderer / line composition', () => {
     assert.doesNotMatch(output, /^\n/);
     // Layer 1: branch, model, plan (no AGY-HUD brand, no labels)
     assert.match(output, /⎇ main/);
-    assert.match(output, /Gemini 3\.5 Flash\(H\)/);
+    assert.match(output, /Gemini 3\.5 Flash\(High\)/);
     assert.match(output, /Google AI Pro/);
     // Layer 2: compact tokens, context bar with %
     assert.match(output, /Tokens 20k .*?\(.*?in: 15k, out: 5k.*?\)/);
@@ -44,7 +44,7 @@ describe('renderer / line composition', () => {
       { display: { useNerdFonts: false, unicode: false } }
     );
 
-    assert.match(output, /Gemini 3\.5 Flash\(H\) Preview/);
+    assert.match(output, /Gemini 3\.5 Flash\(High\) Preview/);
 
     const outputLow = renderHUD(
       { steps: 1, branch: 'main' },
@@ -55,7 +55,7 @@ describe('renderer / line composition', () => {
       { display: { useNerdFonts: false, unicode: false } }
     );
 
-    assert.match(outputLow, /Gemini 3\.5 Flash\(L\)/);
+    assert.match(outputLow, /Gemini 3\.5 Flash\(Low\)/);
   });
 
   test('renders model and thinking effort when agy splits effort from display_name or omits it on single-variant models', () => {
@@ -67,7 +67,7 @@ describe('renderer / line composition', () => {
       },
       { display: { useNerdFonts: false, unicode: false } }
     );
-    assert.match(outArgon, /Gemini 4 Argon\(H\)/);
+    assert.match(outArgon, /Gemini 4 Argon\(High\)/);
 
     const outOpus = renderHUD(
       { steps: 1, branch: 'main' },
@@ -77,7 +77,7 @@ describe('renderer / line composition', () => {
       },
       { display: { useNerdFonts: false, unicode: false } }
     );
-    assert.match(outOpus, /Opus 4\.6\(Th\)/);
+    assert.match(outOpus, /Opus 4\.6\(Thinking\)/);
   });
 
   test('renders current mode and memory usage bar in zh and en', () => {
@@ -102,7 +102,7 @@ describe('renderer / line composition', () => {
       display: { unicode: true, showMode: true, showMemoryUsage: true },
     }));
 
-    assert.match(outZh.split('\n')[0], /Gemini 4 Argon\(H\) │ accept-edits/);
+    assert.match(outZh.split('\n')[0], /Gemini 4 Argon\(High\) │ accept-edits/);
     assert.match(outZh, /内存 {3}█████░░░░░ 11 GB \/ 22 GB \(49%\)/);
 
     const outEn = stripAnsi(renderHUD(state, agyData, {
@@ -313,7 +313,7 @@ describe('renderer / display visibility toggles', () => {
     assert.doesNotMatch(output, /\[B\] main/);
     assert.doesNotMatch(output, /\[Tk\]/);
     assert.doesNotMatch(output, /GEMINI\.md/);
-    assert.match(output, /Gemini 3\.5 Flash\(H\)/);
+    assert.match(output, /Gemini 3\.5 Flash\(High\)/);
     assert.match(output, /\[C\] 1k\/0/);
     assert.match(output, /2 rules/);
     assert.match(output, /1 hooks/);
