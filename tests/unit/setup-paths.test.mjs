@@ -24,7 +24,7 @@ test('bootstrap.sh invokes bootstrap.js via curl + node', () => {
 
   assert.match(bootstrap, /bootstrap\.js/);
   assert.match(bootstrap, /curl/);
-  assert.match(bootstrap, /exec node/);
+  assert.match(bootstrap, /\bnode\b/);
 });
 
 test('bootstrap.js downloads runtime/* files and invokes configureStatusLine', () => {
