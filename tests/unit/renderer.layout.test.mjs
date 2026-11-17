@@ -58,6 +58,60 @@ describe('renderer / line composition', () => {
     assert.match(outputLow, /Gemini 3\.5 Flash\(L\)/);
   });
 
+  test('renders model and thinking effort when agy splits effort from display_name or omits it on single-variant models', () => {
+    const outArgon = renderHUD(
+      { steps: 1, branch: 'main' },
+      {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { id: 'gemini-4-argon-high', display_name: 'Gemini 4 Argon', effort: 'High' },
+      },
+      { display: { useNerdFonts: false, unicode: false } }
+    );
+    assert.match(outArgon, /Gemini 4 Argon\(H\)/);
+
+    const outOpus = renderHUD(
+      { steps: 1, branch: 'main' },
+      {
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 },
+        model: { id: 'claude-opus-4-6-thinking', display_name: 'Claude Opus 4.6' },
+      },
+      { display: { useNerdFonts: false, unicode: false } }
+    );
+    assert.match(outOpus, /Opus 4\.6\(Th\)/);
+  });
+
+  test('renders current mode and memory usage bar in zh and en', () => {
+    const state = {
+      steps: 1,
+      branch: 'main',
+      memoryUsage: {
+        totalBytes: 22 * 1024 * 1024 * 1024,
+        usedBytes: 11 * 1024 * 1024 * 1024,
+        freeBytes: 11 * 1024 * 1024 * 1024,
+        usedPercent: 49,
+      },
+    };
+    const agyData = {
+      context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 },
+      model: { id: 'gemini-4-argon-high', display_name: 'Gemini 4 Argon', effort: 'High' },
+      cycle_mode: 'accept-edits',
+    };
+    const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+    const outZh = stripAnsi(renderHUD(state, agyData, {
+      language: 'zh',
+      display: { unicode: true, showMode: true, showMemoryUsage: true },
+    }));
+
+    assert.match(outZh.split('\n')[0], /Gemini 4 Argon\(H\) │ accept-edits/);
+    assert.match(outZh, /内存 {3}█████░░░░░ 11 GB \/ 22 GB \(49%\)/);
+
+    const outEn = stripAnsi(renderHUD(state, agyData, {
+      language: 'en',
+      display: { unicode: true, showMode: true, showMemoryUsage: true },
+    }));
+    assert.match(outEn, /Approx RAM █████░░░░░ 11 GB \/ 22 GB \(49%\)/);
+  });
+
   test('should correctly render update notices', () => {
     const state = { steps: 1, branch: 'main' };
     const agyData = {

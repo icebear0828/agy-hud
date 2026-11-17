@@ -421,6 +421,39 @@ describe('quota / cloud', () => {
       assert.equal(parsed.argon.weekly.remainingFraction, 0.60);
       assert.equal(parsed.argon.fiveHour, undefined);
     });
+
+    test('parses aicode fetchQuotaStatus quotaSummary structure with groupName and refreshWindowLabel', () => {
+      const resetTime5h = '2026-04-17T06:58:19Z';
+      const resetTimeWeekly = '2026-04-20T05:13:51Z';
+      const parsed = parseQuotaSummary({
+        buckets: [],
+        quotaSummary: {
+          groups: [
+            {
+              groupName: 'Gemini Models',
+              buckets: [
+                { bucketId: 'gemini-weekly', refreshWindowLabel: 'weekly', remainingFraction: 0.8891867, resetTime: resetTimeWeekly },
+                { bucketId: 'gemini-5h', refreshWindowLabel: '5h', remainingFraction: 0.9668667, resetTime: resetTime5h },
+              ],
+            },
+            {
+              groupName: 'Claude and GPT models',
+              buckets: [
+                { bucketId: '3p-weekly', refreshWindowLabel: 'weekly', remainingFraction: 0.99634284, resetTime: resetTimeWeekly },
+                { bucketId: '3p-5h', refreshWindowLabel: '5h', remainingFraction: 0.9798667, resetTime: resetTime5h },
+              ],
+            },
+          ],
+        },
+      });
+
+      assert.ok(parsed?.google);
+      assert.equal(parsed.google.weekly.remainingFraction, 0.8891867);
+      assert.equal(parsed.google.fiveHour.remainingFraction, 0.9668667);
+      assert.ok(parsed?.claude);
+      assert.equal(parsed.claude.weekly.remainingFraction, 0.99634284);
+      assert.equal(parsed.claude.fiveHour.remainingFraction, 0.9798667);
+    });
   });
 
   describe('enrichModelsWithQuotaSummary', () => {

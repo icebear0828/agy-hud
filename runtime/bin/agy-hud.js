@@ -14,7 +14,7 @@ const { resolveAntigravityPath } = require('../paths.js');
 
 async function handleSelfUpdate() {
   console.log('Checking for latest installer...');
-  const bootstrapUrl = 'https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.js';
+  const bootstrapUrl = 'https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/bootstrap.js';
   const tempPath = path.join(os.tmpdir(), `agy-hud-bootstrap-${Date.now()}.js`);
 
   try {
@@ -72,6 +72,7 @@ function maybeCheckUpdates() {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
+        env: { ...process.env, NODE_USE_ENV_PROXY: '1' },
       });
       checker.unref();
     }
@@ -114,15 +115,38 @@ async function main() {
     // so we honour XDG_DATA_HOME / APPDATA / LOCALAPPDATA in addition to ~/.gemini.
     let transcriptPath = agyData?.transcript_path;
     if (!transcriptPath || !fs.existsSync(transcriptPath)) {
-      const candidate = resolveAntigravityPath(path.join(
-        'brain',
-        agyData?.conversation_id || '',
-        '.system_generated',
-        'logs',
-        'transcript.jsonl'
-      ));
-      if (fs.existsSync(candidate) || !transcriptPath) {
-        transcriptPath = candidate;
+      if (agyData?.conversation_id) {
+        const candidate = resolveAntigravityPath(path.join(
+          'brain',
+          agyData.conversation_id,
+          '.system_generated',
+          'logs',
+          'transcript.jsonl'
+        ));
+        if (fs.existsSync(candidate) || !transcriptPath) {
+          transcriptPath = candidate;
+        }
+      } else {
+        // Standalone invocation without stdin: locate the most recently active conversation transcript
+        const brainDir = resolveAntigravityPath('brain');
+        let latestTranscript = null;
+        let latestMtime = 0;
+        try {
+          if (fs.existsSync(brainDir)) {
+            for (const entry of fs.readdirSync(brainDir, { withFileTypes: true })) {
+              if (!entry.isDirectory()) continue;
+              const candidate = path.join(brainDir, entry.name, '.system_generated', 'logs', 'transcript.jsonl');
+              try {
+                const st = fs.statSync(candidate);
+                if (st.mtimeMs > latestMtime) {
+                  latestMtime = st.mtimeMs;
+                  latestTranscript = candidate;
+                }
+              } catch {}
+            }
+          }
+        } catch {}
+        transcriptPath = latestTranscript || resolveAntigravityPath(path.join('brain', '.system_generated', 'logs', 'transcript.jsonl'));
       }
     }
 
@@ -148,7 +172,14 @@ async function main() {
       if (stdinProviderQuota) {
         if (Array.isArray(effectiveQuotaData)) {
           effectiveQuotaData = enrichModelsWithQuotaSummary(effectiveQuotaData, stdinProviderQuota);
-          effectiveQuotaData.providerQuota = { ...(quotaData.providerQuota || {}), ...stdinProviderQuota };
+          const prevPq = quotaData.providerQuota || {};
+          const mergedPq = { ...prevPq, ...stdinProviderQuota };
+          for (const key of ['google', 'claude', 'argon']) {
+            if (prevPq[key] || stdinProviderQuota[key]) {
+              mergedPq[key] = { ...(prevPq[key] || {}), ...(stdinProviderQuota[key] || {}) };
+            }
+          }
+          effectiveQuotaData.providerQuota = mergedPq;
         }
       }
 

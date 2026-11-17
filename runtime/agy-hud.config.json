@@ -14,7 +14,9 @@
     "unicode": true,
     "useNerdFonts": false,
     "showUsername": true,
-    "showSpeed": false,
+    "showMode": true,
+    "showSpeed": true,
+    "showMemoryUsage": true,
     "showCost": false,
     "showDailyCost": false,
     "showWeeklyCost": false

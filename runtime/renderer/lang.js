@@ -14,6 +14,7 @@ const LANGUAGE_TEXT = {
     weekLabel: 'Week',
     outLabel: 'out',
     tokPerSec: 'tok/s',
+    memoryLabel: 'Approx RAM',
     quotaUnavailable: 'Quota unavailable',
     quotaLoading: 'Quota loading',
     quotaReasons: {
@@ -30,6 +31,7 @@ const LANGUAGE_TEXT = {
     weekLabel: '本周',
     outLabel: '输出',
     tokPerSec: 'tok/s',
+    memoryLabel: '内存  ',
     quotaUnavailable: '额度不可用',
     quotaLoading: '额度加载中',
     quotaReasons: {

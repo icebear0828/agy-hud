@@ -1,7 +1,10 @@
 'use strict';
 
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
 const path = require('path');
+const tls = require('tls');
 const {
   FALLBACK_AGENT_MODEL_IDS,
   discoverAgentModelIds,
@@ -10,10 +13,204 @@ const {
   createUnavailableQuotaResult,
 } = require('./models.js');
 
+function isNativeFetch(fn) {
+  if (typeof fn !== 'function') return false;
+  const src = Function.prototype.toString.call(fn);
+  return src.includes('internal/deps/undici/undici') || src.includes('[native code]');
+}
+
 // Authoritative quota endpoint (daily-cloudcode-pa confirmed source)
 const DEFAULT_ENDPOINTS = [
   'https://daily-cloudcode-pa.googleapis.com',
 ];
+
+const AICODE_ENDPOINT = 'https://aicode.googleapis.com';
+
+function getEnvProxyUrl(targetUrl, env = process.env) {
+  if (!env) return null;
+  let parsedTarget;
+  try {
+    parsedTarget = new URL(String(targetUrl));
+  } catch {
+    return null;
+  }
+
+  const noProxy = env.NO_PROXY || env.no_proxy;
+  if (noProxy) {
+    const host = parsedTarget.hostname.toLowerCase();
+    const entries = noProxy.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    for (const entry of entries) {
+      if (entry === '*' || host === entry || host.endsWith(entry.startsWith('.') ? entry : `.${entry}`)) {
+        return null;
+      }
+    }
+  }
+
+  if (parsedTarget.protocol === 'https:') {
+    return env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy || env.ALL_PROXY || env.all_proxy || null;
+  }
+  return env.HTTP_PROXY || env.http_proxy || env.ALL_PROXY || env.all_proxy || null;
+}
+
+function fetchViaEnvProxy(targetUrl, options = {}, proxyUrl) {
+  return new Promise((resolve, reject) => {
+    let target;
+    let proxy;
+    try {
+      target = new URL(String(targetUrl));
+      proxy = new URL(String(proxyUrl));
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
+    const method = options.method || 'GET';
+    const headers = { Connection: 'close', ...(options.headers || {}) };
+    const bodyBuffer = options.body !== undefined && options.body !== null
+      ? Buffer.from(String(options.body), 'utf8')
+      : null;
+    if (bodyBuffer && !headers['Content-Length'] && !headers['content-length']) {
+      headers['Content-Length'] = String(bodyBuffer.length);
+    }
+
+    let settled = false;
+    let connectReq = null;
+    let innerReq = null;
+    let tunnelSocket = null;
+
+    const cleanup = () => {
+      if (options.signal) {
+        options.signal.removeEventListener('abort', onAbort);
+      }
+    };
+
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try { if (connectReq) connectReq.destroy(); } catch {}
+      try { if (innerReq) innerReq.destroy(); } catch {}
+      try { if (tunnelSocket) tunnelSocket.destroy(); } catch {}
+      reject(err);
+    };
+
+    const onAbort = () => {
+      const abortErr = new Error('The operation was aborted');
+      abortErr.name = 'AbortError';
+      fail(abortErr);
+    };
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        onAbort();
+        return;
+      }
+      options.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    const handleResponse = (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        try { if (tunnelSocket) tunnelSocket.destroy(); } catch {}
+        const rawText = Buffer.concat(chunks).toString('utf8');
+        const status = res.statusCode || 0;
+        resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          text: async () => rawText,
+          json: async () => JSON.parse(rawText),
+        });
+      });
+      res.on('error', fail);
+    };
+
+    const proxyPort = Number(proxy.port) || (proxy.protocol === 'https:' ? 443 : 80);
+    const proxyAuth = (proxy.username || proxy.password)
+      ? `Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString('base64')}`
+      : null;
+
+    if (target.protocol === 'https:') {
+      const targetPort = Number(target.port) || 443;
+      const connectHeaders = {
+        Host: `${target.hostname}:${targetPort}`,
+      };
+      if (proxyAuth) connectHeaders['Proxy-Authorization'] = proxyAuth;
+
+      connectReq = (proxy.protocol === 'https:' ? https : http).request({
+        host: proxy.hostname,
+        port: proxyPort,
+        method: 'CONNECT',
+        path: `${target.hostname}:${targetPort}`,
+        headers: connectHeaders,
+      });
+
+      connectReq.on('connect', (res, socket, head) => {
+        if (res.statusCode !== 200) {
+          socket.destroy();
+          fail(new Error(`Proxy CONNECT failed with status ${res.statusCode}`));
+          return;
+        }
+        if (head && head.length > 0) socket.unshift(head);
+        tunnelSocket = tls.connect({
+          socket,
+          servername: target.hostname,
+        });
+        tunnelSocket.on('error', fail);
+
+        innerReq = http.request({
+          host: target.hostname,
+          port: targetPort,
+          method,
+          path: `${target.pathname}${target.search}`,
+          headers,
+          createConnection: () => tunnelSocket,
+        }, handleResponse);
+
+        innerReq.on('error', fail);
+        if (bodyBuffer) innerReq.write(bodyBuffer);
+        innerReq.end();
+      });
+
+      connectReq.on('error', fail);
+      connectReq.end();
+    } else {
+      const reqHeaders = { ...headers, Host: target.host };
+      if (proxyAuth) reqHeaders['Proxy-Authorization'] = proxyAuth;
+
+      innerReq = (proxy.protocol === 'https:' ? https : http).request({
+        host: proxy.hostname,
+        port: proxyPort,
+        method,
+        path: target.toString(),
+        headers: reqHeaders,
+      }, handleResponse);
+
+      innerReq.on('error', fail);
+      if (bodyBuffer) innerReq.write(bodyBuffer);
+      innerReq.end();
+    }
+  });
+}
+
+async function cloudFetch(url, options = {}) {
+  // Always honor unit test mocks that replace globalThis.fetch
+  if (!isNativeFetch(globalThis.fetch)) {
+    return globalThis.fetch(url, options);
+  }
+  const envProxyActive = process.env.NODE_USE_ENV_PROXY === '1'
+    || (Array.isArray(process.execArgv) && process.execArgv.includes('--use-env-proxy'));
+  if (!envProxyActive) {
+    const proxyUrl = getEnvProxyUrl(url);
+    if (proxyUrl && /^https?:\/\//i.test(proxyUrl)) {
+      return fetchViaEnvProxy(url, options, proxyUrl);
+    }
+  }
+  return globalThis.fetch(url, options);
+}
 
 // ─── Runtime User-Agent ──────────────────────────────────────────────────────
 let _pkg = null;
@@ -92,7 +289,7 @@ async function fetchAccountEmail(accessToken) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
     try {
-      const r = await fetch(endpoint, {
+      const r = await cloudFetch(endpoint, {
         headers: { 'Authorization': `Bearer ${accessToken}` },
         signal: controller.signal,
       });
@@ -123,7 +320,7 @@ async function fetchTierFromCloud(accessToken) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
     try {
-      const r = await fetch(`${endpoint}/v1internal:loadCodeAssist`, {
+      const r = await cloudFetch(`${endpoint}/v1internal:loadCodeAssist`, {
         method: 'POST',
         headers: buildHeaders(accessToken),
         body: JSON.stringify({
@@ -151,30 +348,35 @@ async function fetchTierFromCloud(accessToken) {
   return null;
 }
 
-// ─── retrieveUserQuotaSummary helpers ──────────────────────────────────────
+// ─── retrieveUserQuotaSummary / fetchQuotaStatus helpers ─────────────────────
 
 /**
- * Parse the retrieveUserQuotaSummary response into provider-level windows.
- * Expected shape: { groups: [{ displayName, buckets: [{ bucketId, window, remainingFraction, resetTime }] }] }
- * Handles both bucketId (gemini-weekly, 3p-5h) and window (weekly, 5h) signals.
+ * Parse the retrieveUserQuotaSummary or aicode fetchQuotaStatus response into provider-level windows.
+ * Expected shape:
+ *   - { groups: [{ displayName|groupName, buckets: [{ bucketId, window|refreshWindowLabel, remainingFraction, resetTime }] }] }
+ *   - or { quotaSummary: { groups: [...] } }
+ * Handles both bucketId (gemini-weekly, 3p-5h) and window / refreshWindowLabel (weekly, 5h) signals.
  * @param {Object} data
- * @returns {{google: Object, claude: Object}|null}
+ * @returns {{google?: Object, claude?: Object, argon?: Object}|null}
  */
 function parseQuotaSummary(data) {
-  if (!data || !Array.isArray(data.groups)) return null;
+  const groups = Array.isArray(data?.groups)
+    ? data.groups
+    : (Array.isArray(data?.quotaSummary?.groups) ? data.quotaSummary.groups : null);
+  if (!groups) return null;
   const result = { google: {}, claude: {}, argon: {} };
   let hasAny = false;
-  for (const group of data.groups) {
+  for (const group of groups) {
     if (!group || !Array.isArray(group.buckets)) continue;
     const buckets = group.buckets;
-    const displayName = (group.displayName || '').toLowerCase();
+    const displayName = (group.displayName || group.groupName || '').toLowerCase();
     const hasArgonBucket = buckets.some(b => b && typeof b.bucketId === 'string' && b.bucketId.includes('argon'));
     const hasGeminiBucket = buckets.some(b => b && typeof b.bucketId === 'string' && b.bucketId.startsWith('gemini-') && !b.bucketId.includes('argon'));
     const has3pBucket = buckets.some(b => b && typeof b.bucketId === 'string' && b.bucketId.startsWith('3p-'));
     let target = null;
     if (displayName.includes('argon') || hasArgonBucket) target = 'argon';
-    else if (displayName.includes('gemini') || hasGeminiBucket) target = 'google';
-    else if (displayName.includes('claude') || displayName.includes('3p') || has3pBucket) target = 'claude';
+    else if (displayName.includes('gemini') || displayName.includes('google') || hasGeminiBucket) target = 'google';
+    else if (displayName.includes('claude') || displayName.includes('gpt') || displayName.includes('3p') || displayName.includes('third') || has3pBucket) target = 'claude';
     else continue;
 
     for (const b of buckets) {
@@ -182,7 +384,7 @@ function parseQuotaSummary(data) {
       const ts = Date.parse(b.resetTime);
       if (!Number.isFinite(ts)) continue;
       const bucketId = b.bucketId || '';
-      const windowRaw = b.window || '';
+      const windowRaw = b.window || b.refreshWindowLabel || '';
       let winType = null;
       if (windowRaw === 'weekly' || bucketId.includes('weekly')) winType = 'weekly';
       else if (windowRaw === '5h' || bucketId.includes('5h') || bucketId.includes('fiveHour')) winType = 'fiveHour';
@@ -256,12 +458,52 @@ function enrichModelsWithQuotaSummary(models, summary, now = Date.now()) {
   });
 }
 
+function mergeProviderQuotas(primary, secondary) {
+  if (!primary && !secondary) return null;
+  if (!primary) return secondary;
+  if (!secondary) return primary;
+  const merged = { ...secondary, ...primary };
+  for (const key of ['google', 'claude', 'argon']) {
+    if (secondary[key] || primary[key]) {
+      merged[key] = { ...(secondary[key] || {}), ...(primary[key] || {}) };
+    }
+  }
+  return merged;
+}
+
+/**
+ * Fetch provider-level quota summary from aicode.googleapis.com/v1alpha:fetchQuotaStatus.
+ * This is the primary endpoint used by the agy CLI binary for /usage and statusLine.
+ * @param {string} accessToken
+ * @param {Object} [config]
+ * @returns {Promise<{google?:Object, claude?:Object, argon?:Object}|null>}
+ */
+async function fetchQuotaStatusFromAICode(accessToken, config = {}) {
+  const endpoint = (config && config.aicodeEndpoint) || process.env.AGY_HUD_AICODE_ENDPOINT || AICODE_ENDPOINT;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+  try {
+    const r = await cloudFetch(`${endpoint}/v1alpha:fetchQuotaStatus`, {
+      method: 'GET',
+      headers: buildHeaders(accessToken),
+      signal: controller.signal,
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return parseQuotaSummary(data);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Fetch provider-level quota summary (weekly + 5h) from cloud.
  * Non-critical: returns null on any failure to allow graceful downgrade.
  * @param {string} accessToken
  * @param {Object} [injectedConfig] optional pre-loaded config to avoid double load
- * @returns {Promise<{google:Object, claude:Object}|null>}
+ * @returns {Promise<{google?:Object, claude?:Object, argon?:Object}|null>}
  */
 async function fetchUserQuotaSummaryFromCloud(accessToken, injectedConfig) {
   let config = injectedConfig;
@@ -270,11 +512,12 @@ async function fetchUserQuotaSummaryFromCloud(accessToken, injectedConfig) {
     config = await loadConfig().catch(() => ({}));
   }
   const endpoints = resolveEndpoints(config);
+  let summary = null;
   for (const endpoint of endpoints) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
-      const r = await fetch(`${endpoint}/v1internal:retrieveUserQuotaSummary`, {
+      const r = await cloudFetch(`${endpoint}/v1internal:retrieveUserQuotaSummary`, {
         method: 'POST',
         headers: buildHeaders(accessToken),
         body: JSON.stringify({}),
@@ -287,7 +530,10 @@ async function fetchUserQuotaSummaryFromCloud(accessToken, injectedConfig) {
       const data = await r.json();
       clearTimeout(timeoutId);
       const parsed = parseQuotaSummary(data);
-      if (parsed) return parsed;
+      if (parsed) {
+        summary = parsed;
+        break;
+      }
       // Response ok but unparsable -> try next endpoint
       continue;
     } catch {
@@ -295,7 +541,19 @@ async function fetchUserQuotaSummaryFromCloud(accessToken, injectedConfig) {
       /* try next endpoint */
     }
   }
-  return null;
+
+  // retrieveUserQuotaSummary often omits Gemini Models when called without project context;
+  // supplement from aicode fetchQuotaStatus when using default endpoints or when aicodeEndpoint is set.
+  const hasCustomEndpoints = Boolean(process.env.AGY_HUD_ENDPOINTS || (config && Array.isArray(config.endpoints)));
+  const shouldSupplementFromAICode = Boolean((config && config.aicodeEndpoint) || !hasCustomEndpoints);
+  if (shouldSupplementFromAICode && (!summary || !summary.google || !summary.claude)) {
+    const aicodeSummary = await fetchQuotaStatusFromAICode(accessToken, config);
+    if (aicodeSummary) {
+      summary = mergeProviderQuotas(summary, aicodeSummary);
+    }
+  }
+
+  return summary;
 }
 
 /**
@@ -325,7 +583,7 @@ async function fetchQuotaFromCloud(accessToken) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
-      const r = await fetch(`${endpoint}/v1internal:fetchAvailableModels`, {
+      const r = await cloudFetch(`${endpoint}/v1internal:fetchAvailableModels`, {
         method: 'POST',
         headers: buildHeaders(accessToken),
         body: JSON.stringify({}),
@@ -374,6 +632,7 @@ async function fetchQuotaFromCloud(accessToken) {
 
 module.exports = {
   DEFAULT_ENDPOINTS,
+  AICODE_ENDPOINT,
   buildHeaders,
   resolveEndpoints,
   extractTierName,
@@ -384,4 +643,5 @@ module.exports = {
   parseQuotaSummary,
   enrichModelsWithQuotaSummary,
   fetchUserQuotaSummaryFromCloud,
+  fetchQuotaStatusFromAICode,
 };

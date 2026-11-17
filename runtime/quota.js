@@ -54,6 +54,7 @@ function triggerBackgroundRefresh() {
     ], {
       detached: true,
       stdio: 'ignore',
+      env: { ...process.env, NODE_USE_ENV_PROXY: '1' },
     });
     subprocess.unref();
   } catch { /* ignore spawning issues */ }
@@ -202,6 +203,7 @@ module.exports = {
   parseQuotaSummary: cloudMod.parseQuotaSummary,
   enrichModelsWithQuotaSummary: cloudMod.enrichModelsWithQuotaSummary,
   fetchUserQuotaSummaryFromCloud: cloudMod.fetchUserQuotaSummaryFromCloud,
+  fetchQuotaStatusFromAICode: cloudMod.fetchQuotaStatusFromAICode,
   // models module
   normalizeQuotaModels: modelsMod.normalizeQuotaModels,
   discoverAgentModelIds: modelsMod.discoverAgentModelIds,

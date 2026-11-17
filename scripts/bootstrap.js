@@ -7,7 +7,7 @@ const https = require('https');
 const os = require('os');
 const path = require('path');
 
-const DEFAULT_SOURCE_BASE = 'https://raw.githubusercontent.com/icebear0828/agy-hud/main';
+const DEFAULT_SOURCE_BASE = 'https://raw.githubusercontent.com/yuwenlong/agy-hud/main';
 
 const RUNTIME_FILES = [
   'package.json',
@@ -273,7 +273,7 @@ async function refreshQuotaCache(runtimeDir, options = {}) {
       };
     }
 
-    writeCache(quota, token, tier);
+    writeCache(quota, token, tier, null, quota.providerQuota);
     return { status: 'refreshed', count: quota.length, tier: tier || null };
   } catch (error) {
     return { status: 'failed', reason: error.message };

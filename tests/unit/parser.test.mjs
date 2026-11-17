@@ -201,6 +201,26 @@ test('getSessionState accumulates totalApiDurationMs from PLANNER_RESPONSE steps
   }
 });
 
+test('getSessionState extracts transcriptOutputSpeed and model from real PLANNER_RESPONSE entries', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-real-speed-'));
+  try {
+    const transcriptPath = path.join(tempDir, 'transcript.jsonl');
+    fs.writeFileSync(transcriptPath, [
+      JSON.stringify({ step_index: 0, type: 'USER_INPUT', created_at: '2026-10-08T10:00:00Z', content: 'The user changed setting `Model Selection` from None to Gemini 4 Argon (High).' }),
+      JSON.stringify({ step_index: 1, type: 'PLANNER_RESPONSE', created_at: '2026-10-08T10:00:00Z', model: 'gemini-4-argon-high', input_tokens: 2000, cache_read_tokens: 10000, output_tokens: 500 }),
+      JSON.stringify({ step_index: 2, type: 'GENERIC', created_at: '2026-10-08T10:00:10Z' }),
+      '',
+    ].join('\n'));
+
+    const state = await getSessionState(transcriptPath);
+    assert.equal(state.transcriptModelId, 'gemini-4-argon-high');
+    assert.equal(state.transcriptModelSelection, 'Gemini 4 Argon (High)');
+    assert.equal(state.transcriptOutputSpeed, 50); // 500 tokens / 10s = 50 tok/s
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('getSessionState reads project memory from HOME without counting memory docs as rules', () => {
   const workspaceDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-home-workspace-')));
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-home-'));

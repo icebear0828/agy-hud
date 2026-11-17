@@ -1,6 +1,6 @@
 {
   "name": "agy-hud",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Premium HUD for Antigravity CLI",
   "main": "runtime/bin/agy-hud.js",
   "files": [
@@ -13,11 +13,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/icebear0828/agy-hud.git"
+    "url": "git+https://github.com/yuwenlong/agy-hud.git"
   },
-  "homepage": "https://github.com/icebear0828/agy-hud#readme",
+  "homepage": "https://github.com/yuwenlong/agy-hud#readme",
   "bugs": {
-    "url": "https://github.com/icebear0828/agy-hud/issues"
+    "url": "https://github.com/yuwenlong/agy-hud/issues"
   },
   "scripts": {
     "test": "node --test tests/unit/*.test.mjs",

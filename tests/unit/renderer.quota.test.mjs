@@ -40,10 +40,10 @@ describe('renderer / quota lines', () => {
 
       // Verify grid and rows
       assert.match(clean, /───/);
-      assert.match(clean, /Google 5h\s+\[[█░]+\]\s+87%\s+~22m/);
-      assert.match(clean, /Google week\s+\[[█░]+\]\s+74%\s+~4d3h/);
-      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%\s+~4h59m/);
-      assert.match(clean, /Claude week\s+\[[█░]+\]\s+100%\s+~6d23h/);
+      assert.match(clean, /Google 5h\s+\[[█░]+\]\s+87\.00%\s+~22m/);
+      assert.match(clean, /Google week\s+\[[█░]+\]\s+74\.00%\s+~4d3h/);
+      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100\.00%\s+~4h59m/);
+      assert.match(clean, /Claude week\s+\[[█░]+\]\s+100\.00%\s+~6d23h/);
 
       const lines = clean.split('\n');
       const g5Line = lines.find(l => l.includes('Google 5h'));
@@ -80,9 +80,9 @@ describe('renderer / quota lines', () => {
       const googleFiveHour = clean.split('\n').find(line => line.includes('Google 5h')) || '';
       const googleWeekly = clean.split('\n').find(line => line.includes('Google week')) || '';
 
-      assert.match(googleFiveHour, /94%\s+~4h10m/);
-      assert.match(googleWeekly, /99%\s+~6d23h/);
-      assert.doesNotMatch(googleWeekly, /90%/);
+      assert.match(googleFiveHour, /94\.39%\s+~4h10m/);
+      assert.match(googleWeekly, /99\.06%\s+~6d23h/);
+      assert.doesNotMatch(googleWeekly, /90\.00%/);
     });
 
     test('renders provider quota table even when models array is empty if providerQuota is present', () => {
@@ -107,9 +107,9 @@ describe('renderer / quota lines', () => {
       const clean = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
 
       assert.doesNotMatch(clean, /Quota loading/);
-      assert.match(clean, /Google 5h\s+\[[█░]+\]\s+95%/);
-      assert.match(clean, /Google week\s+\[[█░]+\]\s+82%/);
-      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%/);
+      assert.match(clean, /Google 5h\s+\[[█░]+\]\s+95\.00%/);
+      assert.match(clean, /Google week\s+\[[█░]+\]\s+82\.00%/);
+      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100\.00%/);
     });
 
     test('renders Argon row in provider table when argon quota is present', () => {
@@ -136,10 +136,10 @@ describe('renderer / quota lines', () => {
       const stripAnsi = s => s.replace(/\x1b\[[0-9;]*m/g, '');
       const clean = stripAnsi(renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } }, quotaData));
 
-      assert.match(clean, /Google 5h\s+\[[█░]+\]\s+95%/);
-      assert.match(clean, /Google week\s+\[[█░]+\]\s+82%/);
-      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100%/);
-      assert.match(clean, /Argon week\s+\[[█░]+\]\s+65%\s+~5d/);
+      assert.match(clean, /Google 5h\s+\[[█░]+\]\s+95\.00%/);
+      assert.match(clean, /Google week\s+\[[█░]+\]\s+82\.00%/);
+      assert.match(clean, /Claude 5h\s+\[[█░]+\]\s+100\.00%/);
+      assert.match(clean, /Argon week\s+\[[█░]+\]\s+65\.00%\s+~5d/);
     });
 
     test('models mode renders individual model rows in two columns', () => {
@@ -222,7 +222,7 @@ describe('renderer / quota lines', () => {
 
       // Single 'Quota:' label, no window suffix — renderer displays only
       // the top-level binding quota.
-      assert.match(output, /Quota: 20%/);
+      assert.match(output, /Quota: 20\.00%/);
       assert.match(output, /Anthropic:/);
       assert.match(output, /Google:/);
       assert.doesNotMatch(output, /─{10}/);
@@ -243,7 +243,7 @@ describe('renderer / quota lines', () => {
 
       const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
-      assert.match(output, /Quota: 50%/);
+      assert.match(output, /Quota: 50\.00%/);
     });
 
     test('appends current model critical window quota to line 2 instead of top-level remainingFraction', () => {
@@ -272,9 +272,9 @@ describe('renderer / quota lines', () => {
 
       const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
-      // Must pick the binding weekly window (82%), not top-level 100%
-      assert.match(output, /Quota: 82%/);
-      assert.doesNotMatch(output, /Quota: 100%/);
+      // Must pick the binding weekly window (82.00%), not top-level 100.00%
+      assert.match(output, /Quota: 82\.00%/);
+      assert.doesNotMatch(output, /Quota: 100\.00%/);
     });
 
     test('renders reset countdown on line 2 even when model quota is 100% if resetTime is present', () => {
@@ -296,7 +296,7 @@ describe('renderer / quota lines', () => {
 
       const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
-      assert.match(output, /Quota: 100%.*~4h/);
+      assert.match(output, /Quota: 100\.00%.*~4h/);
     });
 
     test('renders provider-grouped mini bars', () => {
@@ -432,7 +432,7 @@ describe('renderer / quota lines', () => {
       }];
       const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
-      assert.match(output, /Quota: 74%/);
+      assert.match(output, /Quota: 74\.00%/);
     });
 
     test('matches Argon family and tier when active model is Gemini 4 Argon', () => {
@@ -450,7 +450,7 @@ describe('renderer / quota lines', () => {
       }];
       const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
-      assert.match(output, /Quota: 65%/);
+      assert.match(output, /Quota: 65\.00%/);
       assert.match(output, /~5d/);
     });
 
@@ -592,7 +592,7 @@ describe('renderer / quota lines', () => {
 
       const output = renderHUD(state, agyData, { display: { unicode: true, useNerdFonts: false, showImageQuota: true } }, quotaData);
       assert.match(output, /Image Quota:/);
-      assert.match(output, /90%/);
+      assert.match(output, /90\.00%/);
       assert.match(output, /~3h49m/);
     });
 

@@ -1,10 +1,10 @@
 # agy-hud
 
-[![E2E](https://github.com/icebear0828/agy-hud/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/icebear0828/agy-hud/actions/workflows/e2e.yml)
-[![Release](https://img.shields.io/github/v/release/icebear0828/agy-hud)](https://github.com/icebear0828/agy-hud/releases/latest)
+[![E2E](https://github.com/yuwenlong/agy-hud/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/yuwenlong/agy-hud/actions/workflows/e2e.yml)
+[![Release](https://img.shields.io/github/v/release/yuwenlong/agy-hud)](https://github.com/yuwenlong/agy-hud/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
 
-> **Antigravity CLI (`agy`)** 的实时 statusline HUD 插件。每个 step 结束自动刷新，展示会话信息、Token 用量和**真实账号 Quota**（与 `/usage` 命令数据一致）。
+> **Antigravity CLI (`agy`)** 的实时 statusline HUD 插件。每个 step 结束自动刷新，展示会话信息、Token 用量和**真实账号 Quota**（与 `/usage` 命令数据一致，百分比精确保留两位小数）。
 >
 > 每次 push 都会在 **macOS · Linux · Windows** 三平台 CI 矩阵跑 install + HUD 渲染验证——上面绿徽章 = 当前可用。
 
@@ -17,15 +17,16 @@
 agy-hud 支持两种额度（Quota）显示模式：**Table 模式**（默认）与 **Compact（紧凑）模式**（按 Provider 分组的迷你进度条）。
 
 ### Table 模式（默认）
-按 Provider 汇聚 2 行 2 列展示配额周期（Google 5h/week 与 Claude 5h/week），清晰紧凑且与会员额度完全对应。
+按 Provider 汇聚 2 行 2 列展示配额周期（Google 5h/week 与 Claude 5h/week），百分比精确保留两位小数，清晰紧凑且与会员额度完全对应。
 
 ```
-diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 3.7 Flash(M) │ Google AI Pro
+diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 4 Argon(H) │ auto │ Google AI Pro │ 输出: 65.4 tok/s
 ⚿ Tokens 172.3k (in: 2.8k, out: 35.3k, cache: 134.3k) │ ⛁ 129.2k/1M [█░░░░░░░░░] 12%
+内存   █████░░░░░ 11 GB / 22 GB (49%)
 1 MEMORY.md │ 1 hooks
   ─────────────────────────────────────────────────────────────────────────────────
-  Google 5h   [█████░]  87% ~22m   │ Claude 5h   [██████] 100% ~4h59m
-  Google week [████░░]  74% ~4d3h  │ Claude week [██████] 100% ~6d23h
+  Google 5h   [█████░]  96.69% ~22m   │ Claude 5h   [██████]  97.99% ~4h59m
+  Google week [█████░]  88.92% ~4d3h  │ Claude week [██████]  99.63% ~6d23h
 ```
 
 ### Compact（紧凑）模式
@@ -33,7 +34,7 @@ diangelosabri@gmail.com │ agy-hud │ ⎇ main │ Gemini 3.7 Flash(M) │ Goo
 
 ```
 ⎇ main │ Claude Sonnet 4.6 │ Pro
-⚿ 138.4M ↑6k ↓202k ⟳138.2M │ ⛁ 138.2M/1M [████░░░░░░] 40% │ ⚡42 ✓3 │ Quota: 100% ~5h
+⚿ 138.4M ↑6k ↓202k ⟳138.2M │ ⛁ 138.2M/1M [████░░░░░░] 40% │ ⚡42 ✓3 │ Quota: 100.00% ~5h
 1 GEMINI.md │ 4 rules │ 1 MCPs │ 5 hooks
 Anthropic: Son███ Opus█░░ │ Google: Flash███ Pro███ │ OpenAI: GPT█░░
 ```
@@ -42,7 +43,7 @@ Anthropic: Son███ Opus█░░ │ Google: Flash███ Pro███ �
 - **第一行**（身份层）：已解析的用户名/登录邮箱（若启用）、Git 分支、当前模型、套餐 Tier。
 - **第二行**（资源层）：Token 用量（↑输入 ↓输出 ⟳缓存——缓存为零时自动隐藏）、上下文窗口进度条及百分比、步骤/任务计数。Compact 模式下额外显示当前模型额度。
 - **第三行**（元数据层）：项目 Memory 文件、Rules、MCP、Hooks——**只显示非零项**；全部为零时整行省略。
-- **额度行**：账号内各模型的剩余额度比例（与 `/usage` 保持完全一致）及重置倒计时。≥24h 自动使用天单位（如 `~6d4h`），≥10h 省略分钟（如 `~12h`）。
+- **额度行**：账号内各模型的剩余额度比例（与 `/usage` 保持完全一致，百分比保留两位小数）及重置倒计时。自动识别 `HTTPS_PROXY` / `HTTP_PROXY` 环境变量代理，并通过 `aicode.googleapis.com/v1alpha:fetchQuotaStatus` 补全 Google/Claude 5h 与周度配额。≥24h 自动使用天单位（如 `~6d4h`），≥10h 省略分钟（如 `~12h`）。
 
 ---
 
@@ -52,17 +53,17 @@ Anthropic: Son███ Opus█░░ │ Google: Flash███ Pro███ �
 
 **macOS / Linux**：
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/install.sh)
 ```
 
 **Windows PowerShell**：
 ```powershell
-irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/install.ps1 | iex
 ```
 
 **Windows CMD**：
 ```cmd
-powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/install.ps1 | iex"
 ```
 
 该安装脚本会：
@@ -100,22 +101,22 @@ irm "$env:AGY_HUD_REPO_RAW/scripts/install.ps1" | iex
 
 **macOS / Linux**：
 ```bash
-agy plugin install https://github.com/icebear0828/agy-hud.git
-bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.sh)
+agy plugin install https://github.com/yuwenlong/agy-hud.git
+bash <(curl -fsSL https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/bootstrap.sh)
 ```
 
 **Windows PowerShell**：
 ```powershell
-agy plugin install https://github.com/icebear0828/agy-hud.git
+agy plugin install https://github.com/yuwenlong/agy-hud.git
 $t = Join-Path $env:TEMP "agy-hud-bootstrap.js"
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.js -OutFile $t -UseBasicParsing
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/bootstrap.js -OutFile $t -UseBasicParsing
 node $t; Remove-Item $t
 ```
 
 **Windows CMD**：
 ```cmd
-agy plugin install https://github.com/icebear0828/agy-hud.git
-powershell -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.js -OutFile %TEMP%\agy-hud-bootstrap.js -UseBasicParsing"
+agy plugin install https://github.com/yuwenlong/agy-hud.git
+powershell -Command "Invoke-WebRequest -Uri https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/bootstrap.js -OutFile %TEMP%\agy-hud-bootstrap.js -UseBasicParsing"
 node %TEMP%\agy-hud-bootstrap.js
 del %TEMP%\agy-hud-bootstrap.js
 ```
@@ -163,17 +164,17 @@ ls -t ~/.gemini/antigravity-cli/log/cli-*.log | head -1 | xargs tail -50 | grep 
 
 **macOS / Linux**：
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/yuwenlong/agy-hud/main/uninstall.sh)
 ```
 
 **Windows PowerShell**：
 ```powershell
-irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.ps1 | iex
+irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/uninstall.ps1 | iex
 ```
 
 **Windows CMD**：
 ```cmd
-powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/uninstall.ps1 | iex"
 ```
 
 如果您已克隆了本仓库，也可以在根目录下直接执行：`bash uninstall.sh` 或 `.\uninstall.ps1`。
@@ -206,6 +207,9 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
     "showCurrentDir": true,
     "showUsername": false,
     "username": "",
+    "showMode": true,
+    "showSpeed": true,
+    "showMemoryUsage": true,
     "breadcrumbCount": 3,
     "useNerdFonts": false,
     "columnWidth": 40
@@ -290,7 +294,7 @@ agy-hud/
 **Windows UTF-8 终端助手**：如果您的 Windows 控制台不在 UTF-8 代码页下且您希望获得漂亮的 Unicode 框线/进度条显示，请运行：
 
 ```powershell
-irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/configure-utf8.ps1 | iex
+irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/configure-utf8.ps1 | iex
 ```
 
 该脚本会在您的 PowerShell 配置文件中追加 UTF-8 代码页的初始化脚本，并设定 Git 全局文件名的 UTF-8 编码支持。该命令是幂等的，运行完毕后需要重启 PowerShell。

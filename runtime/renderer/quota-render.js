@@ -51,7 +51,7 @@ function createQuotaRenderers(ctx) {
 
     const barPart = createProgressBar(pct, pctColor, 6, false);
 
-    const pctStr = `${pct}%`.padStart(4, ' ');
+    const pctStr = `${pct}%`.padStart(7, ' ');
     const coloredPct = `${pctColor}${pctStr}${reset}`;
 
     let rawTime = '';
@@ -147,7 +147,7 @@ function createQuotaRenderers(ctx) {
 
       const barPart = createProgressBar(pct, pctColor, 6, false);
 
-      const pctStr = `${pct}%`.padStart(4, ' ');
+      const pctStr = `${pct}%`.padStart(7, ' ');
       const coloredPct = `${pctColor}${pctStr}${reset}`;
 
       let rawTime = '';

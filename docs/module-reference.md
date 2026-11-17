@@ -169,7 +169,7 @@ Maintains an on-disk JSON cache using a stable, token-independent identity key t
 Handles raw HTTP communication with Google PA and OIDC endpoints.
 
 ### API Endpoints
-- **Quota Data:** `POST /v1internal:fetchAvailableModels`
+- **Quota Data:** `POST /v1internal:fetchAvailableModels`, `POST /v1internal:retrieveUserQuotaSummary`, and `GET https://aicode.googleapis.com/v1alpha:fetchQuotaStatus` (with built-in `HTTPS_PROXY` / `HTTP_PROXY` tunnel support)
 - **Subscription Tier:** `POST /v1internal:loadCodeAssist`
 - **Authoritative Account Identity:** Google OIDC UserInfo endpoints (`https://openidconnect.googleapis.com/v1/userinfo` tried first as it is reliable in proxied environments, fallback to `https://www.googleapis.com/oauth2/v3/userinfo`).
 

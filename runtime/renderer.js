@@ -8,6 +8,7 @@ const {
   QUOTA_CHROME_WIDTH,
   abbreviateDisplayName,
   simplifyModelName,
+  resolveModelWithEffort,
   compactModelName,
   modelNamesMatch,
   modelIncludesCacheInInput,
@@ -15,8 +16,10 @@ const {
   formatTurnCacheBadge,
   sanitizeTerminalText,
   formatTokens,
+  formatBytes,
   formatDuration,
   formatQuotaPercent,
+  resolveAgentMode,
 } = require('./renderer/format.js');
 const {
   LANGUAGE_TEXT,
@@ -56,7 +59,17 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const showCost = display.showCost === true;
   const showDailyCost = display.showDailyCost === true;
   const showWeeklyCost = display.showWeeklyCost === true;
-  const showSpeed = display.showSpeed === true;
+  const showSpeed = display.showSpeed !== false;
+  const showMode = display.showMode === true || Boolean(
+    agyData?.cycle_mode ||
+    agyData?.cycleMode ||
+    agyData?.agent_mode ||
+    agyData?.agentMode ||
+    agyData?.permission_mode ||
+    agyData?.permissionMode ||
+    agyData?.mode
+  );
+  const showMemoryUsage = display.showMemoryUsage === true;
   const quotaStyle = display.quotaStyle || 'table';
   const isCompact = quotaStyle === 'compact';
   const text = LANGUAGE_TEXT[resolveLanguage(config)];
@@ -149,15 +162,15 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const cacheArrow = unicode ? '⟳' : 'c:';
 
   // Data extraction
-  const usage = agyData?.context_window || {};
+  const usage = agyData?.context_window || (!agyData && state?.usage) || {};
   const totalInput = usage.total_input_tokens || 0;
   const totalOutput = usage.total_output_tokens || 0;
   const ctxPercent = usage.used_percentage || 0;
   const plan = sanitizeTerminalText(tierName || agyData?.plan_tier || 'Free', 80);
   const tasks = agyData?.task_count || 0;
 
-  // Extract model information
-  const rawModelName = agyData?.model?.display_name || agyData?.model?.id || 'Unknown Model';
+  // Extract model information (including thinking/effort intensity)
+  const rawModelName = resolveModelWithEffort(agyData, state, quotaData);
   const modelName = sanitizeTerminalText(simplifyModelName(rawModelName), 80);
 
   const createProgressBar = (percent, color, width = 10, isUsage = true) => {
@@ -190,8 +203,18 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   // Layer 1: identity + status
   const line1Parts = [
     `${green}${modelName}${reset}`,
-    `${magenta}${plan}${reset}`,
   ];
+  if (showMode) {
+    const modeStr = sanitizeTerminalText(resolveAgentMode(agyData, state, true), 40);
+    if (modeStr) {
+      const modeLower = modeStr.toLowerCase();
+      const modeColor = (modeLower.includes('accept') || modeLower.includes('always') || modeLower.includes('bypass'))
+        ? yellow
+        : (modeLower === 'plan' ? blue : cyan);
+      line1Parts.push(`${modeColor}${modeStr}${reset}`);
+    }
+  }
+  line1Parts.push(`${magenta}${plan}${reset}`);
   if (showGitBranch) line1Parts.unshift(branchName);
   const currentDir = sanitizeTerminalText(state.currentDir || '', 80);
   if (showCurrentDir && currentDir) {
@@ -226,9 +249,10 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   }
 
   // Token speed calculation & formatting
+  const computedSpeed = showSpeed ? getOutputSpeed(agyData, null, state) : null;
   const outputSpeed = state?.outputSpeed !== undefined
     ? state.outputSpeed
-    : (showSpeed ? getOutputSpeed(agyData, null, state) : null);
+    : (computedSpeed !== null ? computedSpeed : (showSpeed ? (state?.transcriptOutputSpeed ?? null) : null));
 
   if (showSpeed && outputSpeed !== null && Number.isFinite(outputSpeed)) {
     line1Parts.push(`${gray}${text.outLabel}: ${outputSpeed.toFixed(1)} ${text.tokPerSec}${reset}`);
@@ -320,7 +344,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   // In compact mode, find current model's quota and append to line 2
   let currentModelQuota = null;
   if (isCompact && quotaData && quotaData.length > 0) {
-    const rawName = agyData?.model?.display_name || '';
+    const rawName = rawModelName !== 'Unknown Model' ? rawModelName : (agyData?.model?.display_name || '');
     const modelId = agyData?.model?.id || '';
 
     // 1) Exact / normalized match.
@@ -426,6 +450,18 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
 
   const line2 = line2Parts.join(divider);
 
+  // Optional Memory Usage Line: 内存   █████░░░░░ 11 GB / 22 GB (49%)
+  let memoryLine = '';
+  if (showMemoryUsage && state?.memoryUsage && Number.isFinite(state.memoryUsage.totalBytes) && state.memoryUsage.totalBytes > 0) {
+    const mem = state.memoryUsage;
+    const memPct = Math.max(0, Math.min(100, Math.round(mem.usedPercent ?? ((mem.usedBytes / mem.totalBytes) * 100))));
+    const memCompleted = Math.round((memPct / 100) * 10);
+    const memRemaining = 10 - memCompleted;
+    const memColor = memPct >= critThresh * 100 ? red : memPct >= warnThresh * 100 ? yellow : green;
+    const memBar = `${memColor}${glyph.bar.repeat(memCompleted)}${gray}${glyph.empty.repeat(memRemaining)}${reset}`;
+    memoryLine = `${gray}${text.memoryLabel}${reset} ${memBar} ${formatBytes(mem.usedBytes)} / ${formatBytes(mem.totalBytes)} (${memColor}${memPct}%${reset})`;
+  }
+
   // Layer 3: project metadata (non-zero items only)
   const metaParts = [];
   const breadcrumbCount = typeof display.breadcrumbCount === 'number'
@@ -495,6 +531,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   }
 
   const lines = [line1, line2];
+  if (memoryLine) lines.push(memoryLine);
   if (line3) lines.push(line3);
   return lines.join('\n') + quotaLines;
 }

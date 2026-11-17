@@ -56,13 +56,15 @@ describe('renderer / format helpers', () => {
   });
 
   describe('formatQuotaPercent', () => {
-    test('formats percentage accurately without rounding 0.995 up to 100%', () => {
-      assert.equal(formatQuotaPercent(1.0), 100);
-      assert.equal(formatQuotaPercent(0.9953883), 99);
-      assert.equal(formatQuotaPercent(0.9999), 99);
-      assert.equal(formatQuotaPercent(0.5), 50);
-      assert.equal(formatQuotaPercent(0.0), 0);
-      assert.equal(formatQuotaPercent(null), 0);
+    test('formats percentage to two decimal places without rounding sub-1.0 up to 100.00%', () => {
+      assert.equal(formatQuotaPercent(1.0), '100.00');
+      assert.equal(formatQuotaPercent(0.9953883), '99.54');
+      assert.equal(formatQuotaPercent(0.99999), '99.99');
+      assert.equal(formatQuotaPercent(0.9668667), '96.69');
+      assert.equal(formatQuotaPercent(0.8891867), '88.92');
+      assert.equal(formatQuotaPercent(0.5), '50.00');
+      assert.equal(formatQuotaPercent(0.0), '0.00');
+      assert.equal(formatQuotaPercent(null), '0.00');
     });
   });
 });

@@ -3,13 +3,13 @@
 # Downloads runtime to ~/.gemini/antigravity-cli/agy-hud-runtime/ and configures statusLine.
 #
 # Usage:
-#   bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/bootstrap.sh)
 #
 # Env:
 #   AGY_HUD_REPO_RAW  override the raw GitHub base URL (for forks/mirrors)
 set -euo pipefail
 
-REPO_RAW="${AGY_HUD_REPO_RAW:-https://raw.githubusercontent.com/icebear0828/agy-hud/main}"
+REPO_RAW="${AGY_HUD_REPO_RAW:-https://raw.githubusercontent.com/yuwenlong/agy-hud/main}"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "agy-hud bootstrap: node is required but not found in PATH" >&2

@@ -169,89 +169,178 @@ function deepFind(obj, key, maxDepth = 6) {
   return undefined;
 }
 
+function getSystemMemoryUsage() {
+  try {
+    let totalBytes = 0;
+    let freeBytes = 0;
+    if (process.platform === 'linux' && fs.existsSync('/proc/meminfo')) {
+      const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
+      const totalMatch = /^MemTotal:\s+(\d+)\s+kB/m.exec(meminfo);
+      const availMatch = /^MemAvailable:\s+(\d+)\s+kB/m.exec(meminfo);
+      if (totalMatch && availMatch) {
+        totalBytes = Number(totalMatch[1]) * 1024;
+        freeBytes = Number(availMatch[1]) * 1024;
+      }
+    }
+    if (!totalBytes) {
+      totalBytes = os.totalmem();
+      freeBytes = os.freemem();
+    }
+    if (!Number.isFinite(totalBytes) || totalBytes <= 0) return null;
+    const clampedFree = Number.isFinite(freeBytes) ? Math.min(Math.max(freeBytes, 0), totalBytes) : 0;
+    const usedBytes = totalBytes - clampedFree;
+    const usedPercent = Math.round((usedBytes / totalBytes) * 100);
+    return { totalBytes, usedBytes, freeBytes: clampedFree, usedPercent };
+  } catch {
+    return null;
+  }
+}
+
 async function getSessionState(transcriptPath, customCwd = null) {
   let steps = 0;
   let branch = 'main';
   let gitPath = null;
   let usage;
+  let flatUsage;
+  let cumulativeOutputTokens = 0;
   let maxHistoricalCache = 0;
   let imageExhausted = null;
   let totalApiDurationMs = 0;
   let lastStepTimeMs = null;
+  let transcriptOutputSpeed = null;
+  let transcriptModelSelection = null;
+  let transcriptModelId = null;
+  let transcriptMode = null;
 
   try {
+    const stat = fs.statSync(transcriptPath);
+    const transcriptMtimeMs = stat.mtimeMs;
     const fileContent = fs.readFileSync(transcriptPath, 'utf8');
+    const parsedEntries = [];
     for (const line of fileContent.split('\n')) {
       if (!line.trim()) continue;
       try {
-        const entry = JSON.parse(line);
-        if (entry.step_index > steps) {
-          steps = entry.step_index;
-        }
-        const entryTimeMs = entry.created_at ? Date.parse(entry.created_at) : null;
-        if (entry.type === 'PLANNER_RESPONSE' && lastStepTimeMs !== null && entryTimeMs !== null && entryTimeMs >= lastStepTimeMs) {
-          totalApiDurationMs += (entryTimeMs - lastStepTimeMs);
-        }
-        if (entryTimeMs !== null && Number.isFinite(entryTimeMs)) {
-          lastStepTimeMs = entryTimeMs;
-        }
-        const contextWindow = findContextWindow(entry);
-        if (contextWindow) {
-          usage = contextWindow;
-          const cacheReadVal = contextWindow.cache_read_input_tokens || 
-                               (contextWindow.current_usage && contextWindow.current_usage.cache_read_input_tokens) || 0;
-          if (cacheReadVal > maxHistoricalCache) {
-            maxHistoricalCache = cacheReadVal;
-          }
-        }
-
-        // Parse image model 429 rate limits.
-        // Use deepFind on the already-parsed object instead of stringify+regex
-        // to avoid false positives (e.g. step_index or token counts containing "429").
-        const entryContent = typeof entry.content === 'string' ? entry.content : '';
-        const isRateLimit = (
-          deepFind(entry, 'RESOURCE_EXHAUSTED') !== undefined ||
-          deepFind(entry, 'quotaResetDelay') !== undefined ||
-          deepFind(entry, 'quotaResetTimeStamp') !== undefined ||
-          entryContent.includes('HTTP 429') ||
-          entryContent.includes('RESOURCE_EXHAUSTED')
-        );
-        if (isRateLimit) {
-          let delayMs = 0;
-          let timestampMs = 0;
-
-          const delayVal = deepFind(entry, 'quotaResetDelay') ?? deepFind(entry, 'retryDelay');
-          if (typeof delayVal === 'string' && delayVal) {
-            delayMs = parseDurationToMs(delayVal);
-          }
-
-          const tsVal = deepFind(entry, 'quotaResetTimeStamp');
-          if (typeof tsVal === 'string' && tsVal) {
-            const parsedTs = Date.parse(tsVal);
-            if (Number.isFinite(parsedTs)) {
-              timestampMs = parsedTs;
-            }
-          }
-
-          let resetTimeMs = 0;
-          if (timestampMs > 0) {
-            resetTimeMs = timestampMs;
-          } else if (delayMs > 0) {
-            const entryTime = entry.created_at ? new Date(entry.created_at).getTime() : Date.now();
-            resetTimeMs = entryTime + delayMs;
-          }
-
-          if (resetTimeMs > Date.now()) {
-            if (!imageExhausted || resetTimeMs > new Date(imageExhausted.resetTime).getTime()) {
-              imageExhausted = {
-                exhausted: true,
-                resetTime: new Date(resetTimeMs).toISOString()
-              };
-            }
-          }
-        }
+        parsedEntries.push(JSON.parse(line));
       } catch {
         // Skip invalid JSON lines
+      }
+    }
+
+    for (let i = 0; i < parsedEntries.length; i++) {
+      const entry = parsedEntries[i];
+      if (entry.step_index > steps) {
+        steps = entry.step_index;
+      }
+      const entryTimeMs = entry.created_at ? Date.parse(entry.created_at) : null;
+      if (entry.type === 'PLANNER_RESPONSE' && lastStepTimeMs !== null && entryTimeMs !== null && entryTimeMs >= lastStepTimeMs) {
+        totalApiDurationMs += (entryTimeMs - lastStepTimeMs);
+      }
+      if (entryTimeMs !== null && Number.isFinite(entryTimeMs)) {
+        lastStepTimeMs = entryTimeMs;
+      }
+
+      if (entry.type === 'USER_INPUT' && typeof entry.content === 'string') {
+        const selMatch = entry.content.match(/changed setting `Model Selection` from [^\n]+? to ([^\n.]+)\./);
+        if (selMatch && selMatch[1]) {
+          transcriptModelSelection = selMatch[1].trim();
+        }
+        const modeMatch = entry.content.match(/changed setting `(?:Mode|Agent Mode|Permission Mode)` from [^\n]+? to ([^\n.]+)\./i);
+        if (modeMatch && modeMatch[1]) {
+          transcriptMode = modeMatch[1].trim();
+        }
+      }
+
+      if (entry.type === 'PLANNER_RESPONSE') {
+        if (typeof entry.model === 'string' && entry.model.trim()) {
+          transcriptModelId = entry.model.trim();
+        }
+        if (typeof entry.output_tokens === 'number' && entry.output_tokens > 0 && entryTimeMs !== null && Number.isFinite(entryTimeMs)) {
+          const nextEntry = parsedEntries[i + 1];
+          const nextTimeMs = (nextEntry && nextEntry.created_at) ? Date.parse(nextEntry.created_at) : transcriptMtimeMs;
+          if (Number.isFinite(nextTimeMs) && nextTimeMs - entryTimeMs >= 500) {
+            transcriptOutputSpeed = entry.output_tokens / ((nextTimeMs - entryTimeMs) / 1000);
+          }
+        }
+        if (typeof entry.input_tokens === 'number' || typeof entry.output_tokens === 'number') {
+          const inTok = Number(entry.input_tokens) || 0;
+          const outTok = Number(entry.output_tokens) || 0;
+          const cacheReadTok = Number(entry.cache_read_tokens ?? entry.cache_read_input_tokens) || 0;
+          const cacheCreateTok = Number(entry.cache_creation_tokens ?? entry.cache_creation_input_tokens) || 0;
+          cumulativeOutputTokens += outTok;
+          if (cacheReadTok > maxHistoricalCache) {
+            maxHistoricalCache = cacheReadTok;
+          }
+          const totalIn = inTok + cacheReadTok + cacheCreateTok;
+          const ctxSize = 1000000;
+          flatUsage = {
+            total_input_tokens: totalIn,
+            total_output_tokens: cumulativeOutputTokens,
+            context_window_size: ctxSize,
+            used_percentage: Math.min(100, (totalIn / ctxSize) * 100),
+            current_usage: {
+              input_tokens: inTok,
+              output_tokens: outTok,
+              cache_read_input_tokens: cacheReadTok,
+              cache_creation_input_tokens: cacheCreateTok,
+            },
+          };
+        }
+      }
+
+      const contextWindow = findContextWindow(entry);
+      if (contextWindow) {
+        usage = contextWindow;
+        const cacheReadVal = contextWindow.cache_read_input_tokens || 
+                             (contextWindow.current_usage && contextWindow.current_usage.cache_read_input_tokens) || 0;
+        if (cacheReadVal > maxHistoricalCache) {
+          maxHistoricalCache = cacheReadVal;
+        }
+      }
+
+      // Parse image model 429 rate limits.
+      // Use deepFind on the already-parsed object instead of stringify+regex
+      // to avoid false positives (e.g. step_index or token counts containing "429").
+      const entryContent = typeof entry.content === 'string' ? entry.content : '';
+      const isRateLimit = (
+        deepFind(entry, 'RESOURCE_EXHAUSTED') !== undefined ||
+        deepFind(entry, 'quotaResetDelay') !== undefined ||
+        deepFind(entry, 'quotaResetTimeStamp') !== undefined ||
+        entryContent.includes('HTTP 429') ||
+        entryContent.includes('RESOURCE_EXHAUSTED')
+      );
+      if (isRateLimit) {
+        let delayMs = 0;
+        let timestampMs = 0;
+
+        const delayVal = deepFind(entry, 'quotaResetDelay') ?? deepFind(entry, 'retryDelay');
+        if (typeof delayVal === 'string' && delayVal) {
+          delayMs = parseDurationToMs(delayVal);
+        }
+
+        const tsVal = deepFind(entry, 'quotaResetTimeStamp');
+        if (typeof tsVal === 'string' && tsVal) {
+          const parsedTs = Date.parse(tsVal);
+          if (Number.isFinite(parsedTs)) {
+            timestampMs = parsedTs;
+          }
+        }
+
+        let resetTimeMs = 0;
+        if (timestampMs > 0) {
+          resetTimeMs = timestampMs;
+        } else if (delayMs > 0) {
+          const entryTime = entry.created_at ? new Date(entry.created_at).getTime() : Date.now();
+          resetTimeMs = entryTime + delayMs;
+        }
+
+        if (resetTimeMs > Date.now()) {
+          if (!imageExhausted || resetTimeMs > new Date(imageExhausted.resetTime).getTime()) {
+            imageExhausted = {
+              exhausted: true,
+              resetTime: new Date(resetTimeMs).toISOString()
+            };
+          }
+        }
       }
     }
   } catch {
@@ -354,8 +443,10 @@ async function getSessionState(transcriptPath, customCwd = null) {
     } catch {}
   }
 
-  // Count MCP servers
+  // Count MCP servers and read configured model/mode from settings.json
   let mcpCount = 0;
+  let configuredModel = null;
+  let configuredMode = null;
   try {
     const settingsPath = resolveAntigravityPath('settings.json');
     if (fs.existsSync(settingsPath)) {
@@ -363,6 +454,13 @@ async function getSessionState(transcriptPath, customCwd = null) {
       const mcps = settings.mcpServers || settings.mcp;
       if (mcps && typeof mcps === 'object') {
         mcpCount += Object.keys(mcps).length;
+      }
+      if (typeof settings.model === 'string' && settings.model.trim()) {
+        configuredModel = settings.model.trim();
+      }
+      const rawMode = settings.agentMode || settings.cycleMode || settings.permissionMode || settings.mode;
+      if (typeof rawMode === 'string' && rawMode.trim()) {
+        configuredMode = rawMode.trim();
       }
     }
   } catch {}
@@ -381,10 +479,18 @@ async function getSessionState(transcriptPath, customCwd = null) {
 
   const username = getActiveAccountEmail() || getFallbackUsername();
   const currentDir = path.basename(cwd);
+  const memoryUsage = getSystemMemoryUsage();
   const state = { steps, branch, memoryFile, rulesCount, mcpCount, hooksCount, currentDir, username, maxHistoricalCache, transcriptPath };
   if (usage) state.usage = usage;
+  else if (flatUsage) state.usage = flatUsage;
   if (imageExhausted) state.imageExhausted = imageExhausted;
   if (totalApiDurationMs > 0) state.totalApiDurationMs = totalApiDurationMs;
+  if (transcriptOutputSpeed !== null) state.transcriptOutputSpeed = transcriptOutputSpeed;
+  if (transcriptModelSelection) state.transcriptModelSelection = transcriptModelSelection;
+  if (transcriptModelId) state.transcriptModelId = transcriptModelId;
+  if (configuredModel) state.configuredModel = configuredModel;
+  if (transcriptMode || configuredMode) state.agentMode = transcriptMode || configuredMode;
+  if (memoryUsage) state.memoryUsage = memoryUsage;
   return state;
 }
 
