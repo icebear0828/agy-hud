@@ -12,17 +12,38 @@ export function detectShell(env = process.env, platform = process.platform) {
 
 const quote = (value) => `'${value.replaceAll("'", `'\\''`)}'`;
 
-export function buildCmdShimContents(targetScriptPath) {
+export function buildCmdShimContents(targetScriptPath, nodePath = process.execPath) {
   const scriptName = path.win32.basename(targetScriptPath);
-  return [
-    '@echo off',
-    'setlocal',
+  const lines = ['@echo off', 'setlocal'];
+  if (typeof nodePath === 'string' && /^[A-Za-z]:\\/.test(nodePath) && !/["&|<>^%!]/.test(nodePath)) {
+    lines.push(
+      `if exist "${nodePath}" (`,
+      `  "${nodePath}" "%~dp0${scriptName}" %*`,
+      '  exit /b %ERRORLEVEL%',
+      ')',
+    );
+  }
+  lines.push(
     `node "%~dp0${scriptName}" %* 2>nul`,
     'if %ERRORLEVEL%==0 exit /b 0',
     `if exist "%ProgramFiles%\\nodejs\\node.exe" "%ProgramFiles%\\nodejs\\node.exe" "%~dp0${scriptName}" %*`,
     '',
-  ].join('\r\n');
+  );
+  return lines.join('\r\n');
 }
+
+export const LEGACY_SH_SHIM_BODY = [
+  '@echo off',
+  'setlocal EnableExtensions',
+  'if /I "%~1"=="-c" (',
+  '  set "CMDLINE=%~2"',
+  ') else (',
+  '  set "CMDLINE=%*"',
+  ')',
+  'cmd.exe /d /c "%CMDLINE%"',
+  'exit /b %ERRORLEVEL%',
+  '',
+].join('\r\n');
 
 export function buildShShimContents() {
   return [
@@ -33,10 +54,15 @@ export function buildShShimContents() {
     ') else (',
     '  set "CMDLINE=%*"',
     ')',
-    'cmd.exe /d /c "%CMDLINE%"',
+    'set "CMDLINE=%CMDLINE:\\"="%"',
+    'cmd.exe /d /s /c "%CMDLINE%"',
     'exit /b %ERRORLEVEL%',
     '',
   ].join('\r\n');
+}
+
+export function isOurShShimContents(content) {
+  return content === buildShShimContents() || content === LEGACY_SH_SHIM_BODY;
 }
 
 export function getWindowsAgyBinDirs(env = process.env) {
@@ -61,7 +87,8 @@ export function ensureWindowsShShim(platform = process.platform, env = process.e
         const target = path.join(dir, name);
         let existing = null;
         try { existing = fs.readFileSync(target, 'utf8'); } catch {}
-        if (existing === body || existing !== null) continue;
+        if (existing === body) continue;
+        if (existing !== null && existing !== LEGACY_SH_SHIM_BODY) continue;
         fs.writeFileSync(target, body, 'utf8');
         written.push(target);
       }
@@ -86,14 +113,24 @@ export function createStatusLineCommand(scriptPath, nodePath = process.execPath 
   return `"${nodePath}" "${scriptPath}"`;
 }
 
-function buildCommand(shell, launcher, env = process.env) {
+function hasShExeOnPath(env = process.env) {
+  const pathValue = env.PATH || env.Path || '';
+  for (const dir of pathValue.split(';').map((entry) => entry.trim()).filter(Boolean)) {
+    try {
+      if (fs.existsSync(path.join(dir, 'sh.exe'))) return true;
+    } catch {}
+  }
+  return false;
+}
+
+export function buildCommand(shell, launcher, env = process.env) {
   if (shell === 'gitbash') {
     const cmd = launcher.replace(/\.m?js$/i, '.cmd');
     return `exec "${cmd}"`;
   }
   if (shell === 'powershell') {
-    const cmd = path.win32.join(env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
-    return `${cmd} /d /s /c ""${process.execPath}" "${launcher}""`;
+    const cmd = launcher.replace(/\.m?js$/i, '.cmd');
+    return cmd.includes(' ') || hasShExeOnPath(env) ? `"${cmd}"` : cmd;
   }
   return `${quote(process.execPath)} ${quote(launcher)}`;
 }

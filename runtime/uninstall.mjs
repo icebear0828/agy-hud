@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveAntigravityPath, getAntigravityRoots } from './paths.mjs';
-import { buildShShimContents, getWindowsAgyBinDirs } from '../install.mjs';
+import { buildShShimContents, getWindowsAgyBinDirs, isOurShShimContents } from '../install.mjs';
 
 export function isOurStatusLineCommand(command, runtimeDir) {
   if (!command) return false;
@@ -85,7 +85,7 @@ export function removeWindowsShShims(platform = process.platform, env = process.
       for (const name of ['sh.cmd', 'sh.bat']) {
         const target = path.join(dir, name);
         try {
-          if (fs.existsSync(target) && fs.readFileSync(target, 'utf8') === body) {
+          if (fs.existsSync(target) && isOurShShimContents(fs.readFileSync(target, 'utf8'))) {
             fs.unlinkSync(target);
             removed.push(target);
           }

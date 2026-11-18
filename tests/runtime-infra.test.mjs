@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getAntigravityRoots, resolveAntigravityPath, resolveSafeExecutable } from '../runtime/paths.mjs';
 import { detectUnicodeSupport } from '../runtime/encoding.mjs';
 import { isRemoteVersionNewer } from '../runtime/update-checker.mjs';
-import { buildShShimContents, createStatusLineCommand, writeCmdShim } from '../install.mjs';
+import { buildCmdShimContents, buildCommand, buildShShimContents, createStatusLineCommand, ensureWindowsShShim, LEGACY_SH_SHIM_BODY, writeCmdShim } from '../install.mjs';
 import { clearStatusLine, removeExtraFiles, removeWindowsShShims } from '../runtime/uninstall.mjs';
 import { buildAuthDiagnostic } from '../scripts/diagnose-auth.js';
 import { detectHudRender, renderTerminalScreen, stripAnsi } from '../scripts/verify-display.js';
@@ -184,7 +184,37 @@ describe('runtime / uninstall & windows shims', () => {
       const shim = writeCmdShim(path.join(tmp, 'statusline.mjs'), 'win32');
       assert.ok(shim && shim.endsWith('.cmd') && fs.readFileSync(shim, 'utf8').includes('statusline.mjs'));
       assert.equal(createStatusLineCommand('C:\\x\\statusline.mjs', 'node.exe', 'win32'), 'C:\\x\\statusline.cmd');
-      assert.equal(buildShShimContents().includes('cmd.exe /d /c'), true);
+      assert.match(buildCmdShimContents('C:\\x\\statusline.mjs', 'D:\\nodejs\\node.exe'), /if exist "D:\\nodejs\\node\.exe"/);
+      assert.equal(
+        buildCommand('powershell', 'C:\\Users\\Administrator\\.gemini\\antigravity-cli\\agy-hud\\statusline.mjs', { PATH: '' }),
+        'C:\\Users\\Administrator\\.gemini\\antigravity-cli\\agy-hud\\statusline.cmd',
+      );
+      assert.equal(
+        buildCommand('powershell', 'C:\\Users\\John Doe\\.gemini\\antigravity-cli\\agy-hud\\statusline.mjs', { PATH: '' }),
+        '"C:\\Users\\John Doe\\.gemini\\antigravity-cli\\agy-hud\\statusline.cmd"',
+      );
+      const fakeShDir = path.join(tmp, 'git-usr-bin');
+      fs.mkdirSync(fakeShDir, { recursive: true });
+      fs.writeFileSync(path.join(fakeShDir, 'sh.exe'), '');
+      assert.equal(
+        buildCommand('powershell', 'C:\\Users\\Administrator\\.gemini\\antigravity-cli\\agy-hud\\statusline.mjs', { PATH: fakeShDir }),
+        '"C:\\Users\\Administrator\\.gemini\\antigravity-cli\\agy-hud\\statusline.cmd"',
+      );
+
+      const shShim = buildShShimContents();
+      assert.ok(shShim.includes('set "CMDLINE=%CMDLINE:\\"="%"'));
+      assert.match(shShim, /cmd\.exe \/d \/s \/c "%CMDLINE%"/);
+
+      // Upgrades legacy v0.4.0-v0.4.3 sh.cmd while leaving genuine third-party sh.cmd untouched
+      const localApp = path.join(tmp, 'localapp');
+      const agyBin = path.join(localApp, 'agy', 'bin');
+      fs.mkdirSync(agyBin, { recursive: true });
+      fs.writeFileSync(path.join(agyBin, 'sh.cmd'), LEGACY_SH_SHIM_BODY);
+      fs.writeFileSync(path.join(agyBin, 'sh.bat'), '@echo third-party\r\n');
+      const upgraded = ensureWindowsShShim('win32', { LOCALAPPDATA: localApp, PATH: '' });
+      assert.deepEqual(upgraded, [path.join(agyBin, 'sh.cmd')]);
+      assert.equal(fs.readFileSync(path.join(agyBin, 'sh.cmd'), 'utf8'), shShim);
+      assert.equal(fs.readFileSync(path.join(agyBin, 'sh.bat'), 'utf8'), '@echo third-party\r\n');
       assert.deepEqual(removeWindowsShShims('linux', {}), []);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
