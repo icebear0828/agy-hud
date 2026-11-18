@@ -1,6 +1,6 @@
-﻿# One-command installer for agy-hud (Windows PowerShell).
+# One-command installer for agy-hud (Windows PowerShell).
 # Requires Node >= 22.18.0.
-# Run from a normal shell — NOT from inside an active `agy` session.
+# Run from a normal shell -- NOT from inside an active `agy` session.
 $ErrorActionPreference = 'Stop'
 
 $RepoRaw = if ($env:AGY_HUD_REPO_RAW) { $env:AGY_HUD_REPO_RAW } else { 'https://raw.githubusercontent.com/yuwenlong/agy-hud/main' }
@@ -14,11 +14,14 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Error "agy-hud: node (>= 22.18.0) is required but not on PATH."
     exit 1
 }
-node -e 'const [M,m]=process.versions.node.split(".").map(Number); if(M<22||(M===22&&m<18)){console.error("agy-hud requires Node >= 22.18.0 (found "+process.version+")"); process.exit(1);}'
+node -e "const [M,m]=process.versions.node.split('.').map(Number); if(M<22||(M===22&&m<18)){console.error('agy-hud requires Node >= 22.18.0 (found '+process.version+')'); process.exit(1);}"
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
 Write-Host "==> Removing any existing agy-hud plugin install..."
-try { agy plugin uninstall agy-hud 2>$null } catch {}
+$prevErrPref = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { agy plugin uninstall agy-hud *> $null } catch {}
+$ErrorActionPreference = $prevErrPref
 
 Write-Host "==> Installing plugin from $RepoUrl..."
 agy plugin install $RepoUrl
@@ -43,4 +46,5 @@ try {
 Write-Host ""
 Write-Host "==> agy-hud installed."
 Write-Host "    Open a new agy session in your terminal to see the HUD."
+Write-Host "    Run /hud doctor to inspect diagnostics."
 Write-Host "    Repair anytime by re-running this script."

@@ -30,6 +30,20 @@ describe('repository contracts', () => {
     assert.match(skillCfg, /hud\.mjs/);
     assert.match(readme, /scripts\/install\.sh/);
     assert.match(readmeZh, /scripts\/install\.sh/);
+
+    // PowerShell scripts piped through `irm ... | iex` fail if they carry a UTF-8 BOM (0xEF 0xBB 0xBF)
+    // or non-ASCII bytes under legacy Windows PowerShell codepages, or unescaped " inside `node -e '...'`.
+    for (const psRel of ['scripts/install.ps1', 'uninstall.ps1']) {
+      const raw = fs.readFileSync(path.join(root, psRel));
+      assert.ok(
+        !(raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf),
+        `${psRel} must NOT have a UTF-8 BOM (breaks irm ... | iex)`,
+      );
+      for (let i = 0; i < raw.length; i++) {
+        assert.ok(raw[i] <= 0x7f, `${psRel} contains non-ASCII byte 0x${raw[i].toString(16)} at offset ${i}`);
+      }
+    }
+    assert.doesNotMatch(installPs1, /node\s+-e\s+'[^']*"[^']*'/);
   });
 
   test('every file in runtime/ is listed in scripts/bootstrap.js RUNTIME_FILES and no RUNTIME_FILES entry is gitignored', async () => {
