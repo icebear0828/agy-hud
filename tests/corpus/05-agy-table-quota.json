@@ -1,0 +1,32 @@
+{
+  "note": "Antigravity table quotaStyle displays 2x2 Google/Claude grid + stdin quota overrides",
+  "columns": 120,
+  "now": "2026-11-18T10:00:00Z",
+  "config": {
+    "display": { "quotaStyle": "table", "showImageQuota": true }
+  },
+  "stdin": {
+    "model": { "id": "gemini-3-pro", "display_name": "Gemini 3 Pro (High)" },
+    "cwd": "/tmp/quota-proj",
+    "context_window": { "context_window_size": 200000, "used_percentage": 12 },
+    "quota": {
+      "gemini-5h": { "remaining_fraction": 0.9, "reset_time": "2026-11-18T14:00:00Z" },
+      "gemini-weekly": { "remaining_fraction": 0.75, "reset_time": "2026-11-24T00:00:00Z" },
+      "3p-5h": { "remaining_fraction": 0.8, "reset_time": "2026-11-18T13:00:00Z" },
+      "3p-weekly": { "remaining_fraction": 0.6, "reset_time": "2026-11-24T00:00:00Z" }
+    }
+  },
+  "facts": {
+    "agy.unicode": true
+  },
+  "expect": [
+    "exit 0",
+    "finishes within 4000ms",
+    "no line wider than columns",
+    "only safe escapes",
+    "contains Google 5h",
+    "contains Claude 5h",
+    "contains 90.00%",
+    "contains 60.00%"
+  ]
+}

@@ -1,17 +1,6 @@
 # One-command installer for agy-hud (Windows PowerShell).
-# Equivalent of install.sh for Unix — does:
-#   1. agy plugin install (or upgrade) https://github.com/icebear0828/agy-hud.git
-#   2. bootstrap runtime + configure settings.json statusLine
-#
-# Run from a normal shell — NOT from inside an active `agy` session
-# (agy rewrites settings.json from in-memory state on exit).
-#
-# Usage:
-#   irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex
-#
-# Env:
-#   AGY_HUD_REPO_RAW    override raw GitHub base URL (forks / mirrors)
-#   AGY_HUD_REPO_URL    override git URL for `agy plugin install`
+# Requires Node >= 22.18.0.
+# Run from a normal shell -- NOT from inside an active `agy` session.
 $ErrorActionPreference = 'Stop'
 
 $RepoRaw = if ($env:AGY_HUD_REPO_RAW) { $env:AGY_HUD_REPO_RAW } else { 'https://raw.githubusercontent.com/icebear0828/agy-hud/main' }
@@ -22,33 +11,64 @@ if (-not (Get-Command agy -ErrorAction SilentlyContinue)) {
     exit 1
 }
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Error "agy-hud: node is required but not on PATH."
+    Write-Error "agy-hud: node (>= 22.18.0) is required but not on PATH."
     exit 1
 }
+node -e "const [M,m]=process.versions.node.split('.').map(Number); if(M<22||(M===22&&m<18)){console.error('agy-hud requires Node >= 22.18.0 (found '+process.version+')'); process.exit(1);}"
+if ($LASTEXITCODE -ne 0) { exit 1 }
 
-# Step 1: stage the plugin. Uninstall first so stale files don't linger.
 Write-Host "==> Removing any existing agy-hud plugin install..."
-try { agy plugin uninstall agy-hud 2>$null } catch {}
+$prevErrPref = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { agy plugin uninstall agy-hud *> $null } catch {}
+$ErrorActionPreference = $prevErrPref
 
 Write-Host "==> Installing plugin from $RepoUrl..."
 agy plugin install $RepoUrl
 if ($LASTEXITCODE -ne 0) { throw "agy plugin install exited with code $LASTEXITCODE" }
 
-# Step 2: download bootstrap.js to temp, run with node
 Write-Host ""
 Write-Host "==> Bootstrapping runtime + statusLine config..."
-$BootstrapUrl = "$RepoRaw/scripts/bootstrap.js"
-$TempBootstrap = Join-Path ([System.IO.Path]::GetTempPath()) "agy-hud-bootstrap-$PID.js"
-try {
-    Invoke-WebRequest -Uri $BootstrapUrl -OutFile $TempBootstrap -UseBasicParsing
-    $env:AGY_HUD_REPO_RAW = $RepoRaw
-    node $TempBootstrap
-    if ($LASTEXITCODE -ne 0) { throw "bootstrap.js exited with code $LASTEXITCODE" }
-} finally {
-    Remove-Item $TempBootstrap -Force -ErrorAction SilentlyContinue
+$PluginDir = $null
+if (-not $env:AGY_HUD_REPO_RAW -or $env:AGY_HUD_REPO_URL) {
+    $UserHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+    $Candidates = @()
+    if ($env:AGY_HUD_DATA_DIR) { $Candidates += (Join-Path $env:AGY_HUD_DATA_DIR 'plugins\agy-hud') }
+    $Candidates += (Join-Path $UserHome '.gemini\config\plugins\agy-hud')
+    $Candidates += (Join-Path $UserHome '.gemini\antigravity-cli\plugins\agy-hud')
+    if ($env:APPDATA) { $Candidates += (Join-Path $env:APPDATA 'gemini\plugins\agy-hud') }
+    foreach ($Candidate in $Candidates) {
+        if ((Test-Path (Join-Path $Candidate 'scripts\bootstrap.js')) -and
+            (Test-Path (Join-Path $Candidate 'hud.mjs')) -and
+            (Test-Path (Join-Path $Candidate 'src\main.ts'))) {
+            $PluginDir = $Candidate
+            break
+        }
+    }
+}
+
+$env:AGY_HUD_REPO_RAW = $RepoRaw
+$env:NODE_USE_ENV_PROXY = '1'
+if ($PluginDir) {
+    $env:AGY_HUD_SETUP_SOURCE_DIR = $PluginDir
+    node (Join-Path $PluginDir 'scripts\bootstrap.js')
+    if ($LASTEXITCODE -ne 0) { throw "bootstrap exited with code $LASTEXITCODE" }
+} else {
+    $BootstrapUrl = "$RepoRaw/scripts/bootstrap.js"
+    $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) "agy-hud-bootstrap-$PID"
+    New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+    $TempBootstrap = Join-Path $TempDir 'bootstrap.mjs'
+    try {
+        Invoke-WebRequest -Uri $BootstrapUrl -OutFile $TempBootstrap -UseBasicParsing
+        node $TempBootstrap
+        if ($LASTEXITCODE -ne 0) { throw "bootstrap exited with code $LASTEXITCODE" }
+    } finally {
+        Remove-Item $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host ""
 Write-Host "==> agy-hud installed."
 Write-Host "    Open a new agy session in your terminal to see the HUD."
+Write-Host "    Run /hud doctor to inspect diagnostics."
 Write-Host "    Repair anytime by re-running this script."

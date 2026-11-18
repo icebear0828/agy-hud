@@ -1,0 +1,32 @@
+{
+  "note": "Narrow CJK zh-Hans wrap preserves OSC8 link boundaries and cell width <= columns",
+  "columns": 52,
+  "now": "2026-11-18T10:00:00Z",
+  "config": {
+    "language": "zh-Hans"
+  },
+  "stdin": {
+    "model": { "id": "gemini-3-pro", "display_name": "Gemini 3 Pro (High)" },
+    "cwd": "/tmp/中文测试项目",
+    "workspace": {
+      "current_dir": "/tmp/中文测试项目",
+      "repo": { "host": "github.com", "owner": "icebear0828", "name": "agy-hud" }
+    },
+    "context_window": { "context_window_size": 200000, "used_percentage": 68 },
+    "rate_limits": { "five_hour": { "used_percentage": 45, "resets_at": 1795003200 } }
+  },
+  "facts": {
+    "git.status": { "stdout": "# branch.head feat/中文分支-超长名字测试\n" },
+    "agy.unicode": true
+  },
+  "expect": [
+    "exit 0",
+    "finishes within 4000ms",
+    "no line wider than columns",
+    "every line closes its OSC 8 link",
+    "only safe escapes",
+    "no lone surrogate",
+    "contains 上下文",
+    "contains 68%"
+  ]
+}

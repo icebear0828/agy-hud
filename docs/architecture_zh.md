@@ -84,7 +84,7 @@ graph TD
 网络请求开销大，[quota.js](file:///Users/c/agy-hud/runtime/quota.js) 作为主入口，协调其四个专门子模块来提供高能效的 **SWR (Stale-While-Revalidate)** 机制：
 - **`quota/token.js`**：跨平台令牌（Token）发现，包括 Unix 文件读取和 Windows 凭据管理器 C# 脚本直接读取（首创 5 分钟局部临时缓存）。
 - **`quota/cache.js`**：缓存读写模块。引入 **Schema v3 结构**，增加 `accountEmail` 缓存以跟踪切号情况。缓存以 Token 文件来源为 key 进行哈希（`cacheKeyHash`），确保在 OAuth refresh 后依然能复用缓存，不会产生抖动。
-- **`quota/cloud.js`**：云端 PA API & OIDC 客户端。执行 `fetchAvailableModels` 额度抓取、`loadCodeAssist` 订阅等级抓取，以及**首创的 Google OIDC 认证邮箱直读（`fetchAccountEmail`）**，从根本上确保多账号切号时 email 权威无误（PR #62）。
+- **`quota/cloud.js`**：云端 PA API、AICode Quota API 与 OIDC 客户端。支持 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量代理隧道，执行 `fetchAvailableModels` 模型抓取、`retrieveUserQuotaSummary` 与 `aicode.googleapis.com/v1alpha:fetchQuotaStatus` 双通道配额汇总（确保 Google / Claude 的 5h 与周度配额完整准确）、`loadCodeAssist` 订阅等级抓取，以及**首创的 Google OIDC 认证邮箱直读（`fetchAccountEmail`）**，从根本上确保多账号切号时 email 权威无误（PR #62）。
 - **`quota/models.js`**：API 配额标准化与归并。由于 PA 接口每次只返回当前时间窗口绑定的额度（短期/长期交替），该模块实现了五小时与每周窗口的**历史观察数据合并（`mergeQuotaWindows`）**，并在渲染层呈现正确的单行指标。
 
 ### 核心运作逻辑：

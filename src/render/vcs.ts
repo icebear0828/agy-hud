@@ -1,0 +1,97 @@
+import * as path from 'node:path';
+import { DEFAULT_CONFIG } from '../config.ts';
+import type { Frame, Layout } from './frame.ts';
+import { critical, dim, git as gitColor, gitBranch, green, red, warning, yellow } from './colors.ts';
+import { getFileHref, safeHyperlink } from '../utils/hyperlinks.ts';
+import { sanitizeDisplayText } from '../utils/sanitize.ts';
+
+function aheadCount(f: Frame, ahead: number): string {
+  const config = f.config.gitStatus ?? DEFAULT_CONFIG.gitStatus;
+  const colors = f.config?.colors;
+  const value = `${f.unicode ? '↑' : '^'}${ahead}`;
+  if (config.pushCriticalThreshold > 0 && ahead >= config.pushCriticalThreshold) return critical(value, colors);
+  if (config.pushWarningThreshold > 0 && ahead >= config.pushWarningThreshold) return warning(value, colors);
+  return gitBranch(value, colors);
+}
+
+export function vcsPart(f: Frame, layout: Layout): string | null {
+  const status = f.gitStatus;
+  if (!status) return null;
+  const git = f.config.gitStatus ?? DEFAULT_CONFIG.gitStatus;
+  const jj = f.config.jjStatus ?? DEFAULT_CONFIG.jjStatus;
+  const isJj = status.vcs === 'jj';
+  if (!(isJj ? jj.enabled : git.enabled)) return null;
+
+  const colors = f.config?.colors;
+  const dirty = (isJj ? jj.showDirty : git.showDirty) && status.isDirty;
+  const branch = safeHyperlink(
+    isJj ? undefined : status.branchUrl,
+    gitBranch(`${sanitizeDisplayText(status.branch)}${dirty ? '*' : ''}`, colors),
+  );
+  const inner = [branch];
+
+  if (!isJj && git.showAheadBehind) {
+    if (status.ahead > 0) inner.push(aheadCount(f, status.ahead));
+    if (status.behind > 0) inner.push(gitBranch(`${f.unicode ? '↓' : 'v'}${status.behind}`, colors));
+  }
+  if (!isJj && git.showFileStats) {
+    if (layout === 'expanded' && status.lineDiff) {
+      const diff = [
+        status.lineDiff.added > 0 ? green(`+${status.lineDiff.added}`) : '',
+        status.lineDiff.deleted > 0 ? red(`-${status.lineDiff.deleted}`) : '',
+      ].filter(Boolean);
+      if (diff.length > 0) inner.push(`[${diff.join(' ')}]`);
+    }
+    if (layout === 'compact' && status.fileStats) {
+      const { modified, added, deleted, untracked } = status.fileStats;
+      const delSym = f.unicode ? '✘' : '-';
+      const counts = [[modified, '!'], [added, '+'], [deleted, delSym], [untracked, '?']]
+        .filter(([count]) => (count as number) > 0)
+        .map(([count, symbol]) => `${symbol}${count}`);
+      if (counts.length > 0) inner.push(gitBranch(counts.join(' '), colors));
+    }
+  }
+  if (isJj && jj.showConflicts && status.conflict === true) inner.push(critical('!conflict', colors));
+
+  const worktreeName = !isJj && git.showWorktree ? sanitizeDisplayText(f.stdin.workspace?.git_worktree ?? f.stdin.worktree?.name ?? '').trim() : '';
+  const wtPrefix = f.config?.display?.useNerdFonts ? '\ue725 ' : (f.unicode ? '⎇ ' : 'wt:');
+  const worktree = worktreeName ? ` ${gitColor(`${wtPrefix}${worktreeName}`, colors)}` : '';
+  return `${gitColor(isJj ? 'jj:(' : 'git:(', colors)}${inner.join(' ')}${gitColor(')', colors)}${worktree}`;
+}
+
+function insideCwd(cwd: string, candidate: string): string | null {
+  const resolved = path.resolve(cwd, candidate);
+  const relative = path.relative(path.resolve(cwd), resolved);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative)) ? resolved : null;
+}
+
+const MAX_FILES = 6;
+
+export function gitFilesLine(f: Frame): string | null {
+  const stats = f.gitStatus?.fileStats;
+  if (!(f.config?.gitStatus?.showFileStats ?? false) || !stats) return null;
+  if (stats.trackedFiles.length === 0 && stats.untracked === 0) return null;
+  if (f.width !== null && f.width < 60) return null;
+
+  const cwd = f.stdin.workspace?.current_dir ?? f.stdin.cwd;
+  const files = stats.trackedFiles;
+
+  const colorFor = { added: green, deleted: red, modified: yellow } as const;
+  const prefix = { added: '+', deleted: '-', modified: '~' } as const;
+  const entries = files.slice(0, MAX_FILES).map((file) => {
+    const color = colorFor[file.type];
+    const resolved = cwd ? insideCwd(cwd, file.fullPath) : null;
+    const name = color(sanitizeDisplayText(file.basename));
+    let entry = `${color(prefix[file.type])}${resolved ? safeHyperlink(getFileHref(resolved), name) : name}`;
+    const diff = file.lineDiff;
+    const diffParts = diff
+      ? [diff.added > 0 ? green(`+${diff.added}`) : '', diff.deleted > 0 ? red(`-${diff.deleted}`) : ''].filter(Boolean)
+      : [];
+    if (diffParts.length > 0) entry += dim(`(${diffParts.join(' ')})`);
+    return entry;
+  });
+
+  if (files.length > MAX_FILES) entries.push(dim(`+${files.length - MAX_FILES} more`));
+  if (stats.untracked > 0) entries.push(dim(`?${stats.untracked}`));
+  return entries.join('  ');
+}

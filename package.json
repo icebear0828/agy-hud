@@ -1,14 +1,24 @@
 {
   "name": "agy-hud",
-  "version": "0.3.3",
-  "description": "Premium HUD for Antigravity CLI",
-  "main": "runtime/bin/agy-hud.js",
+  "version": "0.4.7",
+  "description": "Real-time statusline HUD for Antigravity CLI",
+  "type": "module",
+  "main": "hud.mjs",
   "files": [
-    "runtime",
-    "scripts",
-    "skills",
+    "hud.mjs",
+    "collector.mjs",
+    "fence.mjs",
+    "install.mjs",
+    "ARCHITECTURE.md",
+    "dist/index.js",
+    "src/",
+    "runtime/",
+    "scripts/",
+    "skills/",
     "plugin.json",
+    "gemini-extension.json",
     "README.md",
+    "README_zh.md",
     "package.json"
   ],
   "repository": {
@@ -20,18 +30,29 @@
     "url": "https://github.com/icebear0828/agy-hud/issues"
   },
   "scripts": {
-    "test": "node --test tests/unit/*.test.mjs",
+    "typecheck": "tsc -p .",
+    "test": "node --import ./tests/clean-env.js --test tests/*.test.mjs",
+    "test:update-snapshots": "UPDATE_SNAPSHOTS=1 npm test",
+    "verify": "node verify/run.mjs",
     "bootstrap": "node scripts/bootstrap.js",
-    "verify": "node scripts/verify-display.js",
+    "verify:e2e": "node scripts/verify-display.js",
     "diagnose": "node scripts/diagnose-auth.js",
-    "config": "node runtime/bin/agy-hud.js --config"
+    "config": "node hud.mjs --config"
   },
   "keywords": [
     "antigravity",
     "cli",
     "hud",
+    "statusline",
     "terminal"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
 }

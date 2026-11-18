@@ -1,0 +1,27 @@
+{
+  "note": "jj VCS status and inline addedDirs render cleanly without touching git or leaking host paths",
+  "columns": 120,
+  "now": "2026-11-18T10:00:00Z",
+  "config": {
+    "jjStatus": { "enabled": true, "showDirty": true, "showConflicts": true }
+  },
+  "stdin": {
+    "model": { "id": "gemini-3-flash", "display_name": "Gemini 3 Flash" },
+    "cwd": "/tmp/jj-repo",
+    "workspace": { "current_dir": "/tmp/jj-repo", "added_dirs": ["/tmp/extra-lib", "/tmp/shared-docs"] },
+    "context_window": { "context_window_size": 1000000, "used_percentage": 5 }
+  },
+  "facts": {
+    "jj": "kzvz\u001fmain-bookmark\u001f1\u001f1\n",
+    "agy.unicode": true
+  },
+  "expect": [
+    "exit 0",
+    "finishes within 4000ms",
+    "no line wider than columns",
+    "only safe escapes",
+    "contains jj:(main-bookmark* !conflict)",
+    "contains +extra-lib",
+    "contains +shared-docs"
+  ]
+}
