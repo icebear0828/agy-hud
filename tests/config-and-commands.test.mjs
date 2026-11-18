@@ -63,7 +63,7 @@ function fakeFacts(paths, cwd) {
   return {
     runtime: { name: 'node', version: '26.13.0', path: process.execPath, supported: true },
     runtimes: [{ name: 'system', version: 'v26.13.0', path: process.execPath }],
-    plugin: { root: cwd, version: '0.4.6' },
+    plugin: { root: cwd, version: '0.4.7' },
     configPath: paths.config,
     undoPath: path.join(path.dirname(paths.config), 'config.undo.json'),
     cwd,

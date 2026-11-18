@@ -135,17 +135,30 @@ function sourceUrl(sourceBase, relativePath) {
   return `${sourceBase.replace(/\/+$/, '')}/${relativePath}`;
 }
 
+function makeHttpError(message, status, retryAfterSec = null) {
+  const err = new Error(message);
+  err.status = status;
+  err.retryAfterSec = retryAfterSec;
+  err.retryable = status === 408 || status === 429 || status >= 500;
+  return err;
+}
+
 function requestBuffer(url, redirectsLeft = 5) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const client = parsed.protocol === 'http:' ? http : https;
-    const req = client.get(parsed, (response) => {
+    const req = client.get(parsed, {
+      headers: {
+        'User-Agent': 'agy-hud-bootstrap',
+        Connection: 'close',
+      },
+    }, (response) => {
       const status = response.statusCode || 0;
       if (status >= 300 && status < 400 && response.headers.location && redirectsLeft > 0) {
         response.resume();
         const nextUrl = new URL(response.headers.location, parsed);
         if (parsed.protocol === 'https:' && nextUrl.protocol === 'http:') {
-          reject(new Error(`insecure redirect from https to http forbidden: ${url} -> ${nextUrl.toString()}`));
+          reject(makeHttpError(`insecure redirect from https to http forbidden: ${url} -> ${nextUrl.toString()}`, 400));
           return;
         }
         resolve(requestBuffer(nextUrl.toString(), redirectsLeft - 1));
@@ -153,7 +166,12 @@ function requestBuffer(url, redirectsLeft = 5) {
       }
       if (status < 200 || status >= 300) {
         response.resume();
-        reject(new Error(`download failed (${status}): ${url}`));
+        const retryAfter = Number(response.headers['retry-after']);
+        reject(makeHttpError(
+          `download failed (${status}): ${url}`,
+          status,
+          Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
+        ));
         return;
       }
 
@@ -168,17 +186,21 @@ function requestBuffer(url, redirectsLeft = 5) {
   });
 }
 
-async function requestBufferWithRetry(url, maxAttempts = 3) {
+async function requestBufferWithRetry(url, maxAttempts = 5, retryBaseMs = 1000) {
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await requestBuffer(url);
     } catch (err) {
       lastErr = err;
+      if (err && err.retryable === false) throw err;
       if (attempt < maxAttempts) {
-        const delaySec = Math.pow(2, attempt - 1);
-        process.stderr.write(`[agy-hud] download attempt ${attempt} failed (${err.message}), retrying in ${delaySec}s...\n`);
-        await new Promise((r) => setTimeout(r, delaySec * 1000));
+        const expMs = Math.min(8, Math.pow(2, attempt - 1)) * retryBaseMs;
+        const headerMs = err?.retryAfterSec ? Math.min(10, err.retryAfterSec) * retryBaseMs : 0;
+        const delayMs = Math.max(expMs, headerMs);
+        const label = delayMs >= 1000 ? `${Math.round(delayMs / 1000)}s` : `${delayMs}ms`;
+        process.stderr.write(`[agy-hud] download attempt ${attempt} failed (${err.message}), retrying in ${label}...\n`);
+        await new Promise((r) => setTimeout(r, delayMs));
       }
     }
   }
@@ -189,7 +211,7 @@ async function readRuntimeFile(relativePath, options) {
   if (options.sourceDir) {
     return fs.readFileSync(path.join(options.sourceDir, ...relativePath.split('/')));
   }
-  return requestBufferWithRetry(sourceUrl(options.sourceBase, relativePath));
+  return requestBufferWithRetry(sourceUrl(options.sourceBase, relativePath), options.maxAttempts, options.retryBaseMs);
 }
 
 export function cleanStalePluginFiles(antigravityRoot, options = {}) {
@@ -291,7 +313,8 @@ export async function installRuntime(options = {}) {
   const hasLocalRuntime =
     fs.existsSync(path.join(repoCandidate, 'hud.mjs'))
     && fs.existsSync(path.join(repoCandidate, 'src', 'main.ts'));
-  const sourceDir = options.sourceDir || env.AGY_HUD_SETUP_SOURCE_DIR || (hasLocalRuntime ? repoCandidate : '');
+  const hasExplicitRemote = Boolean(options.sourceBase || env.AGY_HUD_REPO_RAW || env.AGY_HUD_SETUP_SOURCE_BASE);
+  const sourceDir = options.sourceDir || env.AGY_HUD_SETUP_SOURCE_DIR || (!hasExplicitRemote && hasLocalRuntime ? repoCandidate : '');
   const sourceBase = options.sourceBase || env.AGY_HUD_REPO_RAW || env.AGY_HUD_SETUP_SOURCE_BASE || DEFAULT_SOURCE_BASE;
   const antigravityRoot = options.antigravityRoot || pickAntigravityRoot(env, homeDir);
   const runtimeDir = path.join(antigravityRoot, 'agy-hud-runtime');
@@ -308,8 +331,13 @@ export async function installRuntime(options = {}) {
   }
 
   try {
-    await mapConcurrent(RUNTIME_FILES, sourceDir ? 16 : 8, async (relativePath) => {
-      const body = await readRuntimeFile(relativePath, { sourceDir, sourceBase });
+    await mapConcurrent(RUNTIME_FILES, sourceDir ? 16 : 3, async (relativePath) => {
+      const body = await readRuntimeFile(relativePath, {
+        sourceDir,
+        sourceBase,
+        maxAttempts: options.maxAttempts,
+        retryBaseMs: options.retryBaseMs,
+      });
       const target = path.join(tempRuntimeDir, ...relativePath.split('/'));
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, body);

@@ -20,8 +20,10 @@ describe('repository contracts', () => {
 
     assert.match(installSh, /icebear0828\/agy-hud/);
     assert.match(installSh, /22.*18|18.*22/);
+    assert.match(installSh, /AGY_HUD_SETUP_SOURCE_DIR/);
     assert.match(installPs1, /icebear0828\/agy-hud/);
     assert.match(installPs1, /22.*18|18.*22/);
+    assert.match(installPs1, /AGY_HUD_SETUP_SOURCE_DIR/);
     assert.match(uninstallSh, /uninstall\.mjs/);
     assert.match(uninstallPs1, /uninstall\.mjs/);
     assert.match(skillHud, /doctor/);

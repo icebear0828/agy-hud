@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -304,6 +305,44 @@ describe('scripts / bootstrap', () => {
         /ENOENT/,
       );
       assert.equal(fs.existsSync(sentinel), true);
+
+      // 4. Remote download recovers cleanly from transient HTTP 503 bursts with backoff
+      const attemptsByPath = new Map();
+      const server = http.createServer((req, res) => {
+        const rel = String(req.url || '').replace(/^\/+/, '');
+        const count = (attemptsByPath.get(rel) || 0) + 1;
+        attemptsByPath.set(rel, count);
+        if (count <= 2) {
+          res.writeHead(503);
+          res.end('Service Unavailable');
+          return;
+        }
+        const filePath = path.join(projectRoot, ...rel.split('/'));
+        if (!fs.existsSync(filePath)) {
+          res.writeHead(404);
+          res.end();
+          return;
+        }
+        res.writeHead(200);
+        fs.createReadStream(filePath).pipe(res);
+      });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const retryHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-boot-503-'));
+      try {
+        const port = server.address().port;
+        const retryRes = await installRuntime({
+          homeDir: retryHome,
+          sourceBase: `http://127.0.0.1:${port}`,
+          platform: 'linux',
+          retryBaseMs: 5,
+          env: { ...process.env, HOME: retryHome, USERPROFILE: retryHome, AGY_HUD_DATA_DIR: '' },
+        });
+        assert.equal(fs.existsSync(path.join(retryRes.runtimeDir, 'dist', 'index.js')), true);
+        assert.equal(attemptsByPath.get('dist/index.js'), 3);
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+        fs.rmSync(retryHome, { recursive: true, force: true });
+      }
     } finally {
       globalThis.fetch = previousFetch;
       fs.rmSync(home, { recursive: true, force: true });

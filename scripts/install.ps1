@@ -29,18 +29,42 @@ if ($LASTEXITCODE -ne 0) { throw "agy plugin install exited with code $LASTEXITC
 
 Write-Host ""
 Write-Host "==> Bootstrapping runtime + statusLine config..."
-$BootstrapUrl = "$RepoRaw/scripts/bootstrap.js"
-$TempDir = Join-Path ([System.IO.Path]::GetTempPath()) "agy-hud-bootstrap-$PID"
-New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
-$TempBootstrap = Join-Path $TempDir 'bootstrap.mjs'
-try {
-    Invoke-WebRequest -Uri $BootstrapUrl -OutFile $TempBootstrap -UseBasicParsing
-    $env:AGY_HUD_REPO_RAW = $RepoRaw
-    $env:NODE_USE_ENV_PROXY = '1'
-    node $TempBootstrap
+$PluginDir = $null
+if (-not $env:AGY_HUD_REPO_RAW -or $env:AGY_HUD_REPO_URL) {
+    $UserHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+    $Candidates = @()
+    if ($env:AGY_HUD_DATA_DIR) { $Candidates += (Join-Path $env:AGY_HUD_DATA_DIR 'plugins\agy-hud') }
+    $Candidates += (Join-Path $UserHome '.gemini\config\plugins\agy-hud')
+    $Candidates += (Join-Path $UserHome '.gemini\antigravity-cli\plugins\agy-hud')
+    if ($env:APPDATA) { $Candidates += (Join-Path $env:APPDATA 'gemini\plugins\agy-hud') }
+    foreach ($Candidate in $Candidates) {
+        if ((Test-Path (Join-Path $Candidate 'scripts\bootstrap.js')) -and
+            (Test-Path (Join-Path $Candidate 'hud.mjs')) -and
+            (Test-Path (Join-Path $Candidate 'src\main.ts'))) {
+            $PluginDir = $Candidate
+            break
+        }
+    }
+}
+
+$env:AGY_HUD_REPO_RAW = $RepoRaw
+$env:NODE_USE_ENV_PROXY = '1'
+if ($PluginDir) {
+    $env:AGY_HUD_SETUP_SOURCE_DIR = $PluginDir
+    node (Join-Path $PluginDir 'scripts\bootstrap.js')
     if ($LASTEXITCODE -ne 0) { throw "bootstrap exited with code $LASTEXITCODE" }
-} finally {
-    Remove-Item $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    $BootstrapUrl = "$RepoRaw/scripts/bootstrap.js"
+    $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) "agy-hud-bootstrap-$PID"
+    New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+    $TempBootstrap = Join-Path $TempDir 'bootstrap.mjs'
+    try {
+        Invoke-WebRequest -Uri $BootstrapUrl -OutFile $TempBootstrap -UseBasicParsing
+        node $TempBootstrap
+        if ($LASTEXITCODE -ne 0) { throw "bootstrap exited with code $LASTEXITCODE" }
+    } finally {
+        Remove-Item $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host ""

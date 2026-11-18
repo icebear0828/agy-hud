@@ -43,11 +43,29 @@ agy plugin install "$REPO_URL"
 
 echo
 echo "==> Bootstrapping runtime + statusLine config..."
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agy-hud-bootstrap-XXXXXX")"
-trap 'rm -rf "$TMP_DIR"' EXIT
-TMP_BOOTSTRAP="$TMP_DIR/bootstrap.mjs"
-curl -fsSL "$REPO_RAW/scripts/bootstrap.js" -o "$TMP_BOOTSTRAP"
-NODE_USE_ENV_PROXY=1 AGY_HUD_REPO_RAW="$REPO_RAW" node "$TMP_BOOTSTRAP"
+PLUGIN_DIR=""
+if [ -z "${AGY_HUD_REPO_RAW:-}" ] || [ -n "${AGY_HUD_REPO_URL:-}" ]; then
+  for candidate in \
+    "${AGY_HUD_DATA_DIR:+$AGY_HUD_DATA_DIR/plugins/agy-hud}" \
+    "$HOME/.gemini/config/plugins/agy-hud" \
+    "$HOME/.gemini/antigravity-cli/plugins/agy-hud" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/gemini/plugins/agy-hud"; do
+    if [ -n "$candidate" ] && [ -f "$candidate/scripts/bootstrap.js" ] && [ -f "$candidate/hud.mjs" ] && [ -f "$candidate/src/main.ts" ]; then
+      PLUGIN_DIR="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -n "$PLUGIN_DIR" ]; then
+  NODE_USE_ENV_PROXY=1 AGY_HUD_SETUP_SOURCE_DIR="$PLUGIN_DIR" AGY_HUD_REPO_RAW="$REPO_RAW" node "$PLUGIN_DIR/scripts/bootstrap.js"
+else
+  TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agy-hud-bootstrap-XXXXXX")"
+  trap 'rm -rf "$TMP_DIR"' EXIT
+  TMP_BOOTSTRAP="$TMP_DIR/bootstrap.mjs"
+  curl -fsSL "$REPO_RAW/scripts/bootstrap.js" -o "$TMP_BOOTSTRAP"
+  NODE_USE_ENV_PROXY=1 AGY_HUD_REPO_RAW="$REPO_RAW" node "$TMP_BOOTSTRAP"
+fi
 
 cat <<DONE
 
