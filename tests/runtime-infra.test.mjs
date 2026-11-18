@@ -186,19 +186,12 @@ describe('runtime / uninstall & windows shims', () => {
       assert.equal(createStatusLineCommand('C:\\x\\statusline.mjs', 'node.exe', 'win32'), 'C:\\x\\statusline.cmd');
       assert.match(buildCmdShimContents('C:\\x\\statusline.mjs', 'D:\\nodejs\\node.exe'), /if exist "D:\\nodejs\\node\.exe"/);
       assert.equal(
-        buildCommand('powershell', 'C:\\Users\\Administrator\\.gemini\\antigravity-cli\\agy-hud\\statusline.mjs', { PATH: '' }),
+        buildCommand('powershell', 'C:\\Users\\Administrator\\.gemini\\antigravity-cli\\agy-hud\\statusline.mjs'),
         'C:\\Users\\Administrator\\.gemini\\antigravity-cli\\agy-hud\\statusline.cmd',
       );
       assert.equal(
-        buildCommand('powershell', 'C:\\Users\\John Doe\\.gemini\\antigravity-cli\\agy-hud\\statusline.mjs', { PATH: '' }),
-        '"C:\\Users\\John Doe\\.gemini\\antigravity-cli\\agy-hud\\statusline.cmd"',
-      );
-      const fakeShDir = path.join(tmp, 'git-usr-bin');
-      fs.mkdirSync(fakeShDir, { recursive: true });
-      fs.writeFileSync(path.join(fakeShDir, 'sh.exe'), '');
-      assert.equal(
-        buildCommand('powershell', 'C:\\Users\\Administrator\\.gemini\\antigravity-cli\\agy-hud\\statusline.mjs', { PATH: fakeShDir }),
-        '"C:\\Users\\Administrator\\.gemini\\antigravity-cli\\agy-hud\\statusline.cmd"',
+        buildCommand('powershell', 'C:\\Users\\John Doe\\.gemini\\antigravity-cli\\agy-hud\\statusline.mjs'),
+        'C:\\Users\\John Doe\\.gemini\\antigravity-cli\\agy-hud\\statusline.cmd',
       );
 
       const shShim = buildShShimContents();

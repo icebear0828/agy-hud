@@ -7,7 +7,7 @@ const LAUNCHER = fileURLToPath(new URL('./scripts/statusline.mjs', import.meta.u
 
 export function detectShell(env = process.env, platform = process.platform) {
   if (platform !== 'win32') return 'posix';
-  return env.MSYSTEM || /bash/i.test(env.SHELL ?? '') ? 'gitbash' : 'powershell';
+  return 'powershell';
 }
 
 const quote = (value) => `'${value.replaceAll("'", `'\\''`)}'`;
@@ -113,24 +113,13 @@ export function createStatusLineCommand(scriptPath, nodePath = process.execPath 
   return `"${nodePath}" "${scriptPath}"`;
 }
 
-function hasShExeOnPath(env = process.env) {
-  const pathValue = env.PATH || env.Path || '';
-  for (const dir of pathValue.split(';').map((entry) => entry.trim()).filter(Boolean)) {
-    try {
-      if (fs.existsSync(path.join(dir, 'sh.exe'))) return true;
-    } catch {}
-  }
-  return false;
-}
-
-export function buildCommand(shell, launcher, env = process.env) {
+export function buildCommand(shell, launcher) {
   if (shell === 'gitbash') {
     const cmd = launcher.replace(/\.m?js$/i, '.cmd');
     return `exec "${cmd}"`;
   }
   if (shell === 'powershell') {
-    const cmd = launcher.replace(/\.m?js$/i, '.cmd');
-    return cmd.includes(' ') || hasShExeOnPath(env) ? `"${cmd}"` : cmd;
+    return launcher.replace(/\.m?js$/i, '.cmd');
   }
   return `${quote(process.execPath)} ${quote(launcher)}`;
 }
