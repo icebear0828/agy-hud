@@ -1,39 +1,38 @@
 #!/usr/bin/env node
-'use strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync, spawn } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const fs = require('fs');
-const http = require('http');
-const os = require('os');
-const path = require('path');
-const { execFileSync, spawn } = require('child_process');
-
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
 const zipPath = path.join(projectRoot, 'agy-hud.zip');
 const agyBin = process.env.AGY_BIN || 'agy';
 const currentHome = process.argv.includes('--current-home');
-const timeoutArg = process.argv.find(arg => arg.startsWith('--observe-timeout-ms='));
+const timeoutArg = process.argv.find((arg) => arg.startsWith('--observe-timeout-ms='));
 const observeTimeoutMs = timeoutArg ? Number(timeoutArg.split('=')[1]) : 12_000;
 
-function stripAnsi(value) {
+export function stripAnsi(value) {
   return value
-    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
 }
 
-function detectHudRender(...values) {
+export function detectHudRender(...values) {
   return values
-    .filter(value => typeof value === 'string' && value.trim())
-    .some(value => {
-      const plain = stripAnsi(value);
-      const hasBranch = /(?:⎇||\[B\])\s*\S+/.test(plain);
-      const hasContext = /(?:⛁|󱔐|\[C\])\s*\d+(?:\.\d+)?[kM]?\/\d+(?:\.\d+)?[kM]?/i.test(plain);
-      const hasTokenBreakdown = /(?:⚿|󰚩|\[Tk\]|Tokens)\s*(?:Tokens\s+)?\d+(?:\.\d+)?[kM]?\s*(?:↑|\^|\(in:)/i.test(plain);
-
-      return hasBranch && hasContext && hasTokenBreakdown;
+    .filter((value) => typeof value === 'string' && value.trim())
+    .some((value) => {
+      const plain = stripAnsi(value).replace(/\u00A0/g, ' ');
+      const hasModelBadge = /\[[A-Za-z0-9][^\]]*\]/.test(plain);
+      const hasContextBar = /(?:Context|上下文)\s+(?:[█░#-]{3,}\s+)?\d+%/i.test(plain);
+      return hasModelBadge && hasContextBar;
     });
 }
 
-function renderTerminalScreen(value, width = 160) {
+export function renderTerminalScreen(value, width = 160) {
   const rows = [[]];
   let row = 0;
   let col = 0;
@@ -53,8 +52,10 @@ function renderTerminalScreen(value, width = 160) {
 
     if (ch === '\x1b') {
       if (value[i + 1] === ']') {
-        const end = value.indexOf('\x07', i + 2);
-        i = end === -1 ? value.length : end + 1;
+        const bell = value.indexOf('\x07', i + 2);
+        const st = value.indexOf('\x1b\\', i + 2);
+        const end = bell !== -1 && (st === -1 || bell < st) ? bell + 1 : st !== -1 ? st + 2 : value.length;
+        i = end;
         continue;
       }
 
@@ -114,7 +115,7 @@ function renderTerminalScreen(value, width = 160) {
   }
 
   return rows
-    .map(chars => chars.join('').replace(/\s+$/g, ''))
+    .map((chars) => chars.join('').replace(/\s+$/g, ''))
     .join('\n');
 }
 
@@ -125,9 +126,7 @@ function fail(message, details) {
 }
 
 function run(command, args, options = {}) {
-  // MUST be async: spawnSync blocks the Node event loop, which deadlocks the
-  // in-process zip HTTP server. agy download hangs → SIGTERM at timeout.
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: options.cwd || projectRoot,
       env: options.env || process.env,
@@ -144,13 +143,13 @@ function run(command, args, options = {}) {
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 1000).unref();
     }, options.timeout || 90_000);
-    child.stdout.on('data', d => { stdout += d.toString(); });
-    child.stderr.on('data', d => { stderr += d.toString(); });
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
     child.on('close', (status, signal) => {
       clearTimeout(timer);
       resolve({ status, signal, stdout, stderr, timedOut, error: null });
     });
-    child.on('error', error => {
+    child.on('error', (error) => {
       clearTimeout(timer);
       resolve({ status: null, signal: null, stdout, stderr, timedOut, error });
     });
@@ -172,7 +171,7 @@ function startZipServer() {
     fs.createReadStream(zipPath).pipe(res);
   });
 
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     server.listen(0, () => {
       resolve({
         server,
@@ -196,35 +195,19 @@ function buildEnv(tmpRoot) {
   } else {
     env.XDG_DATA_HOME = path.join(tmpRoot, 'xdg');
   }
-  // Mirror the real OAuth token so agy in the isolated HOME can pass sign-in
-  // and actually render its TUI (including the statusLine). Without this, agy
-  // boots into the sign-in screen and never invokes statusLine_runner.
-  const realToken = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
-  if (fs.existsSync(realToken)) {
-    const dst = path.join(home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(realToken, dst);
+  for (const rel of [
+    path.join('antigravity-cli', 'antigravity-oauth-token'),
+    'oauth_creds.json',
+    'google_accounts.json',
+  ]) {
+    const src = path.join(os.homedir(), '.gemini', rel);
+    if (fs.existsSync(src)) {
+      const dst = path.join(home, '.gemini', rel);
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      fs.copyFileSync(src, dst);
+    }
   }
   return env;
-}
-
-function readInstallState(env) {
-  const home = env.HOME || env.USERPROFILE || os.homedir();
-  const base = path.join(home, '.gemini', 'antigravity-cli');
-  const settingsPath = path.join(base, 'settings.json');
-  const pluginDirs = getPluginDirs(env);
-  const runtimeDir = path.join(base, 'agy-hud-runtime');
-  let settings = null;
-  try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { /* missing */ }
-  return {
-    base,
-    settingsExists: fs.existsSync(settingsPath),
-    statusLine: settings && settings.statusLine ? settings.statusLine : null,
-    pluginExists: pluginDirs.some(pluginDir => fs.existsSync(pluginDir)),
-    pluginDirs: pluginDirs.filter(pluginDir => fs.existsSync(pluginDir)),
-    runtimeExists: fs.existsSync(runtimeDir),
-    runtimeHudExists: fs.existsSync(path.join(runtimeDir, 'runtime', 'bin', 'agy-hud.js')),
-  };
 }
 
 function getPluginDirs(env) {
@@ -234,34 +217,50 @@ function getPluginDirs(env) {
     path.join(home, '.gemini', 'config', 'plugins', 'agy-hud'),
     path.join(base, 'plugins', 'agy-hud'),
   ];
-  if (env.XDG_CONFIG_HOME) {
-    dirs.push(path.join(env.XDG_CONFIG_HOME, 'gemini', 'plugins', 'agy-hud'));
+  if (env.XDG_CONFIG_HOME) dirs.push(path.join(env.XDG_CONFIG_HOME, 'gemini', 'plugins', 'agy-hud'));
+  if (env.APPDATA) dirs.push(path.join(env.APPDATA, 'gemini', 'plugins', 'agy-hud'));
+  return [...new Set(dirs.map((dir) => path.resolve(dir)))];
+}
+
+function readInstallState(env) {
+  const home = env.HOME || env.USERPROFILE || os.homedir();
+  const base = path.join(home, '.gemini', 'antigravity-cli');
+  const settingsPath = path.join(base, 'settings.json');
+  const pluginDirs = getPluginDirs(env);
+  const runtimeDir = path.join(base, 'agy-hud-runtime');
+  let settings = null;
+  try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch {}
+  return {
+    base,
+    settingsExists: fs.existsSync(settingsPath),
+    statusLine: settings && settings.statusLine ? settings.statusLine : null,
+    pluginExists: pluginDirs.some((pluginDir) => fs.existsSync(pluginDir)),
+    pluginDirs: pluginDirs.filter((pluginDir) => fs.existsSync(pluginDir)),
+    runtimeExists: fs.existsSync(runtimeDir),
+    runtimeHudExists: fs.existsSync(path.join(runtimeDir, 'hud.mjs')) && fs.existsSync(path.join(base, 'agy-hud', 'statusline.mjs')),
+  };
+}
+
+function findExecutableOnPath(name) {
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, name);
+    if (fs.existsSync(candidate)) return candidate;
   }
-  if (env.APPDATA) {
-    dirs.push(path.join(env.APPDATA, 'gemini', 'plugins', 'agy-hud'));
-  }
-  return [...new Set(dirs.map(dir => path.resolve(dir)))];
+  return null;
 }
 
 function observeLocalAgy(env) {
-  return new Promise(resolve => {
-    // Need a real PTY so agy renders its TUI (including statusLine). `script`
-    // requires a TTY on its own stdin, but node spawn() always gives a pipe.
-    // Workaround: use `expect` which natively allocates a PTY. Falls back to
-    // `script` with /dev/null stdin (degraded but better than plain pipe).
+  return new Promise((resolve) => {
     const hasExpect = fs.existsSync('/usr/bin/expect');
+    const python3Bin = findExecutableOnPath('python3');
     const hasScript = process.platform !== 'win32' && fs.existsSync('/usr/bin/script');
     let command;
     let args;
     let mode;
+    const observeSecs = Math.max(5, Math.floor(observeTimeoutMs / 1000) - 8);
     if (hasExpect) {
       command = '/usr/bin/expect';
-      // agy requires a PTY *with dimensions* to render its TUI. `stty rows X
-      // cols Y` inside the spawned bash sets the PTY size. After agy is up,
-      // send a prompt to trigger a model step — statusLine_runner only fires
-      // per-step, not at startup. Then wait for the response + statusLine
-      // render. SIGINT (^C) at the end so agy exits cleanly.
-      const observeSecs = Math.max(5, Math.floor(observeTimeoutMs / 1000) - 8);
       args = ['-c', [
         'set timeout 120',
         `spawn -noecho bash -c "stty rows 40 cols 180; ${agyBin}"`,
@@ -272,9 +271,44 @@ function observeLocalAgy(env) {
         'expect eof',
       ].join('; ')];
       mode = 'expect-pty';
+    } else if (process.platform !== 'win32' && python3Bin) {
+      const pyScript = [
+        'import fcntl, os, pty, select, struct, sys, termios, time',
+        'pid, fd = pty.fork()',
+        'if pid == 0:',
+        `    os.execvp(${JSON.stringify(agyBin)}, [${JSON.stringify(agyBin)}])`,
+        'fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 180, 0, 0))',
+        'def drain(sec):',
+        '    end = time.monotonic() + sec',
+        '    while time.monotonic() < end:',
+        '        r, _, _ = select.select([fd], [], [], max(0.05, end - time.monotonic()))',
+        '        if fd in r:',
+        '            try:',
+        '                data = os.read(fd, 8192)',
+        '                if not data: return False',
+        '                sys.stdout.buffer.write(data)',
+        '                sys.stdout.buffer.flush()',
+        '            except OSError: return False',
+        '    return True',
+        'if drain(6):',
+        '    try: os.write(fd, b"hello\\r")',
+        '    except OSError: pass',
+        `    if drain(${observeSecs}):`,
+        '        try: os.write(fd, b"\\x03")',
+        '        except OSError: pass',
+        '        drain(2)',
+        'try: os.close(fd)',
+        'except OSError: pass',
+        'os.waitpid(pid, 0)',
+      ].join('\n');
+      command = python3Bin;
+      args = ['-c', pyScript];
+      mode = 'python-pty';
     } else if (hasScript) {
       command = 'bash';
-      args = ['-c', `/usr/bin/script -q /dev/null ${agyBin} < /dev/null`];
+      args = process.platform === 'darwin'
+        ? ['-c', `/usr/bin/script -q /dev/null ${agyBin} < /dev/null`]
+        : ['-c', `/usr/bin/script -q -c "${agyBin}" /dev/null < /dev/null`];
       mode = 'script-tty';
     } else {
       command = agyBin;
@@ -294,17 +328,13 @@ function observeLocalAgy(env) {
       setTimeout(() => child.kill('SIGKILL'), 1000).unref();
     }, observeTimeoutMs);
 
-    child.stdout.on('data', data => {
-      stdout += data.toString();
-    });
-    child.stderr.on('data', data => {
-      stderr += data.toString();
-    });
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
     child.on('close', (status, signal) => {
       clearTimeout(timer);
       resolve({ status, signal, timedOut, stdout, stderr, mode });
     });
-    child.on('error', error => {
+    child.on('error', (error) => {
       clearTimeout(timer);
       resolve({ status: null, signal: null, timedOut, stdout, stderr, error: error.message, mode });
     });
@@ -312,9 +342,6 @@ function observeLocalAgy(env) {
 }
 
 async function main() {
-  // Skip the zip build when caller already did it (e.g. release.sh's E2E
-  // gate). Without this, release.sh → verify-display.js → release.sh =
-  // infinite recursion.
   if (!process.env.AGY_HUD_SKIP_BUILD) {
     execFileSync('bash', ['release.sh', '--local'], {
       cwd: projectRoot,
@@ -324,19 +351,14 @@ async function main() {
 
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-verify-'));
   const env = buildEnv(tmpRoot);
-  const { server, url } = await startZipServer();
+  const { server } = await startZipServer();
   try {
     const install = await run(agyBin, ['plugin', 'install', projectRoot], { env, timeout: 120_000 });
-
-    // Upgrade-from-old-version scenario: plant a fake stale hooks.json in the
-    // staged plugin dir BEFORE bootstrap. v0.1.x left this behind in real
-    // user installs, fired a base64 blob hook every model step, and clobbered
-    // settings.json statusLine. Bootstrap must clean it.
-    const stagedPluginDir = getPluginDirs(env).find(pluginDir => fs.existsSync(pluginDir));
+    const stagedPluginDir = getPluginDirs(env).find((pluginDir) => fs.existsSync(pluginDir));
     const planted = stagedPluginDir ? path.join(stagedPluginDir, 'hooks.json') : null;
     if (stagedPluginDir) {
       fs.writeFileSync(planted, JSON.stringify({
-        post_invocation_hooks: [{ command: 'echo simulated-stale-hook-from-v0.1.x' }]
+        post_invocation_hooks: [{ command: 'echo simulated-stale-hook-from-v0.1.x' }],
       }));
     }
     const stalePresentBeforeBootstrap = Boolean(planted && fs.existsSync(planted));
@@ -353,7 +375,6 @@ async function main() {
 
     const afterInstall = readInstallState(env);
 
-    // Two-step install: plugin install does not run JS. Bootstrap explicitly.
     const bootstrap = await run(process.execPath, [path.join(projectRoot, 'scripts', 'bootstrap.js')], {
       env: { ...env, AGY_HUD_SETUP_SOURCE_DIR: projectRoot },
       timeout: 60_000,
@@ -366,10 +387,6 @@ async function main() {
       });
     }
 
-    // No-auth mode (CI): skip the agy-session PTY spawn (needs OAuth) and
-    // directly invoke the configured statusLine command. Catches install,
-    // bootstrap, and standalone runtime rendering issues; the auth-required
-    // "HUD visible inside live agy session" check stays in dev / release.sh.
     let observation;
     if (noAuthMode) {
       const stateNow = readInstallState(env);
@@ -377,17 +394,25 @@ async function main() {
       if (!cmd) {
         observation = { stdout: '', stderr: 'no statusLine.command in settings.json', mode: 'no-auth-direct', status: 1 };
       } else {
-        const direct = await run(cmd, [], { env, stdin: '\n', shell: true, timeout: 10_000 });
+        const emptyRes = await run(cmd, [], { env, stdin: '\n', shell: true, timeout: 10_000 });
+        const sample = JSON.stringify({
+          model: { id: 'gemini-3-pro', display_name: 'Gemini 3 Pro (High)' },
+          cwd: projectRoot,
+          context_window: { context_window_size: 200_000, used_percentage: 42 },
+          rate_limits: { five_hour: { used_percentage: 20, resets_at: Math.floor(Date.now() / 1000) + 7200 } },
+        });
+        const direct = await run(cmd, [], { env, stdin: `${sample}\n`, shell: true, timeout: 10_000 });
         observation = {
           stdout: direct.stdout,
           stderr: direct.stderr,
           mode: 'no-auth-direct',
-          status: direct.status,
+          status: emptyRes.status === 0 && emptyRes.stdout === '' ? direct.status : 1,
         };
       }
     } else {
       observation = await observeLocalAgy(env);
     }
+
     const observedRaw = `${observation.stdout || ''}\n${observation.stderr || ''}`;
     const observedPlain = stripAnsi(observedRaw);
     const observedScreen = renderTerminalScreen(observedRaw);
@@ -399,13 +424,9 @@ async function main() {
     const staleCleaned = stalePresentBeforeBootstrap ? !fs.existsSync(planted) : true;
     const displayReady = hudVisible && statusLineReady && runtimeReady && staleCleaned;
 
-    // Dump raw PTY bytes as artifact so CI can upload and reviewers can
-    // `cat` the file in their own terminal and see the colored HUD render.
     const artifactDir = process.env.AGY_HUD_E2E_ARTIFACT_DIR || os.tmpdir();
     const artifactPath = path.join(artifactDir, `agy-hud-pty-${Date.now()}.log`);
-    try {
-      fs.writeFileSync(artifactPath, observedRaw);
-    } catch { /* artifact best-effort */ }
+    try { fs.writeFileSync(artifactPath, observedRaw); } catch {}
 
     const report = {
       ok: displayReady,
@@ -414,9 +435,7 @@ async function main() {
         status: install.status,
         processedSkills: /skills\s+:\s+\d+ processed/.test(stripAnsi(`${install.stdout}\n${install.stderr}`)),
       },
-      bootstrap: {
-        status: bootstrap.status,
-      },
+      bootstrap: { status: bootstrap.status },
       afterInstall,
       observe: {
         mode: observation.mode,
@@ -446,14 +465,8 @@ async function main() {
   }
 }
 
-module.exports = {
-  stripAnsi,
-  renderTerminalScreen,
-  detectHudRender,
-};
-
-if (require.main === module) {
-  main().catch(error => {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => {
     fail(error.stack || error.message);
   });
 }

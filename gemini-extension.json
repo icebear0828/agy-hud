@@ -1,5 +1,5 @@
 {
   "name": "agy-hud",
-  "version": "0.3.8",
-  "description": "Premium HUD for Antigravity CLI"
+  "version": "0.4.0",
+  "description": "Real-time statusline HUD for Antigravity CLI"
 }

@@ -1,0 +1,11 @@
+{
+  "note": "No stdin kept open: readStdin times out promptly cleanly exiting 0 with no lines",
+  "columns": 80,
+  "stdin": "",
+  "stdinOpen": true,
+  "expect": [
+    "exit 0",
+    "finishes within 4000ms",
+    "lacks Error"
+  ]
+}
