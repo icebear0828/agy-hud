@@ -3,7 +3,7 @@ import type { AgyModelQuota } from '../types.ts';
 import { formatTokens } from '../utils/format.ts';
 import { sanitizeDisplayText } from '../utils/sanitize.ts';
 import type { Frame } from './frame.ts';
-import { critical, cyan, dim, getContextColor, getQuotaColor, green, label, quotaBar, RESET, warning, yellow } from './colors.ts';
+import { critical, cyan, dim, getContextColor, getQuotaColor, green, label, quotaBar, remainingQuotaBar, RESET, warning, yellow } from './colors.ts';
 import { outputStyle } from './derive.ts';
 import { barLabel, type LabelAlign } from './labels.ts';
 import { addedDirs, compactionsPart, configCountParts, sessionTokensSummary } from './parts.ts';
@@ -160,7 +160,7 @@ export function imageQuotaLine(f: Frame): string | null {
   const remaining = Math.floor(Math.min(1, Math.max(0, imgModel.remainingFraction)) * 100);
   const used = 100 - remaining;
   const color = getQuotaColor(used, colors, null);
-  const bar = quotaBar(used, f.barWidth, colors, null, f.unicode);
+  const bar = remainingQuotaBar(remaining, used, f.barWidth, colors, null, f.unicode);
   const name = cyan(sanitizeDisplayText(imgModel.displayName || imgModel.id));
   const reset = imgModel.resetTime
     ? formatResetTime(new Date(Date.parse(imgModel.resetTime)), 'relative', wallClock(f.config.display), f.now)

@@ -113,7 +113,8 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
           showTools: false, showSkills: false, showMcp: false, showAgents: false, showTodos: false,
           showConfigCounts: false, showCost: false, showDuration: false, showSpeed: false,
           showMemoryUsage: false, showPromptCache: false, showSessionTokens: false, showCompactions: false,
-          showEffortLevel: false, showClaudeCodeVersion: false, showOutputStyle: false, usageCompact: false,
+          showEffortLevel: false, showClaudeCodeVersion: false, showOutputStyle: false,
+          quotaStyle: 'minimal', usageValue: 'percent', usageDecimals: false, usageCompact: false,
           sevenDayThreshold: 80,
         },
       }),
@@ -125,10 +126,76 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
 
     const rich = stripAnsi(renderPlain(baseCtx({ agyQuota: { ...baseCtx().agyQuota, updateInfo: null } }), 160, NOW));
     assert.match(rich, /\[Gemini 3 Pro \(High\)\]/);
+    assert.match(rich, /Google 5h\s+█████░\s+80\.00%/);
+    assert.match(rich, /Google week\s+███░░░\s+55\.00%/);
+    assert.match(rich, /Claude 5h\s+██████\s+95\.00%/);
     assert.match(rich, /Tokens 30k \(in: 12k, out: 3k, cache: 15k\)/);
     assert.match(rich, /Skills \(1\): brainstorming/);
     assert.match(rich, /MCPs \(2\): codegraph, ✗ tavily/);
     assert.match(rich, /reviewer:high/);
+  });
+
+  test('renders Gemini 4 Argon multi-provider remaining table by default and labels Argon 7d in minimal mode', () => {
+    const argonStdin = {
+      ...baseCtx().stdin,
+      model: { id: 'gemini-4-argon-medium', display_name: 'Gemini 4 Argon (Medium)' },
+      quota: {
+        'gemini-5h': { remaining_fraction: 1, reset_time: new Date(NOW + 5 * 3600_000).toISOString() },
+        'gemini-weekly': { remaining_fraction: 0.6063206, reset_time: new Date(NOW + 156 * 3600_000).toISOString() },
+        '3p-5h': { remaining_fraction: 0.99999, reset_time: new Date(NOW + 5 * 3600_000).toISOString() },
+        '3p-weekly': { remaining_fraction: 0.57, reset_time: new Date(NOW + 6 * 86400_000).toISOString() },
+        'gemini-argon-wtu-weekly': { remaining_fraction: 1, reset_time: new Date(NOW + 7 * 86400_000).toISOString() },
+      },
+    };
+    const argonProbe = {
+      models: [],
+      providerQuota: {
+        google: {
+          fiveHour: { remainingFraction: 1, resetTime: argonStdin.quota['gemini-5h'].reset_time },
+          weekly: { remainingFraction: 0.6063206, resetTime: argonStdin.quota['gemini-weekly'].reset_time },
+        },
+        claude: {
+          fiveHour: { remainingFraction: 0.99999, resetTime: argonStdin.quota['3p-5h'].reset_time },
+          weekly: { remainingFraction: 0.57, resetTime: argonStdin.quota['3p-weekly'].reset_time },
+        },
+        argon: {
+          weekly: { remainingFraction: 1, resetTime: argonStdin.quota['gemini-argon-wtu-weekly'].reset_time },
+        },
+      },
+      unavailableReason: null,
+      tierName: 'Google AI Pro',
+      accountEmail: null,
+      updateInfo: null,
+    };
+    const argonUsage = {
+      fiveHour: null,
+      sevenDay: 0,
+      fiveHourResetAt: null,
+      sevenDayResetAt: new Date(NOW + 7 * 86400_000),
+      sevenDayLabel: 'Argon 7d',
+      fiveHourRemainingExact: null,
+      sevenDayRemainingExact: 100,
+    };
+
+    const tableOut = stripAnsi(renderPlain(baseCtx({
+      stdin: argonStdin,
+      agyQuota: argonProbe,
+      usageData: argonUsage,
+    }), 140, NOW));
+    assert.doesNotMatch(tableOut, /Context .* │ .* 7d:/);
+    assert.match(tableOut, /Google 5h\s+██████\s+100\.00%/);
+    assert.match(tableOut, /Google week\s+████░░\s+60\.63%/);
+    assert.match(tableOut, /Claude 5h\s+██████\s+99\.99%/);
+    assert.match(tableOut, /Claude week\s+███░░░\s+57\.00%/);
+    assert.match(tableOut, /Argon week\s+██████\s+100\.00%\s+~7d/);
+
+    const minimalArgon = stripAnsi(renderPlain(baseCtx({
+      stdin: argonStdin,
+      agyQuota: argonProbe,
+      usageData: argonUsage,
+      config: mergeConfig({ display: { quotaStyle: 'minimal' } }),
+    }), 140, NOW));
+    assert.match(minimalArgon, /Argon 7d: 100\.00% \(7d\)/);
   });
 
   test('supports zh-Hans, zh-Hant, compact layout, and Antigravity table/models/compact quota styles', () => {
@@ -136,7 +203,7 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
     assert.match(zhHans, /35%/);
     assert.match(zhHans, /\$0\.42/);
 
-    const zhHant = stripAnsi(renderPlain(baseCtx({ config: mergeConfig({ language: 'zh-Hant', display: { usageCompact: false } }) }), 140, NOW));
+    const zhHant = stripAnsi(renderPlain(baseCtx({ config: mergeConfig({ language: 'zh-Hant', display: { quotaStyle: 'minimal', usageCompact: false } }) }), 140, NOW));
     assert.match(zhHant, /上下文/);
     assert.match(zhHant, /用量/);
 

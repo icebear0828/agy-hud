@@ -13,7 +13,7 @@ description: 当用户想要配置或自定义 agy-hud 的显示设置（主题�
 2. **通过选择题确认用户偏好**（可选，若用户未明确说明）：
    使用 `ask_question` 收集以下关键项：
    - **布局模式** (`lineLayout`)：`expanded`（默认多行对齐 claude-hud 风格）或 `compact`（单行紧凑）
-   - **配额风格** (`display.quotaStyle`)：`minimal`（默认极简 `Usage` 条）、`table`（2x2 提供商矩阵）、`models`（双列全模型详细条）或 `compact`（横向迷你条）
+   - **配额风格** (`display.quotaStyle`)：`table`（默认 Google / Claude / Argon 剩余配额矩阵，保留两位小数）、`minimal`（极简单行 `Usage` 条）、`models`（双列全模型详细条）或 `compact`（横向迷你条）
    - **界面语言** (`language`)：`auto`、`zh-Hans`、`zh-Hant` 或 `en`
    - **常用开关**：Git 状态 (`gitStatus.enabled`)、文件统计 (`gitStatus.showFileStats`)、工具活动 (`display.showTools`)、费用统计 (`display.showCost` / `display.showDailyCost`)、内存 (`display.showMemoryUsage`)、输出速度 (`display.showSpeed`)
 

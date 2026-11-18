@@ -151,13 +151,21 @@ export function agyQuotaToUsageData(
   const modelName = stdin.model?.display_name ?? '';
   const providerKey = matchProviderForModel(modelId, modelName);
 
-  const pq: AgyProviderWindows | undefined =
-    probe.providerQuota?.[providerKey] ??
-    probe.providerQuota?.google ??
-    probe.providerQuota?.claude ??
-    probe.providerQuota?.argon;
+  const effectiveProviderKey: keyof AgyProviderQuotaSummary = probe.providerQuota?.[providerKey]
+    ? providerKey
+    : probe.providerQuota?.google
+      ? 'google'
+      : probe.providerQuota?.claude
+        ? 'claude'
+        : probe.providerQuota?.argon
+          ? 'argon'
+          : providerKey;
+  const pq: AgyProviderWindows | undefined = probe.providerQuota?.[effectiveProviderKey];
 
   const matchedModel = findMatchingModelQuota(probe.models ?? [], modelId, modelName);
+  const sevenDayLabel = effectiveProviderKey === 'argon' || (providerKey === 'argon' && matchedModel)
+    ? 'Argon 7d'
+    : undefined;
 
   const fiveWin = isNonExpiredWindow(pq?.fiveHour, now)
     ? pq.fiveHour
@@ -190,6 +198,7 @@ export function agyQuotaToUsageData(
     sevenDay: weekWin ? toUsedPercent(weekWin.remainingFraction) : null,
     fiveHourResetAt: fiveWin ? toResetDate(fiveWin.resetTime) : null,
     sevenDayResetAt: weekWin ? toResetDate(weekWin.resetTime) : null,
+    ...(sevenDayLabel ? { sevenDayLabel } : {}),
     fiveHourRemainingExact: fiveWin ? fiveWin.remainingFraction * 100 : null,
     sevenDayRemainingExact: weekWin ? weekWin.remainingFraction * 100 : null,
   };

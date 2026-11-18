@@ -20,6 +20,9 @@
       "showEffortLevel": false,
       "showClaudeCodeVersion": false,
       "showOutputStyle": false,
+      "quotaStyle": "minimal",
+      "usageValue": "percent",
+      "usageDecimals": false,
       "usageCompact": false
     }
   },

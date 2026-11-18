@@ -163,6 +163,7 @@ export interface UsageData {
   sevenDay: number | null;
   fiveHourResetAt: Date | null;
   sevenDayResetAt: Date | null;
+  sevenDayLabel?: string | null;
   balanceLabel?: string | null;
   scopedWindows?: ScopedUsageWindow[];
   // Precise remaining fraction when sourced from Antigravity quota (for decimal display modes).

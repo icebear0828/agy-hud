@@ -4,8 +4,8 @@
 [![Release](https://img.shields.io/github/v/release/icebear0828/agy-hud)](https://github.com/icebear0828/agy-hud/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
 
-> 为 **Antigravity CLI (`agy`)** 与 Claude Code 打造的实时状态栏插件。
-> 采用严格 **TypeScript** + Node 原生 `--permission` 权限笼隔离架构（`fence.mjs` + `collector.mjs`），完整对齐 **claude-hud 0.15.3** 全量特性，并支持 Antigravity 多提供商配额高精度查询。
+> 专为 **Antigravity CLI (`agy`)** 打造的实时状态栏插件。
+> 采用严格 **TypeScript** + Node 原生 `--permission` 权限笼隔离架构（`fence.mjs` + `collector.mjs`），借鉴 **claude-hud 0.15.3** 全量状态栏设计，并支持 Antigravity 多提供商配额高精度查询。
 
 [English](./README.md) | [架构说明](./ARCHITECTURE.md)
 
@@ -20,14 +20,28 @@
 ## 界面样式
 
 ### 开箱即用的 Full 预设与快捷切换
-默认开启全套遥测信息（费用、输出速率、缓存倒计时、内存占用、环境配置数、工具、Skills、MCPs、子代理、待办与词元统计），也可随时通过 `/hud preset` 一键切换：
+默认开启全套遥测信息与多分组剩余配额表（配额矩阵、费用、输出速率、缓存倒计时、内存占用、环境配置数、工具、Skills、MCPs、子代理、待办与词元统计），也可随时通过 `/hud preset` 一键切换：
 - `/hud preset minimal` — 回归清爽双行极简视图（`模型 / 项目` + `上下文 | 配额`）
 - `/hud preset essential` — 核心工作区活动、待办、耗时与环境计数
-- `/hud preset full` — 完整全量遥测（默认）
+- `/hud preset full` — 完整全量遥测 + 多分组剩余配额表（默认）
 
-### Antigravity 多提供商扩展视图（`display.quotaStyle`）
-可随时通过 `/hud set display.quotaStyle=table` 切换为 Antigravity 专属详细配额视图：
-- **`table`**：Google / Claude（及 Argon）5h 与周配额 2x2 对照矩阵，精确到两位小数
+### 默认多分组剩余配额视图（`display.quotaStyle: "table"`，`display.usageValue: "remaining"`）
+默认展开 Google、Claude 及 Argon 独立周额度矩阵，采用与 `/usage` 一致的“剩余百分比 + 两位小数”口径与实时进度条：
+
+```
+[Gemini 4 Argon ◔ medium] │ my-project git:(main*) │ agy v1.5.11
+上下文     ███░░░░░░░ 35%
+内存       ████░░░░░░ 42% (16.8 GB / 40.0 GB)
+  ─────────────────────────────────────────────────────────────────────────────────
+  Google 5h   [██████] 100.00% ~5h   │ Claude 5h   [██████] 100.00% ~5h
+  Google week [████░░]  60.63% ~6d   │ Claude week [██████] 100.00% ~6d
+  Argon week  [██████] 100.00% ~7d
+```
+
+### 其他配额视图切换（`display.quotaStyle`）
+可随时通过 `/hud set display.quotaStyle=minimal`（或 `/hud preset minimal`）切换模式：
+- **`table`** *（默认）*：Google / Claude（及 Argon）5h 与周剩余配额对照矩阵，精确到两位小数
+- **`minimal`**：极简双行布局，仅在第二行末尾显示当前模型所属配额桶
 - **`models`**：双列全模型实时配额对比条
 - **`compact`**：按提供商分组的横向迷你进度条
 

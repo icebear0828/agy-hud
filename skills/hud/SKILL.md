@@ -34,8 +34,8 @@ Do not guess config keys from memory — query `schema` first.
 ## Common Antigravity & Layout Tips
 
 - **Quota view styles** (`display.quotaStyle`):
-  - `"minimal"` (default): compact `claude-hud`-aligned 2-line HUD (`Context ... │ Usage ...`)
-  - `"table"`: adds the 2x2 Google / Claude (and Argon) 5h & weekly table below line 2
+  - `"table"` (default): shows the Google / Claude (and Argon) 5h & weekly remaining quota grid with 2-decimal precision
+  - `"minimal"`: compact `claude-hud`-aligned 2-line active-bucket HUD (`Context ... │ Usage ...`)
   - `"models"`: adds 2-column per-model quota breakdown bars
   - `"compact"`: adds inline provider family mini bars
 - **Compact single-line mode**: `node "$HUD" set lineLayout=compact`

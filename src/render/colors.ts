@@ -93,6 +93,12 @@ export function getQuotaColor(
   return resolveAnsi(colors?.usage, BRIGHT_BLUE);
 }
 
+export function truncateTwoDecimals(valuePercent: number): number {
+  if (!Number.isFinite(valuePercent)) return 0;
+  const clamped = Math.min(100, Math.max(0, valuePercent));
+  return Math.floor(Math.round(clamped * 1e4) / 100) / 100;
+}
+
 export function formatQuotaPercent(
   percent: number | null,
   colors?: Partial<HudColorOverrides>,
@@ -107,12 +113,12 @@ export function formatQuotaPercent(
   let displayStr: string;
   if (mode === 'remaining') {
     if (decimals && exactRemaining !== null) {
-      displayStr = `${Math.min(100, Math.max(0, exactRemaining)).toFixed(2)}%`;
+      displayStr = `${truncateTwoDecimals(exactRemaining).toFixed(2)}%`;
     } else {
       displayStr = `${Math.max(0, 100 - percent)}%`;
     }
   } else if (decimals && exactRemaining !== null) {
-    displayStr = `${Math.min(100, Math.max(0, 100 - exactRemaining)).toFixed(2)}%`;
+    displayStr = `${truncateTwoDecimals(100 - exactRemaining).toFixed(2)}%`;
   } else {
     displayStr = `${percent}%`;
   }
@@ -129,6 +135,21 @@ function resolveBarChars(colors?: Partial<HudColorOverrides>, unicode = true): {
   return { filled, empty };
 }
 
+function renderBar(
+  fillPercent: number,
+  color: string,
+  width = 10,
+  colors?: Partial<HudColorOverrides>,
+  unicode = true,
+): string {
+  const safeWidth = Number.isFinite(width) ? Math.max(0, Math.round(width)) : 0;
+  const safePercent = Number.isFinite(fillPercent) ? Math.min(100, Math.max(0, fillPercent)) : 0;
+  const filled = Math.round((safePercent / 100) * safeWidth);
+  const empty = safeWidth - filled;
+  const chars = resolveBarChars(colors, unicode);
+  return `${color}${chars.filled.repeat(filled)}${DIM}${chars.empty.repeat(empty)}${RESET}`;
+}
+
 export function quotaBar(
   percent: number,
   width = 10,
@@ -136,13 +157,19 @@ export function quotaBar(
   pace: UsagePace | null = null,
   unicode = true,
 ): string {
-  const safeWidth = Number.isFinite(width) ? Math.max(0, Math.round(width)) : 0;
   const safePercent = Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 0;
-  const filled = Math.round((safePercent / 100) * safeWidth);
-  const empty = safeWidth - filled;
-  const color = getQuotaColor(safePercent, colors, pace);
-  const chars = resolveBarChars(colors, unicode);
-  return `${color}${chars.filled.repeat(filled)}${DIM}${chars.empty.repeat(empty)}${RESET}`;
+  return renderBar(safePercent, getQuotaColor(safePercent, colors, pace), width, colors, unicode);
+}
+
+export function remainingQuotaBar(
+  remainingPercent: number,
+  usedPercent: number,
+  width = 10,
+  colors?: Partial<HudColorOverrides>,
+  pace: UsagePace | null = null,
+  unicode = true,
+): string {
+  return renderBar(remainingPercent, getQuotaColor(usedPercent, colors, pace), width, colors, unicode);
 }
 
 export function coloredBar(
@@ -152,11 +179,6 @@ export function coloredBar(
   thresholds?: ContextThresholds,
   unicode = true,
 ): string {
-  const safeWidth = Number.isFinite(width) ? Math.max(0, Math.round(width)) : 0;
   const safePercent = Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 0;
-  const filled = Math.round((safePercent / 100) * safeWidth);
-  const empty = safeWidth - filled;
-  const color = getContextColor(safePercent, colors, thresholds);
-  const chars = resolveBarChars(colors, unicode);
-  return `${color}${chars.filled.repeat(filled)}${DIM}${chars.empty.repeat(empty)}${RESET}`;
+  return renderBar(safePercent, getContextColor(safePercent, colors, thresholds), width, colors, unicode);
 }

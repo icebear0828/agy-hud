@@ -3,7 +3,7 @@ import { t } from '../i18n/index.ts';
 import { isLimitReached } from '../types.ts';
 import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS, resolveUsagePaces, type UsagePace } from '../usage-pace.ts';
 import type { Frame, Layout } from './frame.ts';
-import { critical, formatQuotaPercent, label, quotaBar } from './colors.ts';
+import { critical, formatQuotaPercent, label, quotaBar, remainingQuotaBar } from './colors.ts';
 import { barLabel, type LabelAlign } from './labels.ts';
 import { formatResetTime, formatWindowTime, limitTimeFormat, wallClock } from './time.ts';
 
@@ -42,7 +42,11 @@ function formatWindow(f: Frame, layout: Layout, w: UsageWindow, align: LabelAlig
     const barReset = layout === 'compact' && timeFormat === 'relative' && reset
       ? `${reset} / ${w.durationLabel ?? w.label}`
       : resetText;
-    const body = `${quotaBar(w.percent ?? 0, f.barWidth, colors, w.pace, f.unicode)} ${percent}${barReset ? ` (${barReset})` : ''}`;
+    const barPercent = w.percent ?? 0;
+    const bar = (display?.usageValue ?? 'percent') === 'remaining'
+      ? remainingQuotaBar(w.exactRemaining ?? (100 - barPercent), barPercent, f.barWidth, colors, w.pace, f.unicode)
+      : quotaBar(barPercent, f.barWidth, colors, w.pace, f.unicode);
+    const body = `${bar} ${percent}${barReset ? ` (${barReset})` : ''}`;
     return w.forceLabel ? `${styledLabel} ${body}` : body;
   }
   return `${styledLabel} ${percent}${resetText ? ` (${resetText})` : ''}`;
@@ -95,6 +99,13 @@ export function usageParts(f: Frame, layout: Layout, align: LabelAlign = {}): st
     return withBalance([compact || display?.usageCompact ? notice : withLabel(notice), ...scoped]);
   }
 
+  const style = display?.quotaStyle ?? 'minimal';
+  const hasAgyQuotaTable = (style === 'table' || style === 'models')
+    && Boolean(f.agyQuota && (f.agyQuota.models.length > 0 || f.agyQuota.providerQuota));
+  if (hasAgyQuotaTable && !paces.alert) {
+    return balance ? [compact ? balance : withLabel(balance)] : null;
+  }
+
   const effectiveUsage = Math.max(usage.fiveHour ?? 0, usage.sevenDay ?? 0, ...scopedWindows.map((w) => w.percent ?? 0));
   if (effectiveUsage < (display?.usageThreshold ?? 0) && !paces.alert) {
     return balance ? [compact ? balance : withLabel(balance)] : null;
@@ -110,8 +121,8 @@ export function usageParts(f: Frame, layout: Layout, align: LabelAlign = {}): st
   }, align);
 
   const sevenDay = (): string => formatWindow(f, layout, {
-    label: display?.usageCompact ? '7d' : t('label.weekly'),
-    labelKey: 'label.weekly',
+    label: usage.sevenDayLabel ?? (display?.usageCompact ? '7d' : t('label.weekly')),
+    labelKey: usage.sevenDayLabel ? undefined : 'label.weekly',
     percent: usage.sevenDay,
     exactRemaining: usage.sevenDayRemainingExact,
     resetAt: usage.sevenDayResetAt,

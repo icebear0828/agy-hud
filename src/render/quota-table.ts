@@ -1,15 +1,14 @@
 import type { AgyModelQuota, AgyQuotaProbe, AgyQuotaWindow } from '../types.ts';
-import { t } from '../i18n/index.ts';
+import { isCjkLanguage, t } from '../i18n/index.ts';
 import { sanitizeDisplayText } from '../utils/sanitize.ts';
 import type { Frame } from './frame.ts';
-import { cyan, dim, getQuotaColor, label as labelColor, quotaBar, RESET, warning } from './colors.ts';
+import { cyan, dim, getQuotaColor, label as labelColor, remainingQuotaBar, RESET, truncateTwoDecimals, warning } from './colors.ts';
 import { formatResetTime, wallClock } from './time.ts';
 
 const FIVE_HOUR_THRESHOLD_MS = 12 * 60 * 60 * 1000;
 
 function formatQuotaPctNum(remainingFraction: number): number {
-  const clamped = Math.min(1, Math.max(0, remainingFraction));
-  return Math.floor(clamped * 10000) / 100;
+  return truncateTwoDecimals(remainingFraction * 100);
 }
 
 function simplifyModelName(name: string): string {
@@ -80,13 +79,20 @@ function formatShortReset(f: Frame, resetTime: string | null | undefined): strin
   return dur ? `~${dur}` : '';
 }
 
+function ruleBar(f: Frame, targetChars: number): string {
+  const charWidth = f.unicode && isCjkLanguage() ? 2 : 1;
+  const maxChars = f.width !== null ? Math.max(12, Math.floor((f.width - 2) / charWidth)) : targetChars;
+  const count = Math.min(targetChars, maxChars);
+  return dim((f.unicode ? '─' : '-').repeat(count));
+}
+
 function renderQuotaItem(f: Frame, name: string, remainingFraction: number, resetTime: string | null | undefined, nameWidth: number): string {
   const colors = f.config.colors;
   const remainingPct = formatQuotaPctNum(remainingFraction);
   const usedPct = 100 - remainingPct;
   const color = getQuotaColor(usedPct, colors, null);
   const namePart = cyan(truncateAndPad(sanitizeDisplayText(name), nameWidth, f.unicode));
-  const bar = quotaBar(usedPct, 6, colors, null, f.unicode);
+  const bar = remainingQuotaBar(remainingPct, usedPct, 6, colors, null, f.unicode);
   const pctStr = `${remainingPct.toFixed(2)}%`.padStart(7, ' ');
   const timeStr = formatShortReset(f, resetTime).padEnd(6, ' ');
   return `${namePart} ${bar} ${color}${pctStr}${RESET} ${dim(timeStr)}`;
@@ -145,12 +151,11 @@ function renderProviderTable(f: Frame, probe: AgyQuotaProbe): string[] {
   }
 
   const vbar = f.unicode ? '│' : '|';
-  const hbar = (f.unicode ? '─' : '-').repeat(81);
   const item = (lbl: string, w: AgyQuotaWindow | null) =>
     renderQuotaItem(f, lbl, w?.remainingFraction ?? 1, w?.resetTime ?? null, 11);
 
   const rows = [
-    `  ${dim(hbar)}`,
+    `  ${ruleBar(f, 71)}`,
     `  ${item('Google 5h', buckets.Google.fiveHour)} ${dim(vbar)} ${item('Claude 5h', buckets.Claude.fiveHour)}`,
     `  ${item('Google week', buckets.Google.weekly)} ${dim(vbar)} ${item('Claude week', buckets.Claude.weekly)}`,
   ];
@@ -174,12 +179,12 @@ function renderModelsTable(f: Frame, probe: AgyQuotaProbe): string[] {
     return renderQuotaItem(f, simplifyModelName(q.displayName || q.id), crit.remainingFraction, crit.resetTime, nameWidth);
   });
   const vbar = f.unicode ? '│' : '|';
-  const hbar = (f.unicode ? '─' : '-').repeat(columnWidth * 2 + 1);
-  const rows: string[] = [`  ${dim(hbar)}`];
+  const rule = ruleBar(f, columnWidth * 2 + 1);
+  const rows: string[] = [`  ${rule}`];
   for (let i = 0; i < cols.length; i += 2) {
     rows.push(cols[i + 1] ? `  ${cols[i]} ${dim(vbar)} ${cols[i + 1]}` : `  ${cols[i]}`);
   }
-  rows.push(`  ${dim(hbar)}`);
+  rows.push(`  ${rule}`);
   return rows;
 }
 
@@ -209,7 +214,7 @@ function renderCompactBars(f: Frame, probe: AgyQuotaProbe): string[] {
     }
     const items = [...familyMap.values()].map(({ name, remainingFraction }) => {
       const pct = formatQuotaPctNum(remainingFraction);
-      const bar = quotaBar(100 - pct, 3, f.config.colors, null, f.unicode);
+      const bar = remainingQuotaBar(pct, 100 - pct, 3, f.config.colors, null, f.unicode);
       return `${cyan(sanitizeDisplayText(name))}${bar}`;
     });
     segments.push(`${labelColor(`${provider}:`, f.config.colors)} ${items.join(' ')}`);
@@ -229,7 +234,7 @@ export function agyQuotaExtraLines(f: Frame): string[] {
     return renderProviderTable(f, probe);
   }
 
-  const hbar = (f.unicode ? '─' : '-').repeat((f.config.display?.columnWidth ?? 40) * 2 + 1);
+  const rule = ruleBar(f, (f.config.display?.columnWidth ?? 40) * 2 + 1);
   if (probe.unavailableReason) {
     const reasonKeyMap: Record<string, string> = {
       not_logged_in: t('quota.notLoggedIn'),
@@ -238,8 +243,8 @@ export function agyQuotaExtraLines(f: Frame): string[] {
       quota_fetch_failed: t('quota.fetchFailed'),
     };
     const reason = reasonKeyMap[probe.unavailableReason] ?? sanitizeDisplayText(probe.unavailableReason);
-    return [`  ${dim(hbar)}`, `  ${warning(`${t('quota.unavailable')}:`, f.config.colors)} ${dim(reason)}`, `  ${dim(hbar)}`];
+    return [`  ${rule}`, `  ${warning(`${t('quota.unavailable')}:`, f.config.colors)} ${dim(reason)}`, `  ${rule}`];
   }
   const ellipsis = f.unicode ? '…' : '...';
-  return [`  ${dim(hbar)}`, `  ${dim(`${t('quota.loading')}${ellipsis}`)}`, `  ${dim(hbar)}`];
+  return [`  ${rule}`, `  ${dim(`${t('quota.loading')}${ellipsis}`)}`, `  ${rule}`];
 }

@@ -321,6 +321,22 @@ describe('vcs (git/jj), auth, agy-quota, and config-reader', () => {
       const usage = agyQuotaToUsageData(probe, { model: { id: 'gemini-3-pro' } }, Date.parse('2026-11-18T12:00:00Z'));
       assert.equal(usage?.fiveHour, 25);
 
+      const argonProbe = mergeAgyQuotaProbe(null, {
+        model: { id: 'gemini-4-argon-medium', display_name: 'Gemini 4 Argon (Medium)' },
+        quota: {
+          'gemini-5h': { remaining_fraction: 1, reset_time: '2026-11-18T17:00:00Z' },
+          'gemini-weekly': { remaining_fraction: 0.6063206, reset_time: '2026-11-25T02:14:46Z' },
+          'gemini-argon-wtu-weekly': { remaining_fraction: 1, reset_time: '2026-11-25T14:13:08Z' },
+        },
+      }, Date.parse('2026-11-18T12:00:00Z'));
+      const argonUsage = agyQuotaToUsageData(argonProbe, {
+        model: { id: 'gemini-4-argon-medium', display_name: 'Gemini 4 Argon (Medium)' },
+      }, Date.parse('2026-11-18T12:00:00Z'));
+      assert.equal(argonUsage?.fiveHour, null);
+      assert.equal(argonUsage?.sevenDay, 0);
+      assert.equal(argonUsage?.sevenDayRemainingExact, 100);
+      assert.equal(argonUsage?.sevenDayLabel, 'Argon 7d');
+
       const agentsMd = path.join(tmp, 'AGENTS.md');
       fs.writeFileSync(agentsMd, '# rules');
       const rulesDir = path.join(tmp, '.gemini', 'rules');

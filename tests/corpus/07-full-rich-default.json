@@ -40,7 +40,11 @@
     "contains [Gemini 4 Hydrogen",
     "contains agy v1.5.10",
     "contains 36%",
-    "contains 5h: 55%",
+    "contains Google 5h",
+    "contains 45.00%",
+    "contains Google week",
+    "contains 83.00%",
+    "lacks 5h: 55%",
     "contains Approx RAM"
   ]
 }

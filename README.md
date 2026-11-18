@@ -4,8 +4,8 @@
 [![Release](https://img.shields.io/github/v/release/icebear0828/agy-hud)](https://github.com/icebear0828/agy-hud/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
 
-> Real-time statusline HUD plugin for **Antigravity CLI (`agy`)** & Claude Code.
-> Built with strict **TypeScript**, native `node --permission` capability caging (`fence.mjs` + `collector.mjs`), full **claude-hud 0.15.3** feature parity, and real **Antigravity multi-provider quota** tracking.
+> Real-time statusline HUD plugin built exclusively for **Antigravity CLI (`agy`)**.
+> Built with strict **TypeScript**, native `node --permission` capability caging (`fence.mjs` + `collector.mjs`), full feature parity inspired by **claude-hud 0.15.3**, and real **Antigravity multi-provider quota** tracking.
 
 [简体中文](./README_zh.md) | [Architecture](./ARCHITECTURE.md)
 
@@ -20,15 +20,29 @@
 ## What It Looks Like
 
 ### Default Full Preset & Quick Preset Switching
-Ships with full telemetry enabled out of the box (cost, speed, prompt cache, RAM, environment counts, active tools, skills, MCPs, subagents, todos, and session tokens). Switch anytime via `/hud preset`:
+Ships with full telemetry and multi-provider remaining quota enabled out of the box (quota table, cost, speed, prompt cache, RAM, environment counts, active tools, skills, MCPs, subagents, todos, and session tokens). Switch anytime via `/hud preset`:
 - `/hud preset minimal` — classic two-line compact view (`Model / Project` + `Context | Usage`)
 - `/hud preset essential` — core activity, todos, duration, and config counts
-- `/hud preset full` — full telemetry (default)
+- `/hud preset full` — full telemetry + multi-provider quota table (default)
 
-### Expanded Multi-Provider Quota Views (`display.quotaStyle`)
-Switch anytime with `/hud set display.quotaStyle=table` (or `models` / `compact`):
+### Default Multi-Provider Quota View (`display.quotaStyle: "table"`, `display.usageValue: "remaining"`)
+Displays live model/effort, context bar, system RAM, environment counts, active tools/subagents, and all **Antigravity** provider quota pools (Google, Claude, and Argon when present) in 2-decimal remaining percentage matching `/usage`:
 
-- **`table`**: 2x2 Google / Claude (and Argon) 5-hour & weekly quota grid with 2-decimal precision
+```
+[Gemini 4 Argon ◔ medium] │ my-project git:(main*) │ agy v1.5.11
+Context    ███░░░░░░░ 35%
+Approx RAM ████░░░░░░ 42% (16.8 GB / 40.0 GB)
+  ─────────────────────────────────────────────────────────────────────────────────
+  Google 5h   [██████] 100.00% ~5h   │ Claude 5h   [██████] 100.00% ~5h
+  Google week [████░░]  60.63% ~6d   │ Claude week [██████] 100.00% ~6d
+  Argon week  [██████] 100.00% ~7d
+```
+
+### Other Quota Views (`display.quotaStyle`)
+Switch anytime with `/hud set display.quotaStyle=minimal` (or `models` / `compact`, or `/hud preset minimal`):
+
+- **`table`** *(default)*: 2x2 Google / Claude (and Argon) 5-hour & weekly remaining quota grid with 2-decimal precision
+- **`minimal`**: compact 2-line HUD showing only the active model's bucket (`Context ... │ 5h: ...`)
 - **`models`**: 2-column per-model remaining quota bars
 - **`compact`**: inline provider family mini progress bars (`Google: ... │ Anthropic: ...`)
 

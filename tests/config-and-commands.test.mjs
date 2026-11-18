@@ -63,7 +63,7 @@ function fakeFacts(paths, cwd) {
   return {
     runtime: { name: 'node', version: '26.13.0', path: process.execPath, supported: true },
     runtimes: [{ name: 'system', version: 'v26.13.0', path: process.execPath }],
-    plugin: { root: cwd, version: '0.4.5' },
+    plugin: { root: cwd, version: '0.4.6' },
     configPath: paths.config,
     undoPath: path.join(path.dirname(paths.config), 'config.undo.json'),
     cwd,
@@ -73,11 +73,13 @@ function fakeFacts(paths, cwd) {
 }
 
 describe('config / merge, validation, and legacy v0.3 migration', () => {
-  test('defaults to rich claude-hud aligned configuration with auto locale and minimal quota bar', () => {
+  test('defaults to rich Antigravity configuration with auto locale, table quotaStyle, and remaining decimals', () => {
     const cfg = mergeConfig({});
     assert.equal(cfg.language, 'auto');
     assert.equal(cfg.lineLayout, 'expanded');
-    assert.equal(cfg.display.quotaStyle, 'minimal');
+    assert.equal(cfg.display.quotaStyle, 'table');
+    assert.equal(cfg.display.usageValue, 'remaining');
+    assert.equal(cfg.display.usageDecimals, true);
     assert.equal(cfg.display.showTools, true);
     assert.equal(cfg.display.showAgents, true);
     assert.equal(cfg.display.showSessionTokens, true);
@@ -120,18 +122,18 @@ describe('config / merge, validation, and legacy v0.3 migration', () => {
       const paths = fakePaths(tmp);
       fs.mkdirSync(path.dirname(paths.legacyConfig), { recursive: true });
       fs.mkdirSync(path.dirname(paths.project.localAgyHudConfig), { recursive: true });
-      fs.writeFileSync(paths.legacyConfig, JSON.stringify({ language: 'zh-Hans', display: { quotaStyle: 'table' } }));
+      fs.writeFileSync(paths.legacyConfig, JSON.stringify({ language: 'zh-Hans', display: { quotaStyle: 'compact' } }));
       fs.writeFileSync(paths.project.localAgyHudConfig, JSON.stringify({ display: { showCost: true } }));
 
       const loadedLegacy = loadConfigFiles(paths);
       assert.equal(loadedLegacy.config.language, 'zh-Hans');
-      assert.equal(loadedLegacy.config.display.quotaStyle, 'table');
+      assert.equal(loadedLegacy.config.display.quotaStyle, 'compact');
       assert.equal(loadedLegacy.config.display.showCost, true);
 
       fs.writeFileSync(paths.config, JSON.stringify({ language: 'en' }));
       const loadedPrimary = loadConfigFiles(paths);
       assert.equal(loadedPrimary.config.language, 'en');
-      assert.equal(loadedPrimary.config.display.quotaStyle, 'minimal');
+      assert.equal(loadedPrimary.config.display.quotaStyle, 'table');
       assert.equal(loadedPrimary.config.display.showCost, true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -178,6 +180,7 @@ describe('commands / schema, set, preview, doctor, report', () => {
       const minimal = await runHudCommand({ name: 'preset', args: ['minimal'], facts: fakeFacts(paths, tmp) }, paths, ask, Date.now());
       assert.equal(minimal.failed, undefined);
       assert.equal(minimal.config.display.showTools, false);
+      assert.equal(minimal.config.display.quotaStyle, 'minimal');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
