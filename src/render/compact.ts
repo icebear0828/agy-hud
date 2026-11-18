@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.ts';
 import type { Frame } from './frame.ts';
 import { outputStyle } from './derive.ts';
 import { label } from './colors.ts';
@@ -43,7 +44,7 @@ export function renderCompact(f: Frame): string[] {
   }
 
   const style = display?.showOutputStyle === true ? outputStyle(f) : undefined;
-  if (style) mainParts.push(label(style, f.config?.colors));
+  if (style) mainParts.push(label(`style: ${style}`, f.config?.colors));
 
   const { bar, value } = contextBarAndValue(f);
   mainParts.push(`${bar ? `${bar} ` : ''}${value}${tokenBreakdown(f)}`);
@@ -64,7 +65,7 @@ export function renderCompact(f: Frame): string[] {
     tierPart(f),
     stepsPart(f),
     updatePart(f),
-    ...(display?.showSessionTokens ? [sessionTokensSummary(f, 'Tok:')] : []),
+    ...(display?.showSessionTokens ? [sessionTokensSummary(f, t('label.tokens'))] : []),
     ...configCountParts(f),
   ].filter((p): p is string => Boolean(p));
 

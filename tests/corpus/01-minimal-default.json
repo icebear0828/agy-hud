@@ -1,7 +1,28 @@
 {
-  "note": "Default minimal 2-line HUD aligned with claude-hud visual output",
+  "note": "Minimal preset 2-line HUD aligned with minimal claude-hud view",
   "columns": 120,
   "now": "2026-11-18T10:00:00Z",
+  "config": {
+    "display": {
+      "showTools": false,
+      "showSkills": false,
+      "showMcp": false,
+      "showAgents": false,
+      "showTodos": false,
+      "showConfigCounts": false,
+      "showCost": false,
+      "showDuration": false,
+      "showSpeed": false,
+      "showMemoryUsage": false,
+      "showPromptCache": false,
+      "showSessionTokens": false,
+      "showCompactions": false,
+      "showEffortLevel": false,
+      "showClaudeCodeVersion": false,
+      "showOutputStyle": false,
+      "usageCompact": false
+    }
+  },
   "stdin": {
     "model": { "id": "gemini-3-pro", "display_name": "Gemini 3 Pro (High)" },
     "cwd": "/tmp/my-app",

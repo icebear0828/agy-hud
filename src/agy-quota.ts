@@ -48,7 +48,7 @@ export function parseAgyStdinQuota(quotaObj: StdinData['quota']): AgyProviderQuo
     }
   }
 
-  if (quotaObj['argon-5h'] || quotaObj['argon-weekly']) {
+  if (quotaObj['argon-5h'] || quotaObj['argon-weekly'] || quotaObj['gemini-argon-wtu-weekly']) {
     result.argon = {};
     const five = quotaObj['argon-5h'];
     if (five && typeof five.remaining_fraction === 'number') {
@@ -57,7 +57,7 @@ export function parseAgyStdinQuota(quotaObj: StdinData['quota']): AgyProviderQuo
         resetTime: five.reset_time ?? null,
       };
     }
-    const week = quotaObj['argon-weekly'];
+    const week = quotaObj['argon-weekly'] ?? quotaObj['gemini-argon-wtu-weekly'];
     if (week && typeof week.remaining_fraction === 'number') {
       result.argon.weekly = {
         remainingFraction: Math.min(1, Math.max(0, week.remaining_fraction)),

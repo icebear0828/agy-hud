@@ -7,15 +7,20 @@ import { formatSessionDuration } from '../utils/format.ts';
 export const contextUsage = (ctx: RenderContext): ContextUsage =>
   getContextUsage(ctx.stdin, ctx.config?.display?.autoCompactWindow, ctx.transcript?.contextTokens);
 
-export const sessionName = (ctx: RenderContext): string | undefined => stdinText(ctx.stdin.session_name);
+export const sessionName = (ctx: RenderContext): string | undefined =>
+  stdinText(ctx.stdin.session_name ?? ctx.stdin.conversation_title, 40);
 
 export const claudeCodeVersion = (ctx: RenderContext): string | undefined => stdinText(ctx.stdin.version, 32);
 
 export const outputStyle = (ctx: RenderContext): string | undefined => stdinText(ctx.stdin.output_style?.name, 40);
 
-export const sessionDuration = (ctx: RenderContext): string => {
+export const sessionDuration = (ctx: RenderContext, now = Date.now()): string => {
   if (ctx.stdin.cost?.total_duration_ms !== undefined && ctx.stdin.cost?.total_duration_ms !== null) {
     return formatSessionDuration(ctx.stdin.cost.total_duration_ms);
+  }
+  if (ctx.transcript?.sessionStart) {
+    const elapsed = Math.max(0, now - ctx.transcript.sessionStart.getTime());
+    if (elapsed > 0) return formatSessionDuration(elapsed);
   }
   if (ctx.transcript?.totalApiDurationMs) {
     return formatSessionDuration(ctx.transcript.totalApiDurationMs);

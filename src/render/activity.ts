@@ -4,7 +4,7 @@ import { getFileHref, safeHyperlink } from '../utils/hyperlinks.ts';
 import { sanitizeDisplayText } from '../utils/sanitize.ts';
 import { truncateString } from '../utils/truncate.ts';
 import type { Frame } from './frame.ts';
-import { cyan, dim, green, label, magenta, red, yellow } from './colors.ts';
+import { cyan, dim, green, label, red, yellow } from './colors.ts';
 
 function formatElapsedDuration(ms: number): string {
   const secs = Math.max(0, Math.floor(ms / 1000));
@@ -26,10 +26,9 @@ function formatToolTarget(target: string | undefined, maxLen: number, unicode: b
   const clean = sanitizeDisplayText(target);
   if (!clean) return '';
   const shown = maxLen > 0 ? truncateString(clean, Math.max(8, maxLen), unicode ? '…' : '...') : clean;
-  const linked = clean.startsWith('/') || /^[A-Za-z]:[\\/]/.test(clean)
+  return clean.startsWith('/') || /^[A-Za-z]:[\\/]/.test(clean)
     ? safeHyperlink(getFileHref(clean), dim(` ${shown}`))
     : dim(` ${shown}`);
-  return linked;
 }
 
 export function toolsLine(f: Frame): string | null {
@@ -54,7 +53,8 @@ export function toolsLine(f: Frame): string | null {
   }
 
   const remainingSlots = Math.max(0, maxVisible - parts.length);
-  if (remainingSlots > 0 && completed.length > 0) {
+  let hiddenCompletedTypes = 0;
+  if (completed.length > 0) {
     const counts = new Map<string, { count: number; hasError: boolean }>();
     for (const tool of completed) {
       const name = sanitizeDisplayText(tool.name);
@@ -63,16 +63,20 @@ export function toolsLine(f: Frame): string | null {
       if (tool.status === 'error') entry.hasError = true;
       counts.set(name, entry);
     }
-    const items = [...counts.entries()].slice(-remainingSlots).map(([name, info]) => {
+    const entries = [...counts.entries()];
+    const shown = remainingSlots > 0 ? entries.slice(-remainingSlots) : [];
+    hiddenCompletedTypes = Math.max(0, entries.length - shown.length);
+    for (const [name, info] of shown) {
       const icon = info.hasError ? red(sym.error) : green(sym.done);
       const short = truncateName(name);
-      return `${icon} ${label(short, f.config?.colors)}${info.count > 1 ? dim(` ×${info.count}`) : ''}`;
-    });
-    parts.push(...items);
+      parts.push(`${icon} ${label(short, f.config?.colors)}${info.count > 1 ? dim(` ×${info.count}`) : ''}`);
+    }
+  }
+  if (hiddenCompletedTypes > 0) {
+    parts.push(dim(`+${hiddenCompletedTypes} more`));
   }
 
-  if (parts.length === 0) return null;
-  return parts.join('  ');
+  return parts.length > 0 ? parts.join(f.sep) : null;
 }
 
 export function skillsLine(f: Frame): string | null {
@@ -83,13 +87,14 @@ export function skillsLine(f: Frame): string | null {
   const unique = [...new Set(skills.map((s) => sanitizeDisplayText(s)).filter(Boolean))];
   if (unique.length === 0) return null;
 
+  const sym = symbols(f.unicode);
   const rawMaxVisible = display?.skillsMaxVisible ?? 4;
   const maxVisible = rawMaxVisible <= 0 ? unique.length : rawMaxVisible;
-  const shown = unique.slice(0, maxVisible).map((s) => magenta(`/${s}`));
+  const shown = unique.slice(0, maxVisible).map((s) => label(s, f.config?.colors));
   if (unique.length > maxVisible) {
-    shown.push(dim(`+${unique.length - maxVisible}`));
+    shown.push(dim(`+${unique.length - maxVisible} more`));
   }
-  return `${label('Skills:', f.config?.colors)} ${shown.join(', ')}`;
+  return `${green(sym.done)} ${label(`Skills (${unique.length}):`, f.config?.colors)} ${shown.join(', ')}`;
 }
 
 export function mcpLine(f: Frame): string | null {
@@ -103,20 +108,21 @@ export function mcpLine(f: Frame): string | null {
   const sym = symbols(f.unicode);
   const items = all.slice(0, 6).map((srv) => {
     const clean = sanitizeDisplayText(srv);
-    return errors.has(srv) ? `${red(sym.error)} ${red(clean)}` : `${green(sym.done)} ${dim(clean)}`;
+    return errors.has(srv) ? `${red(sym.error)} ${red(clean)}` : label(clean, f.config?.colors);
   });
-  if (all.length > 6) items.push(dim(`+${all.length - 6}`));
-  return `${label('MCP:', f.config?.colors)} ${items.join('  ')}`;
+  if (all.length > 6) items.push(dim(`+${all.length - 6} more`));
+  const prefix = errors.size > 0 && errors.size === all.length ? red(sym.error) : green(sym.done);
+  return `${prefix} ${label(`MCPs (${all.length}):`, f.config?.colors)} ${items.join(', ')}`;
 }
 
 export function agentsLine(f: Frame): string | null {
   const display = f.config?.display;
   if (display?.showAgents !== true) return null;
   const agents = f.transcript?.agents ?? [];
-  const running = agents.filter((a: AgentEntry) => a.status === 'running');
-  if (running.length === 0 && agents.length === 0) return null;
+  if (agents.length === 0) return null;
 
   const sym = symbols(f.unicode);
+  const running = agents.filter((a: AgentEntry) => a.status === 'running');
   const list = running.length > 0 ? running.slice(-3) : agents.slice(-2);
   const items = list.map((agent) => {
     const icon = agent.status === 'running' ? yellow(sym.running) : green(sym.done);
@@ -129,7 +135,8 @@ export function agentsLine(f: Frame): string | null {
     const elapsed = agent.startTime ? dim(` ${formatElapsedDuration(endMs - agent.startTime.getTime())}`) : '';
     return `${icon} ${kind}${effort}${desc}${elapsed}`;
   });
-  return items.join('  ');
+  if (running.length > 3) items.push(dim(`+${running.length - 3} running`));
+  return items.join(f.sep);
 }
 
 export function todosLine(f: Frame): string | null {

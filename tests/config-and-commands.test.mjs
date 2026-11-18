@@ -63,7 +63,7 @@ function fakeFacts(paths, cwd) {
   return {
     runtime: { name: 'node', version: '26.13.0', path: process.execPath, supported: true },
     runtimes: [{ name: 'system', version: 'v26.13.0', path: process.execPath }],
-    plugin: { root: cwd, version: '0.4.0' },
+    plugin: { root: cwd, version: '0.4.1' },
     configPath: paths.config,
     undoPath: path.join(path.dirname(paths.config), 'config.undo.json'),
     cwd,
@@ -73,10 +73,14 @@ function fakeFacts(paths, cwd) {
 }
 
 describe('config / merge, validation, and legacy v0.3 migration', () => {
-  test('defaults to minimal 2-line expanded claude-hud aligned configuration', () => {
+  test('defaults to rich claude-hud aligned configuration with auto locale and minimal quota bar', () => {
     const cfg = mergeConfig({});
+    assert.equal(cfg.language, 'auto');
     assert.equal(cfg.lineLayout, 'expanded');
     assert.equal(cfg.display.quotaStyle, 'minimal');
+    assert.equal(cfg.display.showTools, true);
+    assert.equal(cfg.display.showAgents, true);
+    assert.equal(cfg.display.showSessionTokens, true);
     assert.deepEqual(cfg.display.mergeGroups, [['context', 'usage']]);
     assert.equal(cfg.display.weeklyCostPeriod, 'quota');
   });
@@ -170,6 +174,10 @@ describe('commands / schema, set, preview, doctor, report', () => {
 
       const reset = await runHudCommand({ name: 'set', args: ['--reset'], facts: fakeFacts(paths, tmp) }, paths, ask, Date.now());
       assert.deepEqual(reset.config, {});
+
+      const minimal = await runHudCommand({ name: 'preset', args: ['minimal'], facts: fakeFacts(paths, tmp) }, paths, ask, Date.now());
+      assert.equal(minimal.failed, undefined);
+      assert.equal(minimal.config.display.showTools, false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

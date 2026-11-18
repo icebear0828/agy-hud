@@ -89,7 +89,7 @@ function mcpServer(toolName: string): string | undefined {
   return m2 ? name(m2) : undefined;
 }
 
-function unquoteAgyArg(value: unknown): string | undefined {
+function unquoteRaw(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   let s = value.trim();
   if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
@@ -100,7 +100,12 @@ function unquoteAgyArg(value: unknown): string | undefined {
       s = s.slice(1, -1);
     }
   }
-  return sanitizeDisplayText(s) || undefined;
+  return s || undefined;
+}
+
+function unquoteAgyArg(value: unknown): string | undefined {
+  const raw = unquoteRaw(value);
+  return raw ? (sanitizeDisplayText(raw) || undefined) : undefined;
 }
 
 const text = (value: unknown): string | undefined =>
@@ -236,6 +241,17 @@ class Parser {
       if (selMatch?.[1]) this.data.transcriptModelSelection = sanitizeDisplayText(selMatch[1].trim());
       const modeMatch = entry.content.match(/changed setting `(?:Mode|Agent Mode|Permission Mode)` from [^\n]+? to ([^\n.]+)\./i);
       if (modeMatch?.[1]) this.data.transcriptMode = sanitizeDisplayText(modeMatch[1].trim());
+
+      const senderMatches = entry.content.matchAll(/\[Message\][^\n]*?sender=([^\s\]]+)/g);
+      for (const m of senderMatches) {
+        const sender = m[1];
+        const callId = this.agentIdToToolUseId.get(sender);
+        const agent = callId ? this.agents.get(callId) : [...this.agents.values()].find((a) => a.agentId === sender || (a.status === 'running' && sender.includes(a.agentId ?? '___')));
+        if (agent && agent.status === 'running') {
+          agent.status = 'completed';
+          agent.endTime = at ?? new Date();
+        }
+      }
     }
 
     if (entry.type === 'PLANNER_RESPONSE') {
@@ -317,10 +333,31 @@ class Parser {
         const args = tc.args ?? {};
         if (tc.name === 'read_file') {
           const p = unquoteAgyArg(args.Path);
-          const skillMatch = p?.match(/\/skills\/([^/]+)\/SKILL\.md$/i);
-          if (skillMatch?.[1]) {
-            const s = name(skillMatch[1]);
+          const pluginSkill = p?.match(/\/plugins\/([^/]+)\/skills\/([^/]+)\/SKILL\.md$/i);
+          if (pluginSkill?.[1] && pluginSkill?.[2]) {
+            const s = name(`${pluginSkill[1]}:${pluginSkill[2]}`);
             if (s) this.skills.add(s);
+          } else {
+            const skillMatch = p?.match(/\/skills\/([^/]+)\/SKILL\.md$/i);
+            if (skillMatch?.[1]) {
+              const s = name(skillMatch[1]);
+              if (s) this.skills.add(s);
+            }
+          }
+        }
+        if ((tc.name === 'write_file' || tc.name === 'write_to_file') && typeof args.Path === 'string') {
+          const targetPath = unquoteAgyArg(args.Path) ?? '';
+          const body = unquoteRaw(args.Content ?? args.CodeContent) ?? '';
+          if (/(?:todo|task)\.md$/i.test(targetPath) && body) {
+            const parsedTodos: TodoItem[] = [];
+            for (const line of body.split(/\r?\n/)) {
+              const m = /^\s*[-*]\s+\[([ xX/])\]\s+(.+)$/.exec(line);
+              if (!m) continue;
+              const status: TodoItem['status'] = m[1] === 'x' || m[1] === 'X' ? 'completed' : m[1] === '/' ? 'in_progress' : 'pending';
+              const content = sanitizeDisplayText(m[2]);
+              if (content) parsedTodos.push({ content, status });
+            }
+            if (parsedTodos.length > 0) this.replaceTodos(parsedTodos);
           }
         }
         if (tc.name === 'call_mcp_tool') {
@@ -369,6 +406,30 @@ class Parser {
   }
 
   private agyGenericResponse(entry: Entry, at: Date | null, entryTimeMs: number | null): void {
+    const content = typeof entry.content === 'string' ? entry.content : '';
+    const isSubagentLaunch = /"conversationId"\s*:|Launched subagent|conversationId:/i.test(content) && !content.includes('finished');
+    if (isSubagentLaunch) {
+      const idMatch = /conversationId["']?\s*[:=]\s*["']?([\w-]{8,128})/i.exec(content);
+      if (idMatch?.[1]) {
+        const running = [...this.agents.values()].filter((a) => a.status === 'running' && !a.agentId).at(-1);
+        if (running) {
+          running.agentId = idMatch[1];
+          this.agentIdToToolUseId.set(idMatch[1], running.id);
+        }
+      }
+      return;
+    }
+
+    const senderMatch = /\[Message\][^\n]*?sender=([^\s\]]+)/.exec(content);
+    if (senderMatch?.[1]) {
+      const cid = this.agentIdToToolUseId.get(senderMatch[1]);
+      const target = cid ? this.agents.get(cid) : [...this.agents.values()].find((a) => a.agentId === senderMatch[1]);
+      if (target && target.status === 'running') {
+        target.status = 'completed';
+        target.endTime = at ?? new Date();
+      }
+    }
+
     const nextId = this.pendingAgyToolIds.shift();
     if (nextId) {
       const tool = this.tools.get(nextId);
@@ -385,9 +446,9 @@ class Parser {
         }
       }
     }
-    if (typeof entry.content === 'string' && entry.content.includes('conversation://') && entryTimeMs !== null) {
+    if (content.includes('conversation://') && entryTimeMs !== null) {
       for (const agent of this.agents.values()) {
-        if (agent.status === 'running') {
+        if (agent.status === 'running' && !agent.agentId) {
           agent.status = 'completed';
           agent.endTime = at ?? new Date();
           break;

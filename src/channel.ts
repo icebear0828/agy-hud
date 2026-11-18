@@ -34,6 +34,9 @@ export interface Paths {
     agyRules: string;
     settings: string;
     agySettings: string;
+    mcpConfig?: string;
+    agyMcpConfig?: string;
+    agyHookFiles?: string[];
   };
   project: {
     claudeMd: string;
@@ -89,7 +92,7 @@ export interface Facts {
 }
 
 export interface CommandRequest {
-  name: 'doctor' | 'schema' | 'preview' | 'set' | 'report';
+  name: 'doctor' | 'schema' | 'preview' | 'set' | 'preset' | 'report';
   args: string[];
   facts: Facts;
 }

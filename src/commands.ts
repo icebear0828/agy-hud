@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Ask, CommandRequest, Facts, Paths, ReplyMessage } from './channel.ts';
 import {
+  CONFIG_PRESETS,
   DEFAULT_CONFIG,
   checkValue,
   configKey,
@@ -196,6 +197,15 @@ export async function runHudCommand(
   }
 
   const loaded = loadConfigFiles(paths);
+
+  if (name === 'preset') {
+    const presetName = (args[0] ?? '').toLowerCase() as keyof typeof CONFIG_PRESETS;
+    if (!Object.hasOwn(CONFIG_PRESETS, presetName)) {
+      return { lines: [`Usage: hud preset <${Object.keys(CONFIG_PRESETS).join('|')}>`], failed: true };
+    }
+    const nextConfig = presetName === 'full' ? {} : structuredClone(CONFIG_PRESETS[presetName]);
+    return { lines: [`Applied preset "${presetName}" to ${paths.config}`], config: nextConfig };
+  }
 
   if (name === 'set') {
     if (args.length === 0) {

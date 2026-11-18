@@ -97,7 +97,24 @@ describe('transcript / Claude + Antigravity JSONL & incremental cursor resume', 
           input_tokens: 1200,
           output_tokens: 300,
           cache_read_input_tokens: 800,
-          tool_calls: [{ name: 'read_file', args: { Path: '"/src/main.ts"' } }, { name: 'mcp_tavily_search', args: {} }],
+          tool_calls: [
+            { name: 'read_file', args: { Path: '"/src/main.ts"' } },
+            { name: 'read_file', args: { Path: '"/home/u/.gemini/config/plugins/superpowers/skills/brainstorming/SKILL.md"' } },
+            { name: 'mcp_tavily_search', args: {} },
+            { name: 'invoke_subagent', args: { TypeName: 'reviewer', Role: 'Audit code', Model: 'gemini-3-pro' } },
+            { name: 'write_file', args: { Path: '"/tmp/ai-tasks/todo.md"', Content: '"- [x] Step 1\\n- [/] Step 2"' } },
+          ],
+        }),
+        JSON.stringify({
+          type: 'GENERIC',
+          status: 'DONE',
+          content: 'Launched subagent conversationId: sub-uuid-1234',
+        }),
+        JSON.stringify({
+          type: 'USER_INPUT',
+          step_index: 3,
+          created_at: '2026-11-18T09:00:20Z',
+          content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-18T09:00:20Z sender=sub-uuid-1234 content=finished',
         }),
         JSON.stringify({
           type: 'GENERIC',
@@ -107,10 +124,14 @@ describe('transcript / Claude + Antigravity JSONL & incremental cursor resume', 
       ];
       fs.writeFileSync(txPath, `${lines.join('\n')}\n`);
       const res = await parseTranscript(txPath, path.join(tmp, 'data'));
-      assert.equal(res.steps, 2);
+      assert.equal(res.steps, 3);
       assert.equal(res.transcriptModelSelection, 'Gemini 3 Pro (High)');
       assert.equal(res.transcriptMode, 'accept-edits');
       assert.equal(res.mcpServers.includes('tavily'), true);
+      assert.equal(res.skills.includes('superpowers:brainstorming'), true);
+      assert.equal(res.agents[0]?.type, 'reviewer');
+      assert.equal(res.agents[0]?.status, 'completed');
+      assert.equal(res.todos.length, 2);
       assert.equal(res.tools[0].target, '/src/main.ts');
       assert.equal(res.imageExhausted?.exhausted, true);
       assert.equal(res.imageExhausted?.resetTime, futureReset);
@@ -240,8 +261,16 @@ describe('vcs (git/jj), auth, agy-quota, and config-reader', () => {
       const rulesDir = path.join(tmp, '.gemini', 'rules');
       fs.mkdirSync(rulesDir, { recursive: true });
       fs.writeFileSync(path.join(rulesDir, 'a.md'), 'r');
+      const agyMcp = path.join(tmp, 'agy_mcp.json');
+      fs.writeFileSync(agyMcp, JSON.stringify({ mcpServers: { codegraph: {}, tavily: {} } }));
+      const hookFile = path.join(tmp, 'hooks.json');
+      fs.writeFileSync(hookFile, JSON.stringify({ 'rtk-rewrite': { enabled: true } }));
+
       const c = countConfigs({
-        user: { claudeMd: path.join(tmp, 'x'), geminiMd: path.join(tmp, 'y'), rules: path.join(tmp, 'z'), agyRules: path.join(tmp, 'w'), settings: path.join(tmp, 's'), agySettings: path.join(tmp, 'as') },
+        user: {
+          claudeMd: path.join(tmp, 'x'), geminiMd: path.join(tmp, 'y'), rules: path.join(tmp, 'z'), agyRules: path.join(tmp, 'w'),
+          settings: path.join(tmp, 's'), agySettings: path.join(tmp, 'as'), agyMcpConfig: agyMcp, agyHookFiles: [hookFile],
+        },
         project: {
           claudeMd: path.join(tmp, 'no1'), localMd: path.join(tmp, 'no2'), agentsMd, geminiMd: path.join(tmp, 'no3'), memoryMd: path.join(tmp, 'no4'),
           mcpJson: path.join(tmp, '.mcp.json'), localAgyHudConfig: path.join(tmp, 'no5'), dotClaudeMd: null, dotLocalMd: path.join(tmp, 'no6'),
@@ -254,6 +283,8 @@ describe('vcs (git/jj), auth, agy-quota, and config-reader', () => {
       assert.equal(c.claudeMdCount, 1);
       assert.equal(c.memoryLabelName, 'AGENTS.md');
       assert.equal(c.rulesCount, 1);
+      assert.equal(c.mcpCount, 2);
+      assert.equal(c.hooksCount, 1);
       assert.equal(readAuthInfo(path.join(tmp, 'missing'), { email: 'bob@example.com', tier: 'Pro' }).email, 'bob@example.com');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

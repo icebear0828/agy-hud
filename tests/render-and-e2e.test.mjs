@@ -99,12 +99,32 @@ function baseCtx(overrides = {}) {
 }
 
 describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () => {
-  test('default configuration produces minimal 2-line HUD aligned with claude-hud', () => {
-    const out = stripAnsi(renderPlain(baseCtx({ agyQuota: { ...baseCtx().agyQuota, updateInfo: null } }), 140, NOW));
-    const lines = out.split('\n');
+  test('default full configuration renders rich telemetry while minimal preset stays 2 lines', () => {
+    const minimal = stripAnsi(renderPlain(baseCtx({
+      agyQuota: { ...baseCtx().agyQuota, updateInfo: null },
+      config: mergeConfig({
+        language: 'en',
+        gitStatus: { enabled: true, showDirty: true, showAheadBehind: false, showFileStats: false },
+        display: {
+          showTools: false, showSkills: false, showMcp: false, showAgents: false, showTodos: false,
+          showConfigCounts: false, showCost: false, showDuration: false, showSpeed: false,
+          showMemoryUsage: false, showPromptCache: false, showSessionTokens: false, showCompactions: false,
+          showEffortLevel: false, showClaudeCodeVersion: false, showOutputStyle: false, usageCompact: false,
+          sevenDayThreshold: 80,
+        },
+      }),
+    }), 140, NOW));
+    const lines = minimal.split('\n');
     assert.equal(lines.length, 2);
     assert.match(lines[0], /^\[Gemini 3 Pro \(High\)\] │ my-repo git:\(main\*\) │ build ok$/);
     assert.match(lines[1], /^Context .* 35% │ Usage .* 20% \(resets in 1h 30m\)$/);
+
+    const rich = stripAnsi(renderPlain(baseCtx({ agyQuota: { ...baseCtx().agyQuota, updateInfo: null } }), 160, NOW));
+    assert.match(rich, /\[Gemini 3 Pro \(High\)\]/);
+    assert.match(rich, /Tokens 30k \(in: 12k, out: 3k, cache: 15k\)/);
+    assert.match(rich, /Skills \(1\): brainstorming/);
+    assert.match(rich, /MCPs \(2\): codegraph, ✗ tavily/);
+    assert.match(rich, /reviewer:high/);
   });
 
   test('supports zh-Hans, zh-Hant, compact layout, and Antigravity table/models/compact quota styles', () => {
@@ -112,7 +132,7 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
     assert.match(zhHans, /35%/);
     assert.match(zhHans, /\$0\.42/);
 
-    const zhHant = stripAnsi(renderPlain(baseCtx({ config: mergeConfig({ language: 'zh-Hant' }) }), 140, NOW));
+    const zhHant = stripAnsi(renderPlain(baseCtx({ config: mergeConfig({ language: 'zh-Hant', display: { usageCompact: false } }) }), 140, NOW));
     assert.match(zhHant, /上下文/);
     assert.match(zhHant, /用量/);
 
@@ -162,8 +182,8 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
     assert.ok(colored.includes('\x1b[38;5;141m'));
     const plain = stripAnsi(colored);
     assert.match(plain, /Read/);
-    assert.match(plain, /\/brainstorming/);
-    assert.match(plain, /MCP:/);
+    assert.match(plain, /Skills \(1\): brainstorming/);
+    assert.match(plain, /MCPs \(2\): codegraph/);
     assert.match(plain, /reviewer:high/);
     assert.match(plain, /Finish tests/);
     assert.match(plain, /Approx RAM/);
@@ -205,6 +225,6 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
 
     const doc = spawnSync(process.execPath, ['hud.mjs', 'doctor'], { cwd: projectRoot, encoding: 'utf8' });
     assert.equal(doc.status, 0);
-    assert.equal(JSON.parse(doc.stdout).plugin.version, '0.4.0');
+    assert.equal(JSON.parse(doc.stdout).plugin.version, '0.4.1');
   });
 });

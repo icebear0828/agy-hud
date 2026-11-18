@@ -19,18 +19,27 @@ export interface Part {
   text: string;
 }
 
-function effortSuffix(f: Frame): string {
+function effortSuffix(f: Frame, baseName: string): { trimmedName: string; suffix: string } {
   const display = f.config?.display;
   const info = display?.showEffortLevel ? effort(f) : null;
-  return info ? ` ${formatEffort(info, display?.effortFormat)}` : '';
+  if (!info) return { trimmedName: baseName, suffix: '' };
+  const suffix = ` ${formatEffort(info, display?.effortFormat)}`;
+  // Avoid redundant "[Gemini 4 Hydrogen (XHigh) ◕ xhigh]" when model name already ends with "(XHigh)"
+  const parenRe = /\s*\(([^)]+)\)\s*$/;
+  const m = parenRe.exec(baseName);
+  if (m && m[1].trim().toLowerCase().replace(/[^a-z]/g, '') === info.level.toLowerCase().replace(/[^a-z]/g, '')) {
+    return { trimmedName: baseName.replace(parenRe, '').trim(), suffix };
+  }
+  return { trimmedName: baseName, suffix };
 }
 
 export function modelBadge(f: Frame): string {
   const display = f.config?.display;
-  const name = sanitizeDisplayText(
+  const rawName = sanitizeDisplayText(
     formatModelName(resolveModelName(f.stdin, f.transcript, display?.modelSource), display?.modelFormat, display?.modelOverride),
   );
-  const core = `${name}${effortSuffix(f)}`;
+  const { trimmedName, suffix } = effortSuffix(f, rawName);
+  const core = `${trimmedName}${suffix}`;
   const provider = getProviderLabel(f.stdin);
   let text = provider ? `${core} | ${provider}` : core;
   if (display?.showProvider) {
@@ -143,11 +152,13 @@ export function sessionNamePart(f: Frame): string | null {
 
 export function versionPart(f: Frame): string | null {
   const version = f.config?.display?.showClaudeCodeVersion ? claudeCodeVersion(f) : undefined;
-  return labeled(f, version && `v${version}`);
+  if (!version) return null;
+  const prefix = f.stdin.product === 'antigravity' ? 'agy v' : 'CC v';
+  return labeled(f, `${prefix}${version}`);
 }
 
 export function durationPart(f: Frame): string | null {
-  const duration = f.config?.display?.showDuration === true ? sessionDuration(f) : '';
+  const duration = f.config?.display?.showDuration === true ? sessionDuration(f, f.now) : '';
   if (!duration) return null;
   const clock = f.unicode ? '⏱️  ' : '';
   return labeled(f, `${clock}${duration}`);

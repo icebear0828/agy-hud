@@ -73,6 +73,24 @@ function findLatestTranscript(configDir) {
   return latest;
 }
 
+function discoverAgyPluginHookFiles(home) {
+  const pluginsDir = path.join(home, '.gemini', 'config', 'plugins');
+  const files = [];
+  try {
+    if (!fs.existsSync(pluginsDir)) return files;
+    for (const entry of fs.readdirSync(pluginsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      for (const rel of ['hooks.json', path.join('hooks', 'hooks.json')]) {
+        const p = path.join(pluginsDir, entry.name, rel);
+        try {
+          if (fs.statSync(p).isFile()) files.push(p);
+        } catch {}
+      }
+    }
+  } catch {}
+  return files;
+}
+
 export function logicPaths(paths, input) {
   const absolute = (p) => (typeof p === 'string' && path.isAbsolute(p) ? p : null);
   const cwd = absolute(input?.workspace?.current_dir) ?? absolute(input?.cwd);
@@ -92,6 +110,9 @@ export function logicPaths(paths, input) {
     agyRules: path.join(paths.home, '.gemini', 'config', 'rules'),
     settings: path.join(paths.claudeConfigDir, 'settings.json'),
     agySettings: path.join(paths.configDir, 'settings.json'),
+    mcpConfig: path.join(paths.home, '.gemini', 'config', 'mcp_config.json'),
+    agyMcpConfig: path.join(paths.configDir, 'mcp_config.json'),
+    agyHookFiles: discoverAgyPluginHookFiles(paths.home),
   };
 
   let project = null;

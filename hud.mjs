@@ -290,7 +290,7 @@ function maybeCheckUpdates(paths) {
   }
 }
 
-const COMMANDS = ['doctor', 'schema', 'preview', 'set', 'report', 'install'];
+const COMMANDS = ['doctor', 'schema', 'preview', 'set', 'preset', 'report', 'install'];
 const FACTS = ['doctor', 'report'];
 
 export function asJson(lines) {
@@ -332,7 +332,7 @@ async function runCommand(name, args, { paths, env }) {
     const stdin = facts.heartbeat?.stdin ?? null;
     const probes = collector.createProbes({ cwd: stdin?.workspace?.current_dir ?? stdin?.cwd, argv: [], env, paths, usage: collector.usagePaths(paths, env) });
     const output = await runCage({ stdin, env, probes, command: { name, args, facts } });
-    if (name === 'set' && output.config) collector.writeConfig(paths, output.config);
+    if ((name === 'set' || name === 'preset') && output.config) collector.writeConfig(paths, output.config);
     if (output.failed) process.exitCode = 1;
     print(FACTS.includes(name) ? asJson(output.lines) : output.lines, stdin);
   } catch (error) {

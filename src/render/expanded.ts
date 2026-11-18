@@ -1,6 +1,5 @@
 import type { FirstLineSegment, HudElement } from '../config.ts';
 import { DEFAULT_ELEMENT_ORDER, DEFAULT_MERGE_GROUPS } from '../config.ts';
-import { t } from '../i18n/index.ts';
 import type { Frame } from './frame.ts';
 import { dim, label } from './colors.ts';
 import { visibleWidth, separatorLine } from './ansi.ts';
@@ -29,6 +28,7 @@ import {
 import {
   addedDirsLine,
   cacheHitRateLine,
+  compactionsLine,
   environmentLine,
   imageQuotaLine,
   memoryLine,
@@ -41,9 +41,9 @@ import { agyQuotaExtraLines } from './quota-table.ts';
 import { usageParts } from './usage.ts';
 import { gitFilesLine } from './vcs.ts';
 
-const ACTIVITY_ELEMENTS = new Set<HudElement>(['tools', 'skills', 'mcp', 'agents', 'todos']);
+const ACTIVITY_ELEMENTS = new Set<HudElement>(['tools', 'skills', 'mcp', 'agents', 'todos', 'sessionTokens']);
 
-function firstLine(f: Frame, costSeparate: boolean): string[] {
+function firstLine(f: Frame, costSeparate: boolean, envVisible: boolean): string[] {
   const display = f.config?.display;
   const parts: Part[] = [];
 
@@ -54,9 +54,9 @@ function firstLine(f: Frame, costSeparate: boolean): string[] {
     parts.push({ key: 'project', text: p });
   }
 
-  const style = display?.showOutputStyle === true ? outputStyle(f) : undefined;
+  const style = !envVisible && display?.showOutputStyle === true ? outputStyle(f) : undefined;
   if (style) {
-    parts.push({ key: null, text: label(style, f.config?.colors) });
+    parts.push({ key: null, text: label(`style: ${style}`, f.config?.colors) });
   }
 
   const optional: Array<[FirstLineSegment, string | null]> = [
@@ -89,10 +89,10 @@ function firstLine(f: Frame, costSeparate: boolean): string[] {
   return lines;
 }
 
-function renderSingleElement(f: Frame, element: HudElement, align: LabelAlign, costSeparate: boolean): string[] {
+function renderSingleElement(f: Frame, element: HudElement, align: LabelAlign, costSeparate: boolean, envVisible: boolean): string[] {
   switch (element) {
     case 'project':
-      return firstLine(f, costSeparate);
+      return firstLine(f, costSeparate, envVisible);
     case 'addedDirs': {
       const line = addedDirsLine(f);
       return line ? [line] : [];
@@ -102,7 +102,7 @@ function renderSingleElement(f: Frame, element: HudElement, align: LabelAlign, c
     case 'usage':
       return usageParts(f, 'expanded', align) ?? [];
     case 'promptCache': {
-      const line = promptCacheLine(f);
+      const line = promptCacheLine(f, align);
       return line ? [line] : [];
     }
     case 'cacheHitRate': {
@@ -142,8 +142,9 @@ function renderSingleElement(f: Frame, element: HudElement, align: LabelAlign, c
       return line ? [line] : [];
     }
     case 'sessionTokens': {
-      const line = sessionTokensLine(f);
-      return line ? [line] : [];
+      const tok = sessionTokensLine(f);
+      const comp = compactionsLine(f);
+      return [tok, comp].filter((l): l is string => Boolean(l));
     }
     case 'cost': {
       const part = costPart(f);
@@ -173,13 +174,14 @@ export function renderExpanded(f: Frame): string[] {
   const order = f.config?.elementOrder?.length ? f.config.elementOrder : DEFAULT_ELEMENT_ORDER;
   const mergeGroups = display?.mergeGroups ?? DEFAULT_MERGE_GROUPS;
   const rightSet = new Set<HudElement>(display?.rightAlign ?? []);
+  const envVisible = Boolean(order.includes('environment') && environmentLine(f));
   const align: LabelAlign = {
-    align: false,
+    align: display?.showMemoryUsage === true || display?.showPromptCache === true,
     includeMemoryInWidth: display?.showMemoryUsage === true,
+    includePromptCacheInWidth: display?.showPromptCache === true,
   };
   const costSeparate = order.includes('cost') || mergeGroups.some((g) => g.includes('cost'));
 
-  // Build lookup: element -> its merge group (only if group has >= 2 members)
   const groupByElement = new Map<HudElement, HudElement[]>();
   for (const group of mergeGroups) {
     if (group.length < 2) continue;
@@ -203,7 +205,7 @@ export function renderExpanded(f: Frame): string[] {
         if (emitted.has(member)) continue;
         emitted.add(member);
         if (!ACTIVITY_ELEMENTS.has(member)) allActivity = false;
-        const rendered = renderSingleElement(f, member, align, costSeparate);
+        const rendered = renderSingleElement(f, member, align, costSeparate, envVisible);
         if (rendered.length > 0) {
           rowSegments.push({ element: member, text: rendered.join(f.sep) });
         }
@@ -216,11 +218,16 @@ export function renderExpanded(f: Frame): string[] {
     }
 
     emitted.add(element);
-    const rendered = renderSingleElement(f, element, align, costSeparate);
+    const rendered = renderSingleElement(f, element, align, costSeparate, envVisible);
     if (rendered.length === 0) continue;
 
     if (element === 'project') {
       primaryLines.push(...rendered);
+      continue;
+    }
+
+    if (element === 'sessionTokens') {
+      for (const r of rendered) activityLines.push(r);
       continue;
     }
 

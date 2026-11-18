@@ -11,8 +11,12 @@ export interface AgyStdinQuotaBucket {
 export interface StdinData {
   session_id?: string;
   conversation_id?: string;
+  conversation_title?: string;
   session_name?: string;
   version?: string;
+  product?: string;
+  email?: string;
+  terminal_width?: number;
   transcript_path?: string;
   cwd?: string;
   plan_tier?: string;

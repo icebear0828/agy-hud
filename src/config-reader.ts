@@ -89,17 +89,30 @@ export function countConfigs(
 
   const userSettings = readJson(user.settings);
   const agyUserSettings = readJson(user.agySettings);
+  const geminiMcp = readJson(user.mcpConfig);
+  const agyMcp = readJson(user.agyMcpConfig);
   const claudeJson = readJson(paths.claudeJson);
   const userMcp = new Set([
     ...keysOf(userSettings?.mcpServers),
     ...keysOf(agyUserSettings?.mcpServers ?? agyUserSettings?.mcp),
+    ...keysOf(geminiMcp?.mcpServers),
+    ...keysOf(agyMcp?.mcpServers),
     ...keysOf(claudeJson?.mcpServers),
   ]);
   for (const name of stringsOf(claudeJson?.disabledMcpServers)) userMcp.delete(name);
 
+  let pluginHooksCount = 0;
+  for (const hookFile of user.agyHookFiles ?? []) {
+    const hookDoc = readJson(hookFile);
+    if (hookDoc) {
+      const target = hookDoc.hooks && typeof hookDoc.hooks === 'object' ? hookDoc.hooks : hookDoc;
+      pluginHooksCount += keysOf(target).length;
+    }
+  }
+
   let claudeMdCount = [exists(user.claudeMd), exists(user.geminiMd)].filter(Boolean).length;
   let rulesCount = countRules(user.rules) + countRules(user.agyRules);
-  let hooksCount = keysOf(userSettings?.hooks).length + keysOf(agyUserSettings?.hooks).length + Math.max(0, gitHooksCount);
+  let hooksCount = keysOf(userSettings?.hooks).length + keysOf(agyUserSettings?.hooks).length + pluginHooksCount + Math.max(0, gitHooksCount);
   const projectMcp = new Set<string>();
   let memoryLabelName: string | undefined;
 

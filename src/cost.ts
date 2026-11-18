@@ -5,7 +5,7 @@ const MODEL_PRICING = [
   { pattern: /opus/i, input: 15.0, output: 75.0, cacheRead: 1.5 },
   { pattern: /sonnet/i, input: 3.0, output: 15.0, cacheRead: 0.3 },
   { pattern: /haiku/i, input: 0.8, output: 4.0, cacheRead: 0.08 },
-  { pattern: /pro/i, input: 1.25, output: 5.0, cacheRead: 0.3125 },
+  { pattern: /hydrogen|argon|pro/i, input: 1.25, output: 5.0, cacheRead: 0.3125 },
   { pattern: /flash/i, input: 0.075, output: 0.3, cacheRead: 0.01875 },
   { pattern: /gpt-?4/i, input: 2.5, output: 10.0, cacheRead: 1.25 },
 ];
@@ -53,15 +53,20 @@ export function getSessionCostUsd(
   if (native !== null) return native;
 
   const modelName = stdin.model?.display_name || stdin.model?.id || transcript?.lastAssistantModel || '';
+  const tx = transcript?.sessionTokens;
+  if (tx) {
+    const txTotal = tx.inputTokens + tx.outputTokens + tx.cacheReadTokens;
+    const cwTotal = (stdin.context_window?.total_input_tokens ?? 0) + (stdin.context_window?.total_output_tokens ?? 0);
+    if (!stdin.context_window || txTotal >= cwTotal) {
+      return calculateTokenCost(modelName, {
+        input_tokens: tx.inputTokens,
+        output_tokens: tx.outputTokens,
+        cache_read_input_tokens: tx.cacheReadTokens,
+      });
+    }
+  }
   if (stdin.context_window) {
     return calculateTokenCost(modelName, stdin.context_window);
-  }
-  if (transcript?.sessionTokens) {
-    return calculateTokenCost(modelName, {
-      input_tokens: transcript.sessionTokens.inputTokens,
-      output_tokens: transcript.sessionTokens.outputTokens,
-      cache_read_input_tokens: transcript.sessionTokens.cacheReadTokens,
-    });
   }
   return null;
 }

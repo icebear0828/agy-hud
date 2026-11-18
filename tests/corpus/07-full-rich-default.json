@@ -1,0 +1,46 @@
+{
+  "note": "Default out-of-the-box rich dashboard renders version, cost, usage, and memory safely",
+  "columns": 120,
+  "now": "2026-11-18T10:00:00Z",
+  "stdin": {
+    "model": { "id": "Gemini 4 Hydrogen (XHigh)", "display_name": "Gemini 4 Hydrogen (XHigh)", "effort": "xhigh" },
+    "product": "antigravity",
+    "version": "1.5.10",
+    "cwd": "/tmp/my-app",
+    "context_window": {
+      "context_window_size": 1000000,
+      "total_input_tokens": 500000,
+      "total_output_tokens": 25000,
+      "used_percentage": 36
+    }
+  },
+  "facts": {
+    "git.status": { "stdout": "# branch.head main\u0000" },
+    "memory": { "meminfo": "MemTotal:       16777216 kB\nMemAvailable:    8388608 kB\n" },
+    "agy.quota": {
+      "models": [],
+      "providerQuota": {
+        "google": {
+          "fiveHour": { "remainingFraction": 0.45, "resetTime": "2026-11-18T11:00:00Z" },
+          "weekly": { "remainingFraction": 0.83, "resetTime": "2026-11-24T00:00:00Z" }
+        }
+      },
+      "unavailableReason": null,
+      "tierName": "Google AI Pro",
+      "accountEmail": null,
+      "updateInfo": null
+    },
+    "agy.unicode": true
+  },
+  "expect": [
+    "exit 0",
+    "finishes within 4000ms",
+    "no line wider than columns",
+    "only safe escapes",
+    "contains [Gemini 4 Hydrogen",
+    "contains agy v1.5.10",
+    "contains 36%",
+    "contains 5h: 55%",
+    "contains Approx RAM"
+  ]
+}

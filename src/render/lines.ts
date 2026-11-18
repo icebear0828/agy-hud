@@ -4,9 +4,12 @@ import { formatTokens } from '../utils/format.ts';
 import { sanitizeDisplayText } from '../utils/sanitize.ts';
 import type { Frame } from './frame.ts';
 import { critical, cyan, dim, getContextColor, getQuotaColor, green, label, quotaBar, RESET, warning, yellow } from './colors.ts';
+import { outputStyle } from './derive.ts';
 import { barLabel, type LabelAlign } from './labels.ts';
 import { addedDirs, compactionsPart, configCountParts, sessionTokensSummary } from './parts.ts';
 import { formatAbsoluteTime, formatResetTime, wallClock } from './time.ts';
+
+const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
 function formatBytes(bytes: number): string {
   const gb = bytes / (1024 * 1024 * 1024);
@@ -16,8 +19,16 @@ function formatBytes(bytes: number): string {
 }
 
 export function environmentLine(f: Frame): string | null {
-  const parts = configCountParts(f);
-  return parts.length > 0 ? parts.join(f.sep) : null;
+  const errors = f.transcript?.mcpErrors ?? [];
+  const warnSym = f.unicode ? '⚠' : '!';
+  const mcpSuffix = errors.length > 0
+    ? ` ${warning(`${warnSym} ${sanitizeDisplayText(errors[0])}${errors.length > 1 ? ` +${errors.length - 1}` : ''}`, f.config?.colors)}`
+    : '';
+  const parts = configCountParts(f, mcpSuffix);
+  if (parts.length === 0) return null;
+  const style = f.config?.display?.showOutputStyle === true ? outputStyle(f) : undefined;
+  if (style) parts.push(label(`style: ${style}`, f.config?.colors));
+  return parts.join(f.sep);
 }
 
 export function addedDirsLine(f: Frame): string | null {
@@ -26,28 +37,55 @@ export function addedDirsLine(f: Frame): string | null {
   return addedDirs(f, '+', f.sep);
 }
 
-export function promptCacheLine(f: Frame): string | null {
+function resolvePromptCache(f: Frame): { warm: boolean; ttl?: string; expiresAtMs?: number; hitRatio?: number } | null {
+  const explicit = f.stdin.prompt_cache;
+  if (explicit) {
+    const expiresAtMs = typeof explicit.expires_at === 'number' && Number.isFinite(explicit.expires_at)
+      ? (explicit.expires_at < 1e12 ? explicit.expires_at * 1000 : explicit.expires_at)
+      : undefined;
+    return {
+      warm: Boolean(explicit.warm),
+      ttl: explicit.ttl,
+      expiresAtMs,
+      hitRatio: typeof explicit.hit_ratio === 'number' && Number.isFinite(explicit.hit_ratio) ? explicit.hit_ratio : undefined,
+    };
+  }
+  const cuCache = (f.stdin.context_window?.current_usage?.cache_read_input_tokens ?? 0) + (f.stdin.context_window?.current_usage?.cache_creation_input_tokens ?? 0);
+  const txCache = (f.transcript?.lastTurnUsage?.cacheReadTokens ?? 0) + (f.transcript?.lastTurnUsage?.cacheCreationTokens ?? 0);
+  const lastReply = f.transcript?.lastAssistantResponseAt?.getTime();
+  if ((cuCache > 0 || txCache > 0) && lastReply && Number.isFinite(lastReply)) {
+    const expiresAtMs = lastReply + FIVE_MINUTES_MS;
+    if (f.now - lastReply <= 60 * 60 * 1000) {
+      return { warm: expiresAtMs > f.now, expiresAtMs };
+    }
+  }
+  return null;
+}
+
+export function promptCacheLine(f: Frame, align: LabelAlign = {}): string | null {
   const display = f.config?.display;
   if (display?.showPromptCache !== true) return null;
-  const cache = f.stdin.prompt_cache;
+  const cache = resolvePromptCache(f);
   if (!cache) return null;
 
   const colors = f.config?.colors;
-  const state = cache.warm ? green('warm') : dim('cold');
-  const details: string[] = [state];
-  if (cache.ttl) details.push(label(sanitizeDisplayText(cache.ttl), colors));
-  if (typeof cache.expires_at === 'number' && Number.isFinite(cache.expires_at)) {
-    const expMs = cache.expires_at < 1e12 ? cache.expires_at * 1000 : cache.expires_at;
-    if (expMs <= f.now) {
+  const prefix = barLabel('label.promptCache', colors, align);
+  const clock = f.unicode ? '⏱ ' : '';
+  const details: string[] = [];
+
+  if (cache.expiresAtMs !== undefined) {
+    if (cache.expiresAtMs <= f.now) {
       details.push(warning(t('status.expired'), colors));
     } else {
-      details.push(label(formatResetTime(new Date(expMs), 'relative', wallClock(display), f.now), colors));
+      details.push(label(`${clock}${formatAbsoluteTime(new Date(cache.expiresAtMs), new Date(f.now), wallClock(display), 'format.untilTime')}`, colors));
     }
+  } else {
+    details.push(cache.warm ? green('warm') : dim('cold'));
   }
-  if (typeof cache.hit_ratio === 'number' && Number.isFinite(cache.hit_ratio)) {
-    details.push(label(`${Math.round(cache.hit_ratio * 100)}%`, colors));
-  }
-  return `${label(`${t('label.promptCache')}:`, colors)} ${details.join(' ')}`;
+
+  if (cache.ttl) details.push(label(sanitizeDisplayText(cache.ttl), colors));
+  if (cache.hitRatio !== undefined) details.push(label(`${Math.round(cache.hitRatio * 100)}%`, colors));
+  return `${prefix} ${details.join(' ')}`;
 }
 
 export function cacheHitRateLine(f: Frame): string | null {
@@ -98,15 +136,11 @@ export function sessionTimeLine(f: Frame): string | null {
 
 export function sessionTokensLine(f: Frame): string | null {
   if (f.config?.display?.showSessionTokens !== true) return null;
-  const tok = sessionTokensSummary(f, `${t('label.tokens')}:`);
-  const comp = compactionsPart(f);
-  const parts = [tok, comp].filter((p): p is string => Boolean(p));
-  return parts.length > 0 ? parts.join(f.sep) : null;
+  return sessionTokensSummary(f, t('label.tokens'));
 }
 
-export function costLine(f: Frame): string | null {
-  // Handled on first line or explicit element when placed in elementOrder
-  return null;
+export function compactionsLine(f: Frame): string | null {
+  return compactionsPart(f);
 }
 
 function isImageModel(q: AgyModelQuota): boolean {

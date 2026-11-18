@@ -151,12 +151,13 @@ export async function renderStdin(
 
   const authInfo = config.display.showAuth || config.display.showAuthUser
     ? readAuthInfo(paths.claudeJson, {
-        email: agyQuota?.accountEmail ?? null,
+        email: agyQuota?.accountEmail ?? stdin.email ?? null,
         tier: agyQuota?.tierName ?? stdin.plan_tier ?? null,
       })
     : null;
 
   const unicodeSupported = typeof probeAnswers['agy.unicode'] === 'boolean' ? probeAnswers['agy.unicode'] : true;
+  const cols = getTerminalWidth() ?? (typeof stdin.terminal_width === 'number' && stdin.terminal_width > 0 ? Math.min(1000, Math.floor(stdin.terminal_width)) : null);
 
   const ctx: RenderContext = {
     stdin,
@@ -178,7 +179,7 @@ export async function renderStdin(
     unicodeSupported,
   };
 
-  const rendered = render(ctx, getTerminalWidth(), now);
+  const rendered = render(ctx, cols, now);
   const lines = rendered ? rendered.split('\n') : [];
   const warning = problemLine(loaded.problems);
   if (warning && lines.length > 0) lines.push(warning);

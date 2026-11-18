@@ -9,6 +9,8 @@ REPO_URL=$(node -e "
   if (!r || !r.url) { console.error('package.json missing repository.url'); process.exit(1); }
   console.log(r.url.replace(/^git\+/, '').replace(/\.git$/, ''));
 ")
+REPO_SLUG=${REPO_URL#https://github.com/}
+REPO_SLUG=${REPO_SLUG%.git}
 echo "📦 Preparing release v$VERSION..."
 
 # 1. Run typecheck, unit tests, and architecture/security verification suite
@@ -76,11 +78,11 @@ if [ "${1:-}" = "--local" ] || [ "${SKIP_GH_RELEASE:-}" = "true" ]; then
 fi
 
 echo "🚀 Uploading to GitHub..."
-gh release delete "v$VERSION" --yes || true
+gh release delete "v$VERSION" -R "$REPO_SLUG" --yes || true
 git tag -d "v$VERSION" || true
 git push origin :refs/tags/v$VERSION || true
 
-gh release create "v$VERSION" agy-hud.zip --title "Release v$VERSION" --notes "Official agy-hud plugin release v$VERSION."
+gh release create "v$VERSION" agy-hud.zip -R "$REPO_SLUG" --title "Release v$VERSION" --notes "Official agy-hud plugin release v$VERSION."
 
 echo "✅ Release v$VERSION is now live!"
 echo "🔗 Permanent 'Latest' Install URL:"

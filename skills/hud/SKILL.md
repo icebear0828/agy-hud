@@ -24,6 +24,7 @@ Do not guess config keys from memory — query `schema` first.
 | List config keys or search by keyword | `node "$HUD" schema [words...]` |
 | Preview HUD layout with optional overrides | `node "$HUD" preview [key=value ...]` |
 | Change one or more settings in `config.json` | `node "$HUD" set <key>=<value> [...]` |
+| Switch preset (`full` default, `essential`, `minimal`) | `node "$HUD" preset <minimal\|essential\|full>` |
 | Revert a key or reset entire config | `node "$HUD" set --reset [<key>]` |
 | Undo the last `hud set` | `node "$HUD" set --undo` |
 | Generate scrubbed bug-report JSON | `node "$HUD" report` |
