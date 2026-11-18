@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveAntigravityPath } from './paths.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const REMOTE_PKG_URL = 'https://raw.githubusercontent.com/yuwenlong/agy-hud/main/package.json';
+export const REMOTE_PKG_URL = 'https://raw.githubusercontent.com/icebear0828/agy-hud/main/package.json';
 const STATUS_FILE = resolveAntigravityPath('agy-hud-update-status.json');
 
 export function fetchRemoteVersion(url = REMOTE_PKG_URL) {

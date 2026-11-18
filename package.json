@@ -23,11 +23,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yuwenlong/agy-hud.git"
+    "url": "git+https://github.com/icebear0828/agy-hud.git"
   },
-  "homepage": "https://github.com/yuwenlong/agy-hud#readme",
+  "homepage": "https://github.com/icebear0828/agy-hud#readme",
   "bugs": {
-    "url": "https://github.com/yuwenlong/agy-hud/issues"
+    "url": "https://github.com/icebear0828/agy-hud/issues"
   },
   "scripts": {
     "typecheck": "tsc -p .",

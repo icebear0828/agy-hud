@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # One-command installer for agy-hud. Does:
 #   1. Verify Node >= 22.18.0
-#   2. agy plugin install (or upgrade) https://github.com/yuwenlong/agy-hud.git
+#   2. agy plugin install (or upgrade) https://github.com/icebear0828/agy-hud.git
 #   3. bootstrap runtime + configure settings.json statusLine
 #
 # Run from a normal shell — NOT from inside an active `agy` session
 # (agy rewrites settings.json from in-memory state on exit).
 #
 # Usage:
-#   bash <(curl -fsSL https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/install.sh)
+#   bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.sh)
 #
 # Env:
 #   AGY_HUD_REPO_RAW    override raw GitHub base URL (forks / mirrors)
 #   AGY_HUD_REPO_URL    override git URL for `agy plugin install`
 set -euo pipefail
 
-REPO_RAW="${AGY_HUD_REPO_RAW:-https://raw.githubusercontent.com/yuwenlong/agy-hud/main}"
-REPO_URL="${AGY_HUD_REPO_URL:-https://github.com/yuwenlong/agy-hud.git}"
+REPO_RAW="${AGY_HUD_REPO_RAW:-https://raw.githubusercontent.com/icebear0828/agy-hud/main}"
+REPO_URL="${AGY_HUD_REPO_URL:-https://github.com/icebear0828/agy-hud.git}"
 
 if ! command -v agy >/dev/null 2>&1; then
   echo "agy-hud: agy CLI not on PATH. Install it first:" >&2

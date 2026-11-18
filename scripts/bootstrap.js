@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export const DEFAULT_SOURCE_BASE = 'https://raw.githubusercontent.com/yuwenlong/agy-hud/main';
+export const DEFAULT_SOURCE_BASE = 'https://raw.githubusercontent.com/icebear0828/agy-hud/main';
 
 export const RUNTIME_FILES = [
   'package.json',

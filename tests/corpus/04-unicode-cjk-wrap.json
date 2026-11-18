@@ -10,7 +10,7 @@
     "cwd": "/tmp/中文测试项目",
     "workspace": {
       "current_dir": "/tmp/中文测试项目",
-      "repo": { "host": "github.com", "owner": "yuwenlong", "name": "agy-hud" }
+      "repo": { "host": "github.com", "owner": "icebear0828", "name": "agy-hud" }
     },
     "context_window": { "context_window_size": 200000, "used_percentage": 68 },
     "rate_limits": { "five_hour": { "used_percentage": 45, "resets_at": 1795003200 } }

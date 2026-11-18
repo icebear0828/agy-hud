@@ -31,7 +31,7 @@ try {
 
   const out = await runCage({
     entry: probeEntry,
-    stdin: { cwd, secretFile, workspace: { repo: { host: 'github.com', owner: 'yuwenlong', name: 'agy-hud' } } },
+    stdin: { cwd, secretFile, workspace: { repo: { host: 'github.com', owner: 'icebear0828', name: 'agy-hud' } } },
     env,
   });
 
@@ -39,7 +39,7 @@ try {
     errors.push(`Cage escape probe succeeded: ${out.lines[0]}`);
   }
 
-  const filter = terminalFilter({ workspace: { repo: { host: 'github.com', owner: 'yuwenlong', name: 'agy-hud' } } });
+  const filter = terminalFilter({ workspace: { repo: { host: 'github.com', owner: 'icebear0828', name: 'agy-hud' } } });
   const filteredLine = filter(out.lines[1] ?? '');
   if (!filteredLine.includes('\x1b[31mKEEP_COLOR\x1b[0m')) {
     errors.push('terminalFilter stripped valid SGR color');

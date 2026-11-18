@@ -232,7 +232,7 @@ function relayToNode(argv) {
 
 async function handleSelfUpdate() {
   console.log('Checking for latest installer...');
-  const bootstrapUrl = 'https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/bootstrap.js';
+  const bootstrapUrl = 'https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/bootstrap.js';
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-update-'));
   const tempPath = path.join(tempDir, 'bootstrap.mjs');
   try {

@@ -1,7 +1,7 @@
 # agy-hud
 
-[![E2E](https://github.com/yuwenlong/agy-hud/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/yuwenlong/agy-hud/actions/workflows/e2e.yml)
-[![Release](https://img.shields.io/github/v/release/yuwenlong/agy-hud)](https://github.com/yuwenlong/agy-hud/releases/latest)
+[![E2E](https://github.com/icebear0828/agy-hud/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/icebear0828/agy-hud/actions/workflows/e2e.yml)
+[![Release](https://img.shields.io/github/v/release/icebear0828/agy-hud)](https://github.com/icebear0828/agy-hud/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
 
 > 为 **Antigravity CLI (`agy`)** 与 Claude Code 打造的实时状态栏插件。
@@ -19,13 +19,11 @@
 
 ## 界面样式
 
-### 默认极简双行模式（`display.quotaStyle: "minimal"`）
-默认样式全面对齐 `claude-hud` 清爽双行布局：
-
-```
-[Gemini 3 Pro (High)] │ my-project git:(main*)
-上下文 ████░░░░░░ 35% │ 用量 ██░░░░░░░░ 18% (重置剩余 2h 15m)
-```
+### 开箱即用的 Full 预设与快捷切换
+默认开启全套遥测信息（费用、输出速率、缓存倒计时、内存占用、环境配置数、工具、Skills、MCPs、子代理、待办与词元统计），也可随时通过 `/hud preset` 一键切换：
+- `/hud preset minimal` — 回归清爽双行极简视图（`模型 / 项目` + `上下文 | 配额`）
+- `/hud preset essential` — 核心工作区活动、待办、耗时与环境计数
+- `/hud preset full` — 完整全量遥测（默认）
 
 ### Antigravity 多提供商扩展视图（`display.quotaStyle`）
 可随时通过 `/hud set display.quotaStyle=table` 切换为 Antigravity 专属详细配额视图：
@@ -48,17 +46,17 @@
 
 **macOS / Linux**:
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.sh)
 ```
 
 **Windows PowerShell**:
 ```powershell
-irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex
 ```
 
 **Windows CMD**:
 ```cmd
-powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex"
 ```
 
 ### 配置与诊断命令（`/hud`）
@@ -79,12 +77,12 @@ node "$HUD" --config             # 启动终端交互配置向导
 
 **macOS / Linux**:
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yuwenlong/agy-hud/main/uninstall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.sh)
 ```
 
 **Windows PowerShell**:
 ```powershell
-irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/uninstall.ps1 | iex
+irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.ps1 | iex
 ```
 
 ## License

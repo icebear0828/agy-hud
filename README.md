@@ -1,7 +1,7 @@
 # agy-hud
 
-[![E2E](https://github.com/yuwenlong/agy-hud/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/yuwenlong/agy-hud/actions/workflows/e2e.yml)
-[![Release](https://img.shields.io/github/v/release/yuwenlong/agy-hud)](https://github.com/yuwenlong/agy-hud/releases/latest)
+[![E2E](https://github.com/icebear0828/agy-hud/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/icebear0828/agy-hud/actions/workflows/e2e.yml)
+[![Release](https://img.shields.io/github/v/release/icebear0828/agy-hud)](https://github.com/icebear0828/agy-hud/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
 
 > Real-time statusline HUD plugin for **Antigravity CLI (`agy`)** & Claude Code.
@@ -19,13 +19,11 @@
 
 ## What It Looks Like
 
-### Default Minimal View (`display.quotaStyle: "minimal"`)
-Aligned with `claude-hud` clean two-line status bar by default:
-
-```
-[Gemini 3 Pro (High)] │ my-project git:(main*)
-Context ████░░░░░░ 35% │ Usage ██░░░░░░░░ 18% (resets in 2h 15m)
-```
+### Default Full Preset & Quick Preset Switching
+Ships with full telemetry enabled out of the box (cost, speed, prompt cache, RAM, environment counts, active tools, skills, MCPs, subagents, todos, and session tokens). Switch anytime via `/hud preset`:
+- `/hud preset minimal` — classic two-line compact view (`Model / Project` + `Context | Usage`)
+- `/hud preset essential` — core activity, todos, duration, and config counts
+- `/hud preset full` — full telemetry (default)
 
 ### Expanded Multi-Provider Quota Views (`display.quotaStyle`)
 Switch anytime with `/hud set display.quotaStyle=table` (or `models` / `compact`):
@@ -49,21 +47,21 @@ Run from a normal shell — **NOT** from inside an active `agy` session (`agy` m
 
 **macOS / Linux**:
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.sh)
 ```
 
 **Windows PowerShell**:
 ```powershell
-irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex
 ```
 
 **Windows CMD**:
 ```cmd
-powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/scripts/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/scripts/install.ps1 | iex"
 ```
 
 ### What the installer does
-1. Verifies Node `>= 22.18.0` and cleanly re-installs `agy plugin install https://github.com/yuwenlong/agy-hud.git`.
+1. Verifies Node `>= 22.18.0` and cleanly re-installs `agy plugin install https://github.com/icebear0828/agy-hud.git`.
 2. Downloads runtime + TypeScript logic modules into `~/.gemini/antigravity-cli/agy-hud-runtime/`.
 3. Installs `~/.gemini/antigravity-cli/agy-hud/statusline.mjs` (plus Windows `.cmd` / `sh.cmd` shims) and writes `statusLine.command` into `~/.gemini/antigravity-cli/settings.json`.
 4. Pre-warms Antigravity quota cache if OAuth credentials are available.
@@ -87,12 +85,12 @@ node "$HUD" --config             # Launch interactive TUI configuration wizard
 
 **macOS / Linux**:
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/yuwenlong/agy-hud/main/uninstall.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.sh)
 ```
 
 **Windows PowerShell**:
 ```powershell
-irm https://raw.githubusercontent.com/yuwenlong/agy-hud/main/uninstall.ps1 | iex
+irm https://raw.githubusercontent.com/icebear0828/agy-hud/main/uninstall.ps1 | iex
 ```
 
 ---

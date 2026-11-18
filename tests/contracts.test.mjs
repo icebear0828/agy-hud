@@ -18,9 +18,9 @@ describe('repository contracts', () => {
     const readme = read('README.md');
     const readmeZh = read('README_zh.md');
 
-    assert.match(installSh, /yuwenlong\/agy-hud/);
+    assert.match(installSh, /icebear0828\/agy-hud/);
     assert.match(installSh, /22.*18|18.*22/);
-    assert.match(installPs1, /yuwenlong\/agy-hud/);
+    assert.match(installPs1, /icebear0828\/agy-hud/);
     assert.match(installPs1, /22.*18|18.*22/);
     assert.match(uninstallSh, /uninstall\.mjs/);
     assert.match(uninstallPs1, /uninstall\.mjs/);

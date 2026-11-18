@@ -3,8 +3,8 @@
 # Run from a normal shell -- NOT from inside an active `agy` session.
 $ErrorActionPreference = 'Stop'
 
-$RepoRaw = if ($env:AGY_HUD_REPO_RAW) { $env:AGY_HUD_REPO_RAW } else { 'https://raw.githubusercontent.com/yuwenlong/agy-hud/main' }
-$RepoUrl = if ($env:AGY_HUD_REPO_URL) { $env:AGY_HUD_REPO_URL } else { 'https://github.com/yuwenlong/agy-hud.git' }
+$RepoRaw = if ($env:AGY_HUD_REPO_RAW) { $env:AGY_HUD_REPO_RAW } else { 'https://raw.githubusercontent.com/icebear0828/agy-hud/main' }
+$RepoUrl = if ($env:AGY_HUD_REPO_URL) { $env:AGY_HUD_REPO_URL } else { 'https://github.com/icebear0828/agy-hud.git' }
 
 if (-not (Get-Command agy -ErrorAction SilentlyContinue)) {
     Write-Error "agy-hud: agy CLI not on PATH. Install it first:`n  irm https://antigravity.google/cli/install.ps1 | iex"

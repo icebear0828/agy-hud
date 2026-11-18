@@ -296,11 +296,11 @@ describe('vcs (git/jj), auth, agy-quota, and config-reader', () => {
       if (probe === 'git.status') return { 'git.status': { stdout: porcelain } };
       if (probe === 'git.numstat') return { 'git.numstat': { stdout: numstat } };
       return {};
-    }, { lineDiffs: true, repo: { host: 'github.com', owner: 'yuwenlong', name: 'agy-hud' } });
+    }, { lineDiffs: true, repo: { host: 'github.com', owner: 'icebear0828', name: 'agy-hud' } });
     assert.equal(git?.branch, 'feat/test');
     assert.equal(git?.ahead, 2);
     assert.equal(git?.lineDiff?.added, 5);
-    assert.match(git?.branchUrl ?? '', /https:\/\/github\.com\/yuwenlong\/agy-hud\/tree\/feat\/test/);
+    assert.match(git?.branchUrl ?? '', /https:\/\/github\.com\/icebear0828\/agy-hud\/tree\/feat\/test/);
     assert.equal(parseNumstat('-\t-\tbin.png\u0000').size, 0);
 
     const jj = await getJjStatus(async () => ({ jj: 'abc\u001fmain\u001f1\u001f0\n' }));
