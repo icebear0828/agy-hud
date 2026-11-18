@@ -35,7 +35,7 @@ export const DESCRIPTIONS: Record<string, string> = {
   'display.showContextBar': 'Show visual context bar `████░░░░░░`',
   'display.contextValue': 'Context display format (`45%`, `45k/200k`, `55%` remaining, or `45% (45k/200k)`)',
   'display.autoCompactWindow': 'Compute context percentage against this auto-compact window (e.g. `200000`) instead of the full model context window',
-  'display.showConfigCounts': 'Show CLAUDE.md/AGENTS.md/GEMINI.md, rules, MCPs, hooks counts',
+  'display.showConfigCounts': 'Show CLAUDE.md/AGENTS.md/GEMINI.md, rules, MCPs, hooks, agents counts',
   'display.environmentThreshold': 'Hide config counts until their total reaches this number (`0` = always show)',
   'display.showCost': 'Show session cost (`cost.total_cost_usd` or calculated token cost fallback)',
   'display.showRoutedCost': 'Also show cost for Bedrock and Vertex sessions, which `showCost` hides by default',

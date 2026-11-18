@@ -1,6 +1,9 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { mergeConfig } from '../src/config.ts';
@@ -44,6 +47,7 @@ function baseCtx(overrides = {}) {
     rulesCount: 2,
     mcpCount: 2,
     hooksCount: 1,
+    agentsCount: 2,
     costTotals: { todayUsd: 2.5, weekUsd: 12.75 },
     outputSpeed: 54.2,
     gitStatus: { branch: 'main', isDirty: true, ahead: 1, behind: 0 },
@@ -188,6 +192,50 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
     assert.match(plain, /Finish tests/);
     assert.match(plain, /Approx RAM/);
     assert.match(plain, /1 AGENTS\.md/);
+    assert.match(plain, /2 agents/);
+
+    const completedAgent = stripAnsi(renderPlain(baseCtx({
+      config: mergeConfig({ language: 'zh-Hans', display: { showAgentEffort: true } }),
+      memoryLabelName: 'GEMINI.md',
+      claudeMdCount: 2,
+      transcript: {
+        ...baseCtx().transcript,
+        agents: [
+          {
+            id: 'a2',
+            type: 'worker',
+            model: 'gemini-4-hydrogen',
+            effort: 'high',
+            description: '清查配置',
+            status: 'completed',
+            startTime: new Date(NOW - 34_000),
+            endTime: new Date(NOW),
+          },
+        ],
+      },
+    }), 160, NOW));
+    assert.match(completedAgent, /2 GEMINI\.md/);
+    assert.match(completedAgent, /2 Agents/);
+    assert.match(completedAgent, /✓ worker \[Gemini 4 Hydrogen:high\] \(清查配置\) 34s/);
+
+    const inheritAgent = stripAnsi(renderPlain(baseCtx({
+      config: mergeConfig({ language: 'zh-Hans', display: { showAgentEffort: true } }),
+      transcript: {
+        ...baseCtx().transcript,
+        agents: [
+          {
+            id: 'a3',
+            type: 'research',
+            model: 'inherit',
+            description: '保留继承',
+            status: 'running',
+            startTime: new Date(NOW - 5_000),
+          },
+        ],
+      },
+    }), 160, NOW));
+    assert.match(inheritAgent, /◐ research \(保留继承\) 5s/);
+    assert.doesNotMatch(inheritAgent, /\[inherit\]/);
 
     const wrapped = wrapToWidth('AAAA │ BBBB │ CCCC │ DDDD', 14);
     assert.ok(wrapped.length >= 2);
@@ -223,8 +271,66 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
     assert.equal(baseline.status, 0);
     assert.match(stripAnsi(baseline.stdout), /0%/);
 
+    const pkgVer = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')).version;
     const doc = spawnSync(process.execPath, ['hud.mjs', 'doctor'], { cwd: projectRoot, encoding: 'utf8' });
     assert.equal(doc.status, 0);
-    assert.equal(JSON.parse(doc.stdout).plugin.version, '0.4.1');
+    assert.equal(JSON.parse(doc.stdout).plugin.version, pkgVer);
+
+    // End-to-end runCage execution with isolated fake HOME containing config/agents + brain subagent transcript
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hud-sub-e2e-'));
+    try {
+      const agyCli = path.join(fakeHome, '.gemini', 'antigravity-cli');
+      const agentsDir = path.join(fakeHome, '.gemini', 'config', 'agents');
+      fs.mkdirSync(path.join(agentsDir, 'worker'), { recursive: true });
+      fs.writeFileSync(path.join(agentsDir, 'worker', 'agent.md'), '# worker');
+      const mainConv = 'conv-main-12345678';
+      const subConv = 'conv-sub-87654321';
+      fs.mkdirSync(path.join(agyCli, 'brain', mainConv, '.system_generated', 'logs'), { recursive: true });
+      fs.mkdirSync(path.join(agyCli, 'brain', subConv, '.system_generated', 'logs'), { recursive: true });
+      fs.writeFileSync(path.join(fakeHome, '.gemini', 'GEMINI.md'), '# g');
+      fs.writeFileSync(
+        path.join(agyCli, 'brain', subConv, '.system_generated', 'logs', 'transcript.jsonl'),
+        `${JSON.stringify({ type: 'PLANNER_RESPONSE', model: 'gemini-4-hydrogen-tiered-high' })}\n`,
+      );
+      fs.writeFileSync(
+        path.join(agyCli, 'brain', mainConv, '.system_generated', 'logs', 'transcript.jsonl'),
+        [
+          JSON.stringify({
+            type: 'PLANNER_RESPONSE',
+            created_at: '2026-11-18T10:00:00Z',
+            tool_calls: [{ name: 'invoke_subagent', args: { TypeName: '"worker"', Role: '"Scan"', Model: '"inherit"' } }],
+          }),
+          JSON.stringify({
+            type: 'GENERIC',
+            created_at: '2026-11-18T10:00:01Z',
+            content: `Created the following subagent:\n{\n  "conversationId": "${subConv}"\n}`,
+          }),
+          JSON.stringify({
+            type: 'SYSTEM_MESSAGE',
+            created_at: '2026-11-18T10:00:10Z',
+            content: `[Message] sender=${subConv} content=ok`,
+          }),
+        ].join('\n') + '\n',
+      );
+      const subPayload = JSON.stringify({
+        model: { id: 'gemini-4-hydrogen-xhigh', display_name: 'Gemini 4 Hydrogen (XHigh)' },
+        cwd: projectRoot,
+        conversation_id: mainConv,
+        context_window: { context_window_size: 200_000, used_percentage: 20 },
+      });
+      const subRes = spawnSync(process.execPath, ['hud.mjs'], {
+        cwd: projectRoot,
+        input: `${subPayload}\n`,
+        env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, AGY_HUD_DATA_DIR: agyCli, LANG: 'zh_CN.UTF-8' },
+        encoding: 'utf8',
+      });
+      assert.equal(subRes.status, 0, subRes.stderr);
+      const subPlain = stripAnsi(subRes.stdout).replace(/\u00A0/g, ' ');
+      assert.match(subPlain, /1 GEMINI\.md/);
+      assert.match(subPlain, /1 Agents/);
+      assert.match(subPlain, /✓ worker \[Gemini 4 Hydrogen:high\] \(Scan\) 10s/);
+    } finally {
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
   });
 });

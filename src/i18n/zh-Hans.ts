@@ -10,6 +10,7 @@ export const zhHans: Messages = {
   "label.cacheHitRate": "缓存命中",
   "label.rules": "规则",
   "label.hooks": "钩子",
+  "label.agents": "Agents",
   "label.cost": "费用",
   "label.today": "今日",
   "label.week": "本周",

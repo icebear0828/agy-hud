@@ -32,6 +32,10 @@ export interface Paths {
     geminiMd: string;
     rules: string;
     agyRules: string;
+    agents?: string;
+    agyConfigAgents?: string;
+    agyAgents?: string;
+    agyCliAgents?: string;
     settings: string;
     agySettings: string;
     mcpConfig?: string;
@@ -53,12 +57,16 @@ export interface Paths {
     agentsRules: string;
     cursorRules: string;
     githubRules: string;
+    agents?: string | null;
+    geminiAgents?: string;
+    agentsAgents?: string;
     settings: string | null;
     localSettings: string;
   } | null;
   projectMemory: string | null;
   transcript: string | null;
   subagents: string | null;
+  agySubagentTranscripts?: Record<string, string>;
 }
 
 export interface Facts {

@@ -111,7 +111,7 @@ describe('transcript / Claude + Antigravity JSONL & incremental cursor resume', 
           content: 'Launched subagent conversationId: sub-uuid-1234',
         }),
         JSON.stringify({
-          type: 'USER_INPUT',
+          type: 'SYSTEM_MESSAGE',
           step_index: 3,
           created_at: '2026-11-18T09:00:20Z',
           content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-18T09:00:20Z sender=sub-uuid-1234 content=finished',
@@ -135,6 +135,71 @@ describe('transcript / Claude + Antigravity JSONL & incremental cursor resume', 
       assert.equal(res.tools[0].target, '/src/main.ts');
       assert.equal(res.imageExhausted?.exhausted, true);
       assert.equal(res.imageExhausted?.resetTime, futureReset);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('pairs concurrent Antigravity subagents FIFO, ignores file reads containing conversationId, and extracts agy subagent model/effort', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tx-agy-multi-'));
+    try {
+      const txPath = path.join(tmp, 'transcript.jsonl');
+      const workerTx = path.join(tmp, 'worker-transcript.jsonl');
+      fs.writeFileSync(workerTx, `${JSON.stringify({
+        type: 'PLANNER_RESPONSE',
+        step_index: 1,
+        created_at: '2026-11-18T09:00:05Z',
+        model: 'gemini-4-hydrogen-tiered-high',
+      })}\n`);
+
+      const lines = [
+        JSON.stringify({
+          type: 'PLANNER_RESPONSE',
+          step_index: 1,
+          created_at: '2026-11-18T09:00:00Z',
+          tool_calls: [
+            { name: 'invoke_subagent', args: { TypeName: '"worker"', Role: '"Scan configs"', Model: '"inherit"' } },
+            { name: 'read_file', args: { Path: '"/src/transcript.ts"' } },
+            { name: 'invoke_subagent', args: { TypeName: '"reviewer"', Role: '"Audit changes"', Model: '"flash"' } },
+          ],
+        }),
+        JSON.stringify({
+          type: 'GENERIC',
+          status: 'DONE',
+          content: 'Created At: 2026-11-18T15:00:51+08:00\nCreated the following subagent:\n{\n  "conversationId":  "sub-worker-11111111",\n  "logAbsoluteUri":  "file:///tmp/x"\n}',
+        }),
+        JSON.stringify({
+          type: 'GENERIC',
+          status: 'DONE',
+          content: 'Created At: 2026-11-18T15:00:52+08:00\nShowing lines 1-5 of 5\n1: const x = "conversationId: fake";',
+        }),
+        JSON.stringify({
+          type: 'GENERIC',
+          status: 'DONE',
+          content: 'Created At: 2026-11-18T15:00:53+08:00\nCreated the following subagent:\n{\n  "conversationId":  "sub-review-22222222"\n}',
+        }),
+        JSON.stringify({
+          type: 'SYSTEM_MESSAGE',
+          step_index: 2,
+          created_at: '2026-11-18T09:00:12Z',
+          content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-18T09:00:12Z sender=sub-worker-11111111 priority=MESSAGE_PRIORITY_HIGH content=done',
+        }),
+      ];
+      fs.writeFileSync(txPath, `${lines.join('\n')}\n`);
+      const res = await parseTranscript(txPath, path.join(tmp, 'data'));
+      assert.equal(res.tools[0]?.name, 'read_file');
+      assert.equal(res.tools[0]?.status, 'completed');
+      assert.equal(res.agents.length, 2);
+      assert.equal(res.agents[0]?.agentId, 'sub-worker-11111111');
+      assert.equal(res.agents[0]?.status, 'completed');
+      assert.equal(res.agents[0]?.model, undefined);
+      assert.equal(res.agents[1]?.agentId, 'sub-review-22222222');
+      assert.equal(res.agents[1]?.status, 'running');
+      assert.equal(res.agents[1]?.model, 'flash');
+
+      await addSubagentEfforts('', res.agents, { 'sub-worker-11111111': workerTx });
+      assert.equal(res.agents[0]?.model, 'gemini-4-hydrogen');
+      assert.equal(res.agents[0]?.effort, 'high');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -266,9 +331,19 @@ describe('vcs (git/jj), auth, agy-quota, and config-reader', () => {
       const hookFile = path.join(tmp, 'hooks.json');
       fs.writeFileSync(hookFile, JSON.stringify({ 'rtk-rewrite': { enabled: true } }));
 
+      const agyConfigAgents = path.join(tmp, '.gemini', 'config', 'agents');
+      fs.mkdirSync(path.join(agyConfigAgents, 'reviewer'), { recursive: true });
+      fs.mkdirSync(path.join(agyConfigAgents, 'worker'), { recursive: true });
+      fs.writeFileSync(path.join(agyConfigAgents, 'reviewer', 'agent.md'), '# reviewer');
+      fs.writeFileSync(path.join(agyConfigAgents, 'worker', 'agent.md'), '# worker');
+      const claudeAgents = path.join(tmp, '.claude', 'agents');
+      fs.mkdirSync(claudeAgents, { recursive: true });
+      fs.writeFileSync(path.join(claudeAgents, 'reviewer.md'), '# duplicate name');
+
       const c = countConfigs({
         user: {
           claudeMd: path.join(tmp, 'x'), geminiMd: path.join(tmp, 'y'), rules: path.join(tmp, 'z'), agyRules: path.join(tmp, 'w'),
+          agents: claudeAgents, agyConfigAgents,
           settings: path.join(tmp, 's'), agySettings: path.join(tmp, 'as'), agyMcpConfig: agyMcp, agyHookFiles: [hookFile],
         },
         project: {
@@ -285,6 +360,30 @@ describe('vcs (git/jj), auth, agy-quota, and config-reader', () => {
       assert.equal(c.rulesCount, 1);
       assert.equal(c.mcpCount, 2);
       assert.equal(c.hooksCount, 1);
+      assert.equal(c.agentsCount, 2);
+
+      // When user has ~/.gemini/GEMINI.md + ~/.claude/CLAUDE.md and project has no memory files, GEMINI.md label wins
+      const userClaudeMd = path.join(tmp, 'CLAUDE.md');
+      const userGeminiMd = path.join(tmp, 'GEMINI.md');
+      fs.writeFileSync(userClaudeMd, '# c');
+      fs.writeFileSync(userGeminiMd, '# g');
+      const cGem = countConfigs({
+        user: {
+          claudeMd: userClaudeMd, geminiMd: userGeminiMd, rules: path.join(tmp, 'z'), agyRules: path.join(tmp, 'w'),
+          agyConfigAgents, settings: path.join(tmp, 's'), agySettings: path.join(tmp, 'as'),
+        },
+        project: {
+          claudeMd: path.join(tmp, 'no1'), localMd: path.join(tmp, 'no2'), agentsMd: path.join(tmp, 'no0'), geminiMd: path.join(tmp, 'no3'), memoryMd: path.join(tmp, 'no4'),
+          mcpJson: path.join(tmp, '.mcp.json'), localAgyHudConfig: path.join(tmp, 'no5'), dotClaudeMd: null, dotLocalMd: path.join(tmp, 'no6'),
+          rules: null, geminiRules: path.join(tmp, 'no7'), agentsRules: path.join(tmp, 'ar'), cursorRules: path.join(tmp, 'cr'), githubRules: path.join(tmp, 'gr'),
+          settings: null, localSettings: path.join(tmp, 'ls'),
+        },
+        projectMemory: null,
+        claudeJson: path.join(tmp, 'cj'),
+      });
+      assert.equal(cGem.claudeMdCount, 2);
+      assert.equal(cGem.memoryLabelName, 'GEMINI.md');
+      assert.equal(cGem.agentsCount, 2);
       assert.equal(readAuthInfo(path.join(tmp, 'missing'), { email: 'bob@example.com', tier: 'Pro' }).email, 'bob@example.com');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

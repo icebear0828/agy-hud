@@ -250,6 +250,7 @@ export interface RenderContext {
   rulesCount: number;
   mcpCount: number;
   hooksCount: number;
+  agentsCount?: number;
   costTotals: CostTotals | null;
   outputSpeed: number | null;
   gitStatus: GitStatus | null;

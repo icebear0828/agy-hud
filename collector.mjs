@@ -91,6 +91,56 @@ function discoverAgyPluginHookFiles(home) {
   return files;
 }
 
+function discoverAgySubagentTranscripts(configDir, transcriptPath) {
+  const result = {};
+  if (!transcriptPath) return result;
+  try {
+    const st = fs.statSync(transcriptPath);
+    if (!st.isFile() || st.size === 0) return result;
+    const maxBytes = 16 * 1024 * 1024;
+    const fd = fs.openSync(transcriptPath, 'r');
+    let content = '';
+    try {
+      const start = Math.max(0, st.size - maxBytes);
+      const len = st.size - start;
+      const buf = Buffer.allocUnsafe(len);
+      const bytesRead = fs.readSync(fd, buf, 0, len, start);
+      content = buf.subarray(0, bytesRead).toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+    if (!content.includes('conversationId')) return result;
+
+    const ids = [];
+    const seen = new Set();
+    for (const re of [
+      /\\?"conversationId\\?"\s*:\s*\\?"([\w-]{8,128})\\?"/g,
+      /(?:Launched subagent|conversationId)\s*[:=]\s*(?:\\?["'])?([\w-]{8,128})/gi,
+      /conversation:\/\/([\w-]{8,128})/g,
+    ]) {
+      for (const m of content.matchAll(re)) {
+        const id = m[1];
+        if (id && !seen.has(id)) {
+          seen.add(id);
+          ids.push(id);
+        }
+      }
+    }
+
+    const brainRoot = fs.realpathSync(path.join(configDir, 'brain'));
+    for (const id of ids.slice(-20)) {
+      const candidate = path.join(configDir, 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
+      try {
+        const real = fs.realpathSync(candidate);
+        if (real.startsWith(`${brainRoot}${path.sep}`) && fs.statSync(real).isFile()) {
+          result[id] = candidate;
+        }
+      } catch {}
+    }
+  } catch {}
+  return result;
+}
+
 export function logicPaths(paths, input) {
   const absolute = (p) => (typeof p === 'string' && path.isAbsolute(p) ? p : null);
   const cwd = absolute(input?.workspace?.current_dir) ?? absolute(input?.cwd);
@@ -108,6 +158,10 @@ export function logicPaths(paths, input) {
     geminiMd: path.join(paths.home, '.gemini', 'GEMINI.md'),
     rules: path.join(paths.claudeConfigDir, 'rules'),
     agyRules: path.join(paths.home, '.gemini', 'config', 'rules'),
+    agents: path.join(paths.claudeConfigDir, 'agents'),
+    agyConfigAgents: path.join(paths.home, '.gemini', 'config', 'agents'),
+    agyAgents: path.join(paths.home, '.gemini', 'agents'),
+    agyCliAgents: path.join(paths.configDir, 'agents'),
     settings: path.join(paths.claudeConfigDir, 'settings.json'),
     agySettings: path.join(paths.configDir, 'settings.json'),
     mcpConfig: path.join(paths.home, '.gemini', 'config', 'mcp_config.json'),
@@ -134,6 +188,9 @@ export function logicPaths(paths, input) {
       agentsRules: path.join(cwd, '.agents', 'rules'),
       cursorRules: path.join(cwd, '.cursor', 'rules'),
       githubRules: path.join(cwd, '.github', 'rules'),
+      agents: ownClaude ? path.join(claudeDir, 'agents') : null,
+      geminiAgents: path.join(cwd, '.gemini', 'agents'),
+      agentsAgents: path.join(cwd, '.agents', 'agents'),
       settings: ownClaude ? path.join(claudeDir, 'settings.json') : null,
       localSettings: path.join(claudeDir, 'settings.local.json'),
     };
@@ -142,6 +199,7 @@ export function logicPaths(paths, input) {
   const normalizedCwd = cwd ? cwd.replace(/\\/g, '/') : '';
   const projectKey = normalizedCwd ? normalizedCwd.replace(/:/g, '').replace(/\//g, '-') : '';
   const projectMemory = projectKey ? path.join(paths.claudeConfigDir, 'projects', projectKey, 'memory', 'MEMORY.md') : null;
+  const agySubagentTranscripts = discoverAgySubagentTranscripts(paths.configDir, transcript);
 
   return {
     data: paths.dataDir,
@@ -155,22 +213,30 @@ export function logicPaths(paths, input) {
     projectMemory,
     transcript,
     subagents: transcript ? path.join(path.dirname(transcript), path.basename(transcript, '.jsonl'), 'subagents') : null,
+    agySubagentTranscripts,
   };
 }
 
 export function readGrants(root, named) {
   const flat = (value) => (value && typeof value === 'object' ? Object.values(value).flatMap(flat) : typeof value === 'string' ? [value] : []);
   const grants = [root, ...flat(named)];
-  const ruleDirs = [
+  const dirGrants = [
     named.user?.rules,
     named.user?.agyRules,
+    named.user?.agents,
+    named.user?.agyConfigAgents,
+    named.user?.agyAgents,
+    named.user?.agyCliAgents,
     named.project?.rules,
     named.project?.geminiRules,
     named.project?.agentsRules,
     named.project?.cursorRules,
     named.project?.githubRules,
+    named.project?.agents,
+    named.project?.geminiAgents,
+    named.project?.agentsAgents,
   ].filter(Boolean);
-  for (const dir of ruleDirs) {
+  for (const dir of dirGrants) {
     try { grants.push(fs.realpathSync(dir)); } catch {}
   }
   return [...new Set(grants)];

@@ -1,4 +1,5 @@
 import { t } from '../i18n/index.ts';
+import { formatModelName, humanizeModelId } from '../stdin.ts';
 import type { AgentEntry, TodoItem } from '../types.ts';
 import { getFileHref, safeHyperlink } from '../utils/hyperlinks.ts';
 import { sanitizeDisplayText } from '../utils/sanitize.ts';
@@ -127,13 +128,24 @@ export function agentsLine(f: Frame): string | null {
   const items = list.map((agent) => {
     const icon = agent.status === 'running' ? yellow(sym.running) : green(sym.done);
     const kind = cyan(sanitizeDisplayText(agent.type || 'agent'));
-    const effort = display?.showAgentEffort && agent.effort ? dim(`:${sanitizeDisplayText(agent.effort)}`) : '';
+    const rawModel = agent.model && agent.model.toLowerCase() !== 'inherit' ? sanitizeDisplayText(agent.model) : '';
+    const prettyModel = rawModel
+      ? truncateString(formatModelName(humanizeModelId(rawModel), display?.modelFormat), 28, sym.ellipsis)
+      : '';
+    const rawEffort = display?.showAgentEffort && agent.effort ? sanitizeDisplayText(agent.effort) : '';
+    const meta = prettyModel && rawEffort
+      ? dim(` [${prettyModel}:${rawEffort}]`)
+      : prettyModel
+        ? dim(` [${prettyModel}]`)
+        : rawEffort
+          ? dim(`:${rawEffort}`)
+          : '';
     const desc = agent.description
       ? dim(` (${truncateString(sanitizeDisplayText(agent.description), 24, sym.ellipsis)})`)
       : '';
     const endMs = agent.endTime ? agent.endTime.getTime() : f.now;
     const elapsed = agent.startTime ? dim(` ${formatElapsedDuration(endMs - agent.startTime.getTime())}`) : '';
-    return `${icon} ${kind}${effort}${desc}${elapsed}`;
+    return `${icon} ${kind}${meta}${desc}${elapsed}`;
   });
   if (running.length > 3) items.push(dim(`+${running.length - 3} running`));
   return items.join(f.sep);

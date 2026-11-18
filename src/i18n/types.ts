@@ -8,6 +8,7 @@ export type MessageKey =
   | "label.cacheHitRate"
   | "label.rules"
   | "label.hooks"
+  | "label.agents"
   | "label.cost"
   | "label.today"
   | "label.week"

@@ -13,6 +13,7 @@ export interface ConfigCounts {
   rulesCount: number;
   mcpCount: number;
   hooksCount: number;
+  agentsCount: number;
 }
 
 function readJson(filePath: string | null | undefined): Record<string, unknown> | null {
@@ -80,6 +81,48 @@ function countRules(dir: string | null | undefined, state = { visited: new Set<s
   return count;
 }
 
+function hasAgentMarkdown(dir: string): boolean {
+  try {
+    return fs.readdirSync(dir).some((name) => !name.startsWith('.') && name.toLowerCase().endsWith('.md'));
+  } catch {
+    return false;
+  }
+}
+
+function collectAgents(dir: string | null | undefined, visitedDirs: Set<string>, agentNames: Set<string>): void {
+  if (!dir) return;
+  const root = realPath(dir);
+  if (!root || visitedDirs.has(root)) return;
+  visitedDirs.add(root);
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(root);
+  } catch (error) {
+    debug(`Failed to read agents from ${dir}:`, error);
+    return;
+  }
+
+  for (const entry of entries) {
+    if (entry.startsWith('.')) continue;
+    const target = realPath(path.join(root, entry));
+    if (!target) continue;
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(target);
+    } catch {
+      continue;
+    }
+    if (stat.isFile() && entry.toLowerCase().endsWith('.md')) {
+      if (entry.toLowerCase() === 'readme.md') continue;
+      agentNames.add(entry.slice(0, -3).toLowerCase());
+    } else if (stat.isDirectory() && !visitedDirs.has(target) && hasAgentMarkdown(target)) {
+      visitedDirs.add(target);
+      agentNames.add(entry.toLowerCase());
+    }
+  }
+}
+
 export function countConfigs(
   paths: Pick<Paths, 'user' | 'project' | 'claudeJson' | 'projectMemory'>,
   gitHooksCount = 0,
@@ -113,13 +156,18 @@ export function countConfigs(
   let claudeMdCount = [exists(user.claudeMd), exists(user.geminiMd)].filter(Boolean).length;
   let rulesCount = countRules(user.rules) + countRules(user.agyRules);
   let hooksCount = keysOf(userSettings?.hooks).length + keysOf(agyUserSettings?.hooks).length + pluginHooksCount + Math.max(0, gitHooksCount);
+  const visitedAgentDirs = new Set<string>();
+  const agentNames = new Set<string>();
+  for (const dir of [user.agyConfigAgents, user.agyAgents, user.agyCliAgents, user.agents]) {
+    collectAgents(dir, visitedAgentDirs, agentNames);
+  }
   const projectMcp = new Set<string>();
   let memoryLabelName: string | undefined;
 
   if (project) {
     const projectMemoryChecks: Array<[string | null, string]> = [
-      [project.agentsMd, 'AGENTS.md'],
       [project.geminiMd, 'GEMINI.md'],
+      [project.agentsMd, 'AGENTS.md'],
       [project.claudeMd, 'CLAUDE.md'],
       [project.localMd, 'CLAUDE.local.md'],
       [project.dotClaudeMd, 'CLAUDE.md'],
@@ -144,6 +192,10 @@ export function countConfigs(
       countRules(project.cursorRules) +
       countRules(project.githubRules);
 
+    for (const dir of [project.geminiAgents, project.agents, project.agentsAgents]) {
+      collectAgents(dir, visitedAgentDirs, agentNames);
+    }
+
     const projectSettings = readJson(project.settings);
     for (const name of keysOf(projectSettings?.mcpServers)) projectMcp.add(name);
     hooksCount += keysOf(projectSettings?.hooks).length;
@@ -156,7 +208,8 @@ export function countConfigs(
     for (const name of keysOf(readJson(project.mcpJson)?.mcpServers)) {
       if (!disabledMcpJson.has(name)) projectMcp.add(name);
     }
-  } else if (exists(user.geminiMd)) {
+  }
+  if (!memoryLabelName && exists(user.geminiMd)) {
     memoryLabelName = 'GEMINI.md';
   }
 
@@ -166,5 +219,6 @@ export function countConfigs(
     rulesCount,
     mcpCount: userMcp.size + projectMcp.size,
     hooksCount,
+    agentsCount: agentNames.size,
   };
 }

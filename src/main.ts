@@ -89,8 +89,8 @@ export async function renderStdin(
     paths.transcript ? parseTranscript(paths.transcript, paths.data) : Promise.resolve(emptyTranscript()),
   ]);
 
-  if (config.display.showAgents && config.display.showAgentEffort && paths.subagents && transcript.agents.length > 0) {
-    await addSubagentEfforts(paths.subagents, transcript.agents);
+  if (config.display.showAgents && transcript.agents.length > 0 && (paths.subagents || paths.agySubagentTranscripts)) {
+    await addSubagentEfforts(paths.subagents ?? '', transcript.agents, paths.agySubagentTranscripts);
   }
 
   const jjStatus = config.jjStatus.enabled ? await getJjStatus(async () => ({ jj: probeAnswers.jj } as Record<Probe, unknown>)) : null;
@@ -111,7 +111,7 @@ export async function renderStdin(
 
   const counts = config.display.showConfigCounts
     ? countConfigs(paths)
-    : { claudeMdCount: 0, rulesCount: 0, mcpCount: 0, hooksCount: 0 };
+    : { claudeMdCount: 0, rulesCount: 0, mcpCount: 0, hooksCount: 0, agentsCount: 0 };
   const gitHooksCount = config.display.showConfigCounts && typeof probeAnswers['git.hooks'] === 'number'
     ? probeAnswers['git.hooks']
     : 0;
@@ -167,6 +167,7 @@ export async function renderStdin(
     rulesCount: counts.rulesCount,
     mcpCount: counts.mcpCount,
     hooksCount: counts.hooksCount + gitHooksCount,
+    agentsCount: counts.agentsCount,
     costTotals,
     outputSpeed,
     gitStatus,

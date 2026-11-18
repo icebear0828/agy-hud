@@ -229,7 +229,8 @@ export function customLinePart(f: Frame, position: 'first' | 'last'): string | n
 
 export function configCountParts(f: Frame, mcpSuffix = ''): string[] {
   const display = f.config?.display;
-  const total = f.claudeMdCount + f.rulesCount + f.mcpCount + f.hooksCount;
+  const agentsCount = f.agentsCount ?? 0;
+  const total = f.claudeMdCount + f.rulesCount + f.mcpCount + f.hooksCount + agentsCount;
   if (display?.showConfigCounts !== true || total === 0 || total < (display?.environmentThreshold ?? 0)) return [];
   const colors = f.config?.colors;
   const memLabel = f.memoryLabelName ?? 'CLAUDE.md';
@@ -238,6 +239,7 @@ export function configCountParts(f: Frame, mcpSuffix = ''): string[] {
     f.rulesCount > 0 ? label(`${f.rulesCount} ${t('label.rules')}`, colors) : null,
     f.mcpCount > 0 ? `${label(`${f.mcpCount} MCPs`, colors)}${mcpSuffix}` : null,
     f.hooksCount > 0 ? label(`${f.hooksCount} ${t('label.hooks')}`, colors) : null,
+    agentsCount > 0 ? label(`${agentsCount} ${t('label.agents')}`, colors) : null,
   ].filter((part): part is string => part !== null);
 }
 

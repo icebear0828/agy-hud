@@ -6,7 +6,8 @@ import { createDebug } from './debug.ts';
 import type { AgentEntry, SessionTokenUsage, TodoItem, ToolEntry, TranscriptData } from './types.ts';
 import { displayLabel, sanitizeDisplayText } from './utils/sanitize.ts';
 import { truncateString } from './utils/truncate.ts';
-import { sanitizeTranscriptModel } from './model-source.ts';
+import { sanitizeTranscriptModel, splitModelAndEffort } from './model-source.ts';
+import { effortInfo } from './effort.ts';
 
 const debug = createDebug('transcript');
 
@@ -211,6 +212,21 @@ class Parser {
   private agyToolSeq = 0;
   private data: TranscriptData = { ...emptyTranscript(), compactionCount: 0, steps: 0, totalApiDurationMs: 0 };
 
+  private completeAgentsBySenders(content: string, at: Date | null): void {
+    const senderMatches = content.matchAll(/\[Message\][^\n]*?sender=([^\s\]]+)/g);
+    for (const m of senderMatches) {
+      const sender = m[1];
+      const callId = this.agentIdToToolUseId.get(sender);
+      const agent = callId
+        ? this.agents.get(callId)
+        : [...this.agents.values()].find((a) => a.agentId === sender || (a.status === 'running' && Boolean(a.agentId) && sender.includes(a.agentId!)));
+      if (agent && agent.status === 'running') {
+        agent.status = 'completed';
+        agent.endTime = at ?? new Date();
+      }
+    }
+  }
+
   line(raw: string): void {
     let entry: Entry | null = null;
     try {
@@ -241,17 +257,9 @@ class Parser {
       if (selMatch?.[1]) this.data.transcriptModelSelection = sanitizeDisplayText(selMatch[1].trim());
       const modeMatch = entry.content.match(/changed setting `(?:Mode|Agent Mode|Permission Mode)` from [^\n]+? to ([^\n.]+)\./i);
       if (modeMatch?.[1]) this.data.transcriptMode = sanitizeDisplayText(modeMatch[1].trim());
-
-      const senderMatches = entry.content.matchAll(/\[Message\][^\n]*?sender=([^\s\]]+)/g);
-      for (const m of senderMatches) {
-        const sender = m[1];
-        const callId = this.agentIdToToolUseId.get(sender);
-        const agent = callId ? this.agents.get(callId) : [...this.agents.values()].find((a) => a.agentId === sender || (a.status === 'running' && sender.includes(a.agentId ?? '___')));
-        if (agent && agent.status === 'running') {
-          agent.status = 'completed';
-          agent.endTime = at ?? new Date();
-        }
-      }
+      this.completeAgentsBySenders(entry.content, at);
+    } else if (entry.type === 'SYSTEM_MESSAGE' && typeof entry.content === 'string') {
+      this.completeAgentsBySenders(entry.content, at);
     }
 
     if (entry.type === 'PLANNER_RESPONSE') {
@@ -369,10 +377,13 @@ class Parser {
         }
 
         if (tc.name === 'invoke_subagent') {
+          const rawModel = unquoteAgyArg(args.Model);
+          const hint = rawModel && rawModel.toLowerCase() !== 'inherit' ? splitModelAndEffort(rawModel) : {};
           this.agents.set(callId, {
             id: callId,
             type: unquoteAgyArg(args.TypeName) ?? 'subagent',
-            model: sanitizeTranscriptModel(unquoteAgyArg(args.Model)),
+            model: hint.model,
+            effort: hint.effort,
             description: unquoteAgyArg(args.Role),
             status: 'running',
             startTime: at ?? new Date(),
@@ -380,10 +391,13 @@ class Parser {
           });
           cap(this.agents, AGENTS_KEPT);
         } else if (tc.name === 'swarm' && unquoteAgyArg(args.action) === 'add') {
+          const rawModel = unquoteAgyArg(args.model);
+          const hint = rawModel && rawModel.toLowerCase() !== 'inherit' ? splitModelAndEffort(rawModel) : {};
           this.agents.set(callId, {
             id: callId,
             type: unquoteAgyArg(args.name) ?? 'swarm',
-            model: sanitizeTranscriptModel(unquoteAgyArg(args.model)),
+            model: hint.model,
+            effort: hint.effort,
             description: unquoteAgyArg(args.brief),
             status: 'running',
             startTime: at ?? new Date(),
@@ -407,28 +421,23 @@ class Parser {
 
   private agyGenericResponse(entry: Entry, at: Date | null, entryTimeMs: number | null): void {
     const content = typeof entry.content === 'string' ? entry.content : '';
-    const isSubagentLaunch = /"conversationId"\s*:|Launched subagent|conversationId:/i.test(content) && !content.includes('finished');
+    const unlinkedRunning = [...this.agents.values()].find((a) => a.status === 'running' && !a.agentId);
+    const isFileOrCmdOutput = /\nShowing lines \d+|\nCommand output:|\nMade \d+ replacement/m.test(content);
+    const isSubagentLaunch =
+      Boolean(unlinkedRunning) &&
+      !isFileOrCmdOutput &&
+      /(?:Created the following subagent:|Launched subagent\s+conversationId\b|^\s*\{[\s\S]{0,80}"conversationId"\s*:)/m.test(content) &&
+      !content.includes('finished');
     if (isSubagentLaunch) {
-      const idMatch = /conversationId["']?\s*[:=]\s*["']?([\w-]{8,128})/i.exec(content);
-      if (idMatch?.[1]) {
-        const running = [...this.agents.values()].filter((a) => a.status === 'running' && !a.agentId).at(-1);
-        if (running) {
-          running.agentId = idMatch[1];
-          this.agentIdToToolUseId.set(idMatch[1], running.id);
-        }
+      const idMatch = /"?conversationId"?\s*[:=]\s*["']?([\w-]{8,128})/i.exec(content);
+      if (idMatch?.[1] && unlinkedRunning) {
+        unlinkedRunning.agentId = idMatch[1];
+        this.agentIdToToolUseId.set(idMatch[1], unlinkedRunning.id);
       }
       return;
     }
 
-    const senderMatch = /\[Message\][^\n]*?sender=([^\s\]]+)/.exec(content);
-    if (senderMatch?.[1]) {
-      const cid = this.agentIdToToolUseId.get(senderMatch[1]);
-      const target = cid ? this.agents.get(cid) : [...this.agents.values()].find((a) => a.agentId === senderMatch[1]);
-      if (target && target.status === 'running') {
-        target.status = 'completed';
-        target.endTime = at ?? new Date();
-      }
-    }
+    this.completeAgentsBySenders(content, at);
 
     const nextId = this.pendingAgyToolIds.shift();
     if (nextId) {
@@ -446,7 +455,7 @@ class Parser {
         }
       }
     }
-    if (content.includes('conversation://') && entryTimeMs !== null) {
+    if (!isFileOrCmdOutput && content.includes('conversation://') && entryTimeMs !== null) {
       for (const agent of this.agents.values()) {
         if (agent.status === 'running' && !agent.agentId) {
           agent.status = 'completed';
@@ -887,35 +896,63 @@ export async function parseTranscript(transcriptPath: string, dataDir: string): 
   }
 }
 
-const AGENT_ID = /^[\w-]{1,64}$/;
+const AGENT_ID = /^[\w-]{1,128}$/;
 
-async function subagentEffort(subagentsDir: string, agentId: string): Promise<string | undefined> {
-  if (!AGENT_ID.test(agentId)) return undefined;
-  const file = path.join(subagentsDir, `agent-${agentId}.jsonl`);
+interface SubagentDetails {
+  model?: string;
+  effort?: string;
+}
+
+async function readSubagentDetails(file: string): Promise<SubagentDetails> {
   try {
-    if (!(await fs.promises.stat(file)).isFile()) return undefined;
+    if (!(await fs.promises.stat(file)).isFile()) return {};
   } catch {
-    return undefined;
+    return {};
   }
   const input = fs.createReadStream(file);
+  const details: SubagentDetails = {};
   try {
     for await (const raw of readline.createInterface({ input, crlfDelay: Infinity })) {
-      let entry: { type?: unknown; effort?: unknown } | null = null;
+      let entry: { type?: unknown; effort?: unknown; thinking_level?: unknown; model?: unknown; message?: { model?: unknown } } | null = null;
       try {
         entry = JSON.parse(raw);
       } catch {
         continue;
       }
-      if (entry?.type === 'assistant') return typeof entry.effort === 'string' ? entry.effort : undefined;
+      if (!entry) continue;
+      if (entry.type === 'assistant') {
+        const split = splitModelAndEffort(entry.message?.model);
+        if (split.model) details.model = split.model;
+        const explicit = typeof entry.effort === 'string' ? effortInfo(entry.effort)?.level : undefined;
+        if (explicit ?? split.effort) details.effort = explicit ?? split.effort;
+        return details;
+      }
+      if (entry.type === 'PLANNER_RESPONSE') {
+        const split = splitModelAndEffort(entry.model);
+        if (split.model) details.model = split.model;
+        const explicitRaw = entry.effort ?? entry.thinking_level;
+        const explicit = typeof explicitRaw === 'string' ? effortInfo(explicitRaw)?.level : undefined;
+        if (explicit ?? split.effort) details.effort = explicit ?? split.effort;
+      }
     }
   } catch {} finally {
     input.destroy();
   }
-  return undefined;
+  return details;
 }
 
-export async function addSubagentEfforts(subagentsDir: string, agents: AgentEntry[]): Promise<void> {
+export async function addSubagentEfforts(
+  subagentsDir: string,
+  agents: AgentEntry[],
+  agySubagentTranscripts?: Record<string, string>,
+): Promise<void> {
   await Promise.all(agents.map(async (agent) => {
-    if (agent.agentId) agent.effort = await subagentEffort(subagentsDir, agent.agentId);
+    if (!agent.agentId || !AGENT_ID.test(agent.agentId)) return;
+    const mappedFile = agySubagentTranscripts?.[agent.agentId];
+    const targetFile = mappedFile || (subagentsDir ? path.join(subagentsDir, `agent-${agent.agentId}.jsonl`) : '');
+    if (!targetFile) return;
+    const details = await readSubagentDetails(targetFile);
+    if (details.model) agent.model = details.model;
+    if (details.effort) agent.effort = details.effort;
   }));
 }
