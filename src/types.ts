@@ -85,6 +85,7 @@ export interface StdinData {
   } | null;
   effort?: { level?: string } | string | null;
   worktree?: { name?: string; path?: string; branch?: string } | null;
+  subagents?: Array<{ name?: string | null; role?: string | null; model?: string | null; status?: string | null }> | null;
 }
 
 interface RateLimitWindow {
@@ -145,6 +146,7 @@ export interface AgentEntry {
   type: string;
   model?: string;
   description?: string;
+  promptKey?: string;
   status: 'running' | 'completed';
   startTime: Date;
   endTime?: Date;

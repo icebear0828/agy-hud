@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { createHash } from 'node:crypto';
 import { createDebug } from './debug.ts';
-import type { AgentEntry, SessionTokenUsage, TodoItem, ToolEntry, TranscriptData } from './types.ts';
+import type { AgentEntry, SessionTokenUsage, StdinData, TodoItem, ToolEntry, TranscriptData } from './types.ts';
 import { displayLabel, sanitizeDisplayText } from './utils/sanitize.ts';
 import { truncateString } from './utils/truncate.ts';
 import { sanitizeTranscriptModel, splitModelAndEffort } from './model-source.ts';
@@ -193,6 +193,55 @@ function deepFind(obj: unknown, key: string, maxDepth = 6): unknown {
   return undefined;
 }
 
+const AGENT_ID = /^[\w-]{1,128}$/;
+const SUBAGENT_EXIT_VERB = '(?:has\\s+gone\\s+idle|finished|completed|stopped|exited)';
+const FILE_OR_CMD_OUTPUT_RE =
+  /(?:^|\n)[ \t]*(?:Showing lines \d+|Command output:|Command exited with |Made \d+ replacement|\d+[:|]|[^\n[\]<>]+?\.[A-Za-z0-9]{1,8}:\d+:)/;
+const LEADING_FILE_OR_CMD_OUTPUT_RE =
+  /^[ \t]*(?:Showing lines \d+|Command output:|Command exited with |Made \d+ replacement|\d+[:|]|[^\n[\]<>]+?\.[A-Za-z0-9]{1,8}:\d+:)/;
+const SYSTEM_MESSAGE_BLOCK_RE = /<SYSTEM_MESSAGE>([\s\S]*?)<\/SYSTEM_MESSAGE>/g;
+const MESSAGE_SENDER_LINE_RE = /^\[Message\][^\n]*?\bsender=([^\s\]]+)/gm;
+const SUBAGENT_LINE_EXIT_RE = new RegExp(`^[ \\t]*Subagent\\s+([\\w-]{8,128})\\s+${SUBAGENT_EXIT_VERB}\\b`, 'gim');
+const STRICT_SUBAGENT_LINE_EXIT_RE = new RegExp(`^Subagent\\s+([\\w-]{8,128})\\s+${SUBAGENT_EXIT_VERB}\\b`, 'gim');
+const STANDALONE_SUBAGENT_NOTICE_LINE_RE = new RegExp(
+  `^(?:\\[Message\\][^\\n]*?\\bsender=([^\\s\\]]+)|[ \\t]*Subagent\\s+([\\w-]{8,128})\\s+${SUBAGENT_EXIT_VERB}\\b\\.?[ \\t]*)$`,
+  'i',
+);
+
+function isPureConversationJson(content: string): string | null {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const id = (parsed as { conversationId?: unknown }).conversationId;
+      if (typeof id === 'string' && /^[\w-]{8,128}$/.test(id)) return id;
+    }
+  } catch {}
+  return null;
+}
+
+function isStructuredGenericNotice(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed || LEADING_FILE_OR_CMD_OUTPUT_RE.test(trimmed)) return false;
+  if (/^(?:<SYSTEM_MESSAGE>|\[Message\][^\n]*?\bsender=)/.test(trimmed)) return true;
+  const lines = trimmed.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return lines.length > 0 && lines.every((l) => STANDALONE_SUBAGENT_NOTICE_LINE_RE.test(l));
+}
+
+const PROMPT_KEY_MAX_LEN = 64;
+
+function normalizeReconcileKey(value: unknown): string {
+  return typeof value === 'string' ? sanitizeDisplayText(value).trim().toLowerCase() : '';
+}
+
+function toPromptKey(value: unknown): string | undefined {
+  const unquoted = unquoteAgyArg(value);
+  if (!unquoted) return undefined;
+  const key = normalizeReconcileKey(unquoted).slice(0, PROMPT_KEY_MAX_LEN);
+  return key || undefined;
+}
+
 class Parser {
   private tools = new Map<string, ToolEntry>();
   private agents = new Map<string, AgentEntry>();
@@ -204,6 +253,7 @@ class Parser {
   private nextTaskId = 1;
   private agentCompletions = new Map<string, Date>();
   private agentIdToToolUseId = new Map<string, string>();
+  private reopenedByTool = new Map<string, { agentCallId: string; prevEndTime?: Date }>();
   private usageById = new Map<string, SessionTokenUsage>();
   private settled: SessionTokenUsage = { ...ZERO_USAGE };
   private lastIdlessUsage: string | undefined;
@@ -212,19 +262,50 @@ class Parser {
   private agyToolSeq = 0;
   private data: TranscriptData = { ...emptyTranscript(), compactionCount: 0, steps: 0, totalApiDurationMs: 0 };
 
-  private completeAgentsBySenders(content: string, at: Date | null): void {
-    const senderMatches = content.matchAll(/\[Message\][^\n]*?sender=([^\s\]]+)/g);
-    for (const m of senderMatches) {
-      const sender = m[1];
-      const callId = this.agentIdToToolUseId.get(sender);
-      const agent = callId
-        ? this.agents.get(callId)
-        : [...this.agents.values()].find((a) => a.agentId === sender || (a.status === 'running' && Boolean(a.agentId) && sender.includes(a.agentId!)));
-      if (agent && agent.status === 'running') {
-        agent.status = 'completed';
-        agent.endTime = at ?? new Date();
-      }
+  private addAgent(id: string, entry: AgentEntry): void {
+    this.agents.set(id, entry);
+    if (cap(this.agents, AGENTS_KEPT)) {
+      for (const key of this.agentCompletions.keys()) if (!this.agents.has(key)) this.agentCompletions.delete(key);
+      for (const [agentId, key] of this.agentIdToToolUseId) if (!this.agents.has(key)) this.agentIdToToolUseId.delete(agentId);
+      for (const [toolId, rec] of this.reopenedByTool) if (!this.agents.has(rec.agentCallId)) this.reopenedByTool.delete(toolId);
     }
+  }
+
+  private findAgentByRef(ref: string): AgentEntry | undefined {
+    const callId = this.agentIdToToolUseId.get(ref);
+    return callId ? this.agents.get(callId) : [...this.agents.values()].find((a) => a.agentId === ref);
+  }
+
+  private markAgentCompleted(ref: string, at: Date | null): void {
+    if (!ref) return;
+    const agent = this.findAgentByRef(ref);
+    if (agent && agent.status === 'running') {
+      agent.status = 'completed';
+      agent.endTime = at ?? new Date();
+    }
+  }
+
+  private completeAgentsFromLines(text: string, at: Date | null, allowIndentedSubagent: boolean): void {
+    for (const m of text.matchAll(MESSAGE_SENDER_LINE_RE)) {
+      this.markAgentCompleted(m[1], at);
+    }
+    const subagentRe = allowIndentedSubagent ? SUBAGENT_LINE_EXIT_RE : STRICT_SUBAGENT_LINE_EXIT_RE;
+    for (const m of text.matchAll(subagentRe)) {
+      this.markAgentCompleted(m[1], at);
+    }
+  }
+
+  private completeAgentsBySenders(content: string, at: Date | null, systemMessageEntry = false): void {
+    if (systemMessageEntry) {
+      const normalized = content.replace(SYSTEM_MESSAGE_BLOCK_RE, (_, body: string) => `\n${body.trimStart()}\n`);
+      this.completeAgentsFromLines(normalized, at, true);
+      return;
+    }
+    for (const m of content.matchAll(SYSTEM_MESSAGE_BLOCK_RE)) {
+      this.completeAgentsFromLines(m[1].trimStart(), at, true);
+    }
+    const outsideBlocks = content.replace(SYSTEM_MESSAGE_BLOCK_RE, '\n');
+    this.completeAgentsFromLines(outsideBlocks, at, false);
   }
 
   line(raw: string): void {
@@ -257,9 +338,9 @@ class Parser {
       if (selMatch?.[1]) this.data.transcriptModelSelection = sanitizeDisplayText(selMatch[1].trim());
       const modeMatch = entry.content.match(/changed setting `(?:Mode|Agent Mode|Permission Mode)` from [^\n]+? to ([^\n.]+)\./i);
       if (modeMatch?.[1]) this.data.transcriptMode = sanitizeDisplayText(modeMatch[1].trim());
-      this.completeAgentsBySenders(entry.content, at);
+      this.completeAgentsBySenders(entry.content, at, false);
     } else if (entry.type === 'SYSTEM_MESSAGE' && typeof entry.content === 'string') {
-      this.completeAgentsBySenders(entry.content, at);
+      this.completeAgentsBySenders(entry.content, at, true);
     }
 
     if (entry.type === 'PLANNER_RESPONSE') {
@@ -379,32 +460,49 @@ class Parser {
         if (tc.name === 'invoke_subagent') {
           const rawModel = unquoteAgyArg(args.Model);
           const hint = rawModel && rawModel.toLowerCase() !== 'inherit' ? splitModelAndEffort(rawModel) : {};
-          this.agents.set(callId, {
+          const promptKey = toPromptKey(args.Prompt ?? args.prompt);
+          this.addAgent(callId, {
             id: callId,
             type: unquoteAgyArg(args.TypeName) ?? 'subagent',
             model: hint.model,
             effort: hint.effort,
             description: unquoteAgyArg(args.Role),
+            ...(promptKey ? { promptKey } : {}),
             status: 'running',
             startTime: at ?? new Date(),
             background: true,
           });
-          cap(this.agents, AGENTS_KEPT);
         } else if (tc.name === 'swarm' && unquoteAgyArg(args.action) === 'add') {
           const rawModel = unquoteAgyArg(args.model);
           const hint = rawModel && rawModel.toLowerCase() !== 'inherit' ? splitModelAndEffort(rawModel) : {};
-          this.agents.set(callId, {
+          const promptKey = toPromptKey(args.brief ?? args.Brief);
+          this.addAgent(callId, {
             id: callId,
             type: unquoteAgyArg(args.name) ?? 'swarm',
             model: hint.model,
             effort: hint.effort,
             description: unquoteAgyArg(args.brief),
+            ...(promptKey ? { promptKey } : {}),
             status: 'running',
             startTime: at ?? new Date(),
             background: true,
           });
-          cap(this.agents, AGENTS_KEPT);
         } else {
+          if (tc.name === 'send_message') {
+            const recipient = unquoteAgyArg(args.Recipient ?? args.recipient);
+            if (recipient) {
+              const targetAgent = this.findAgentByRef(recipient);
+              if (targetAgent && targetAgent.status === 'completed') {
+                this.reopenedByTool.set(callId, {
+                  agentCallId: targetAgent.id,
+                  prevEndTime: targetAgent.endTime,
+                });
+                targetAgent.status = 'running';
+                delete targetAgent.endTime;
+                this.agentCompletions.delete(targetAgent.id);
+              }
+            }
+          }
           this.tools.set(callId, {
             id: callId,
             name: tc.name,
@@ -413,7 +511,9 @@ class Parser {
             startTime: at ?? new Date(),
           });
           this.pendingAgyToolIds.push(callId);
-          cap(this.tools, TOOLS_TRACKED);
+          if (cap(this.tools, TOOLS_TRACKED)) {
+            for (const key of this.reopenedByTool.keys()) if (!this.tools.has(key)) this.reopenedByTool.delete(key);
+          }
         }
       }
     }
@@ -421,26 +521,43 @@ class Parser {
 
   private agyGenericResponse(entry: Entry, at: Date | null, entryTimeMs: number | null): void {
     const content = typeof entry.content === 'string' ? entry.content : '';
+    if (isStructuredGenericNotice(content)) {
+      this.completeAgentsBySenders(content, at, true);
+      return;
+    }
+
+    const fileOrCmd = FILE_OR_CMD_OUTPUT_RE.test(content);
     const unlinkedRunning = [...this.agents.values()].find((a) => a.status === 'running' && !a.agentId);
-    const isFileOrCmdOutput = /\nShowing lines \d+|\nCommand output:|\nMade \d+ replacement/m.test(content);
+    const pureLaunchId = !fileOrCmd ? isPureConversationJson(content) : null;
     const isSubagentLaunch =
       Boolean(unlinkedRunning) &&
-      !isFileOrCmdOutput &&
-      /(?:Created the following subagent:|Launched subagent\s+conversationId\b|^\s*\{[\s\S]{0,80}"conversationId"\s*:)/m.test(content) &&
+      !fileOrCmd &&
+      (pureLaunchId !== null ||
+        /(?:^|\n)[ \t]*(?:Created the following subagent:|Launched subagent\s+conversationId\b)/i.test(content)) &&
       !content.includes('finished');
     if (isSubagentLaunch) {
-      const idMatch = /"?conversationId"?\s*[:=]\s*["']?([\w-]{8,128})/i.exec(content);
-      if (idMatch?.[1] && unlinkedRunning) {
-        unlinkedRunning.agentId = idMatch[1];
-        this.agentIdToToolUseId.set(idMatch[1], unlinkedRunning.id);
+      const launchedId =
+        pureLaunchId ?? /"?conversationId"?\s*[:=]\s*["']?([\w-]{8,128})/i.exec(content)?.[1];
+      if (launchedId && unlinkedRunning) {
+        unlinkedRunning.agentId = launchedId;
+        this.agentIdToToolUseId.set(launchedId, unlinkedRunning.id);
       }
       return;
     }
 
-    this.completeAgentsBySenders(content, at);
-
     const nextId = this.pendingAgyToolIds.shift();
     if (nextId) {
+      const reopened = this.reopenedByTool.get(nextId);
+      if (reopened) {
+        this.reopenedByTool.delete(nextId);
+        if (entry.status === 'ERROR') {
+          const targetAgent = this.agents.get(reopened.agentCallId);
+          if (targetAgent && targetAgent.status === 'running') {
+            targetAgent.status = 'completed';
+            targetAgent.endTime = reopened.prevEndTime ?? at ?? new Date();
+          }
+        }
+      }
       const tool = this.tools.get(nextId);
       if (tool) {
         const isErr = entry.status === 'ERROR';
@@ -455,7 +572,7 @@ class Parser {
         }
       }
     }
-    if (!isFileOrCmdOutput && content.includes('conversation://') && entryTimeMs !== null) {
+    if (!fileOrCmd && !nextId && content.includes('conversation://') && entryTimeMs !== null) {
       for (const agent of this.agents.values()) {
         if (agent.status === 'running' && !agent.agentId) {
           agent.status = 'completed';
@@ -552,7 +669,7 @@ class Parser {
     if (server) this.mcpServers.add(server);
 
     if (toolName === 'Task' || toolName === 'Agent') {
-      this.agents.set(block.id as string, {
+      this.addAgent(block.id as string, {
         id: block.id as string,
         type: (input?.subagent_type as string) ?? 'agent',
         model: sanitizeTranscriptModel(input?.model),
@@ -561,10 +678,6 @@ class Parser {
         startTime: at,
         background: input?.run_in_background === true,
       });
-      if (cap(this.agents, AGENTS_KEPT)) {
-        for (const id of this.agentCompletions.keys()) if (!this.agents.has(id)) this.agentCompletions.delete(id);
-        for (const [agentId, id] of this.agentIdToToolUseId) if (!this.agents.has(id)) this.agentIdToToolUseId.delete(agentId);
-      }
     } else if (toolName === 'TodoWrite') {
       if (Array.isArray(input?.todos)) this.replaceTodos(input.todos.flatMap(toTodo));
     } else if (toolName === 'TaskCreate') {
@@ -665,6 +778,7 @@ class Parser {
       nextTaskId: this.nextTaskId,
       agentCompletions: [...this.agentCompletions],
       agentIdToToolUseId: [...this.agentIdToToolUseId],
+      reopenedByTool: [...this.reopenedByTool],
       usageById: [...this.usageById],
       settled: this.settled,
       lastIdlessUsage: this.lastIdlessUsage,
@@ -687,6 +801,17 @@ class Parser {
     parser.nextTaskId = s.nextTaskId;
     parser.agentCompletions = new Map(s.agentCompletions.map(([id, at]) => [id, new Date(at)]));
     parser.agentIdToToolUseId = new Map(s.agentIdToToolUseId);
+    parser.reopenedByTool = new Map(
+      (s.reopenedByTool ?? []).map(([toolId, rec]) => [
+        toolId,
+        {
+          agentCallId: rec.agentCallId,
+          ...(rec.prevEndTime !== undefined
+            ? { prevEndTime: rec.prevEndTime instanceof Date ? rec.prevEndTime : new Date(rec.prevEndTime) }
+            : {}),
+        },
+      ]),
+    );
     parser.usageById = new Map(s.usageById);
     parser.settled = s.settled;
     parser.lastIdlessUsage = s.lastIdlessUsage;
@@ -720,7 +845,7 @@ class Parser {
   }
 }
 
-const DATE_KEYS = new Set(['startTime', 'endTime', 'sessionStart', 'lastAssistantResponseAt']);
+const DATE_KEYS = new Set(['startTime', 'endTime', 'prevEndTime', 'sessionStart', 'lastAssistantResponseAt']);
 type SavedState = ReturnType<Parser['save']>;
 const reviveDates = (key: string, value: unknown): unknown =>
   DATE_KEYS.has(key) && typeof value === 'string' ? new Date(value) : value;
@@ -743,7 +868,7 @@ function maxUsage(a: SessionTokenUsage, b: SessionTokenUsage): SessionTokenUsage
   };
 }
 
-interface Cursor {
+export interface Cursor {
   version: string;
   ino: number;
   offset: number;
@@ -751,6 +876,7 @@ interface Cursor {
 }
 
 const CURSORS_KEPT = 32;
+const STALE_TMP_AGE_MS = 60 * 1000;
 const CHUNK_BYTES = 1 << 20;
 const CHECKPOINT_BYTES = 32 << 20;
 const NEWLINE = 0x0a;
@@ -785,25 +911,72 @@ function readCursor(file: string): Cursor | null {
   return cursor as Cursor;
 }
 
-function writeCursor(file: string, cursor: Cursor): void {
+function sweepCursorEntries(dir: string, entries: string[], now: number): string[] {
+  const jsonFiles: string[] = [];
+  for (const fileName of entries) {
+    const full = path.join(dir, fileName);
+    if (fileName.endsWith('.tmp')) {
+      try {
+        const st = fs.statSync(full);
+        if (now - st.mtimeMs > STALE_TMP_AGE_MS) {
+          fs.rmSync(full, { force: true });
+        }
+      } catch {}
+      continue;
+    }
+    if (fileName.endsWith('.json')) {
+      jsonFiles.push(full);
+    }
+  }
+  return jsonFiles;
+}
+
+export function writeCursor(file: string, cursor: Cursor): void {
+  const tmp = `${file}.${process.pid}.tmp`;
   try {
     const dir = path.dirname(file);
     const isNew = !fs.existsSync(file);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(cursor), { mode: 0o600 });
     fs.renameSync(tmp, file);
-    if (isNew) pruneCursors(dir);
+    if (isNew) {
+      pruneCursors(dir);
+    } else {
+      try {
+        sweepCursorEntries(dir, fs.readdirSync(dir), Date.now());
+      } catch {}
+    }
   } catch (err) {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {}
     debug('Transcript cursor write failed:', err instanceof Error ? err.message : err);
   }
 }
 
-function pruneCursors(dir: string): void {
-  const files = fs.readdirSync(dir).map((fileName) => path.join(dir, fileName));
-  if (files.length <= CURSORS_KEPT) return;
-  const byAge = files.map((file) => ({ file, mtime: fs.statSync(file).mtimeMs })).sort((a, b) => a.mtime - b.mtime);
-  for (const { file } of byAge.slice(0, files.length - CURSORS_KEPT)) fs.rmSync(file, { force: true });
+export function pruneCursors(dir: string, now = Date.now()): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  const jsonFiles = sweepCursorEntries(dir, entries, now);
+  if (jsonFiles.length <= CURSORS_KEPT) return;
+  const byAge = jsonFiles
+    .flatMap((file) => {
+      try {
+        return [{ file, mtime: fs.statSync(file).mtimeMs }];
+      } catch {
+        return [];
+      }
+    })
+    .sort((a, b) => a.mtime - b.mtime);
+  for (const { file } of byAge.slice(0, Math.max(0, byAge.length - CURSORS_KEPT))) {
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {}
+  }
 }
 
 async function resumes(file: fs.promises.FileHandle, stat: fs.Stats, cursor: Cursor): Promise<boolean> {
@@ -896,7 +1069,240 @@ export async function parseTranscript(transcriptPath: string, dataDir: string): 
   }
 }
 
-const AGENT_ID = /^[\w-]{1,128}$/;
+const SUBAGENT_DETAIL_MODEL_LINE_LIMIT = 200;
+const SUBAGENT_DETAIL_HARD_LINE_LIMIT = 500;
+const SUBAGENT_PLANNER_FOLLOWUPS = 2;
+
+const RUNNING_STDIN_STATUSES = new Set(['running', 'working', 'pending', 'queued']);
+const TERMINAL_STDIN_STATUSES = new Set([
+  'completed',
+  'done',
+  'error',
+  'failed',
+  'cancelled',
+  'canceled',
+  'stopped',
+  'idle',
+]);
+
+interface StdinGroupStats {
+  stillRunning: number;
+  terminalCount: number;
+  hasUnknown: boolean;
+}
+
+interface MatchedBucket {
+  stats: StdinGroupStats;
+  completedCount: number;
+  runningItems: Array<{ agent: AgentEntry; index: number }>;
+}
+
+function completeOldestRunning(items: Array<{ agent: AgentEntry; index: number }>, count: number, ts: number): void {
+  if (count <= 0 || items.length === 0) return;
+  items.sort((a, b) => {
+    const ta = a.agent.startTime instanceof Date ? a.agent.startTime.getTime() : 0;
+    const tb = b.agent.startTime instanceof Date ? b.agent.startTime.getTime() : 0;
+    const validA = Number.isFinite(ta) ? ta : 0;
+    const validB = Number.isFinite(tb) ? tb : 0;
+    return validA - validB || a.index - b.index;
+  });
+  const limit = Math.min(count, items.length);
+  for (let i = 0; i < limit; i++) {
+    const agent = items[i].agent;
+    agent.status = 'completed';
+    agent.endTime ??= new Date(ts);
+  }
+}
+
+export function reconcileAgentsWithStdin(
+  agents: AgentEntry[],
+  stdinSubagents: StdinData['subagents'],
+  now = Date.now(),
+): void {
+  if (!Array.isArray(agents) || agents.length === 0 || !Array.isArray(stdinSubagents) || stdinSubagents.length === 0) {
+    return;
+  }
+
+  const exactGroups = new Map<string, StdinGroupStats>();
+  const byNameStats = new Map<string, StdinGroupStats>();
+  const stdinRolesByName = new Map<string, Set<string>>();
+
+  const recordStat = (map: Map<string, StdinGroupStats>, key: string, status: string) => {
+    let stat = map.get(key);
+    if (!stat) {
+      stat = { stillRunning: 0, terminalCount: 0, hasUnknown: false };
+      map.set(key, stat);
+    }
+    if (RUNNING_STDIN_STATUSES.has(status)) stat.stillRunning += 1;
+    else if (TERMINAL_STDIN_STATUSES.has(status)) stat.terminalCount += 1;
+    else stat.hasUnknown = true;
+  };
+
+  for (const item of stdinSubagents) {
+    if (!item || typeof item !== 'object') continue;
+    const nameKey = normalizeReconcileKey(item.name);
+    if (!nameKey) continue;
+    const roleKey = normalizeReconcileKey(item.role);
+    const status = normalizeReconcileKey(item.status);
+    recordStat(exactGroups, `${nameKey}\0${roleKey}`, status);
+    recordStat(byNameStats, nameKey, status);
+    let roles = stdinRolesByName.get(nameKey);
+    if (!roles) {
+      roles = new Set();
+      stdinRolesByName.set(nameKey, roles);
+    }
+    roles.add(roleKey);
+  }
+
+  const txRolesByName = new Map<string, Set<string>>();
+  const parsedAgents: Array<{
+    agent: AgentEntry;
+    index: number;
+    nameKey: string;
+    roleKey: string;
+    promptKey: string;
+    promptTrimmed: string;
+    promptTruncated: boolean;
+  }> = [];
+  for (let i = 0; i < agents.length; i++) {
+    const agent = agents[i];
+    if (!agent) continue;
+    const nameKey = normalizeReconcileKey(agent.type);
+    if (!nameKey) continue;
+    const roleKey = normalizeReconcileKey(agent.description);
+    const rawPromptKey = typeof agent.promptKey === 'string' ? sanitizeDisplayText(agent.promptKey).toLowerCase().trimStart() : '';
+    const promptKey = rawPromptKey.slice(0, PROMPT_KEY_MAX_LEN);
+    const promptTrimmed = promptKey.trim();
+    const promptTruncated = rawPromptKey.length >= PROMPT_KEY_MAX_LEN && promptTrimmed.length > 0;
+    parsedAgents.push({ agent, index: i, nameKey, roleKey, promptKey, promptTrimmed, promptTruncated });
+    let roles = txRolesByName.get(nameKey);
+    if (!roles) {
+      roles = new Set();
+      txRolesByName.set(nameKey, roles);
+    }
+    roles.add(roleKey);
+  }
+
+  if (!parsedAgents.some((entry) => entry.agent.status === 'running')) return;
+
+  const matchedBuckets = new Map<string, MatchedBucket>();
+  const matchedStdinGroupKeys = new Set<string>();
+  const unmatchedRunningByName = new Map<string, Array<{ agent: AgentEntry; index: number }>>();
+  const unmatchedCompletedByName = new Map<string, number>();
+  const pushToBucket = (bucketKey: string, stats: StdinGroupStats, agent: AgentEntry, index: number) => {
+    let bucket = matchedBuckets.get(bucketKey);
+    if (!bucket) {
+      bucket = { stats, completedCount: 0, runningItems: [] };
+      matchedBuckets.set(bucketKey, bucket);
+    }
+    if (agent.status === 'running') {
+      bucket.runningItems.push({ agent, index });
+    } else {
+      bucket.completedCount += 1;
+    }
+  };
+
+  for (const entry of parsedAgents) {
+    // 1. Exact (nameKey, description) match
+    const exactKey = `${entry.nameKey}\0${entry.roleKey}`;
+    const exactStats = exactGroups.get(exactKey);
+    if (exactStats) {
+      matchedStdinGroupKeys.add(exactKey);
+      pushToBucket(`exact:${exactKey}`, exactStats, entry.agent, entry.index);
+      continue;
+    }
+
+    // 2. PromptKey match when stdin.subagents[].role carries prompt text (prefix match only when truncated at 64 chars)
+    const stdinRoles = stdinRolesByName.get(entry.nameKey);
+    if (entry.promptTrimmed && stdinRoles) {
+      let matchedRole: string | undefined;
+      if (stdinRoles.has(entry.promptTrimmed)) {
+        matchedRole = entry.promptTrimmed;
+      } else if (entry.promptTruncated) {
+        const promptMatches: string[] = [];
+        for (const candidateRole of stdinRoles) {
+          if (candidateRole.startsWith(entry.promptKey)) {
+            promptMatches.push(candidateRole);
+          }
+        }
+        if (promptMatches.length === 1) {
+          matchedRole = promptMatches[0];
+        }
+      }
+      if (matchedRole !== undefined) {
+        const matchedGroupKey = `${entry.nameKey}\0${matchedRole}`;
+        const promptStats = exactGroups.get(matchedGroupKey);
+        if (promptStats) {
+          matchedStdinGroupKeys.add(matchedGroupKey);
+          pushToBucket(`exact:${matchedGroupKey}`, promptStats, entry.agent, entry.index);
+          continue;
+        }
+      }
+    }
+
+    // 3. Unambiguous single-side missing role fallback
+    const txRoles = txRolesByName.get(entry.nameKey);
+    if (stdinRoles && txRoles && stdinRoles.size === 1 && txRoles.size === 1) {
+      const onlyStdinRole = [...stdinRoles][0];
+      const onlyTxRole = [...txRoles][0];
+      const singleSideMissingRole = (onlyStdinRole === '' && onlyTxRole !== '') || (onlyStdinRole !== '' && onlyTxRole === '');
+      const nameStats = singleSideMissingRole ? byNameStats.get(entry.nameKey) : undefined;
+      if (nameStats) {
+        for (const r of stdinRoles) matchedStdinGroupKeys.add(`${entry.nameKey}\0${r}`);
+        pushToBucket(`name:${entry.nameKey}`, nameStats, entry.agent, entry.index);
+        continue;
+      }
+    }
+
+    if (entry.agent.status === 'running') {
+      let pending = unmatchedRunningByName.get(entry.nameKey);
+      if (!pending) {
+        pending = [];
+        unmatchedRunningByName.set(entry.nameKey, pending);
+      }
+      pending.push({ agent: entry.agent, index: entry.index });
+    } else {
+      unmatchedCompletedByName.set(entry.nameKey, (unmatchedCompletedByName.get(entry.nameKey) ?? 0) + 1);
+    }
+  }
+
+  const ts = Number.isFinite(now) ? now : Date.now();
+  for (const { stats, completedCount, runningItems } of matchedBuckets.values()) {
+    if (stats.hasUnknown || stats.terminalCount <= completedCount || runningItems.length <= stats.stillRunning) {
+      continue;
+    }
+    completeOldestRunning(
+      runningItems,
+      Math.min(runningItems.length - stats.stillRunning, stats.terminalCount - completedCount),
+      ts,
+    );
+  }
+
+  // 4. Safe all-terminal fallback: sum only unmatched stdin groups (never borrow terminal budget from matched groups)
+  if (unmatchedRunningByName.size > 0) {
+    for (const [nameKey, runningItems] of unmatchedRunningByName) {
+      const nameStats = byNameStats.get(nameKey);
+      if (!nameStats || nameStats.hasUnknown || nameStats.stillRunning !== 0) {
+        continue;
+      }
+      let unmatchedStdinTerminalCount = 0;
+      const stdinRoles = stdinRolesByName.get(nameKey);
+      if (stdinRoles) {
+        for (const r of stdinRoles) {
+          const groupKey = `${nameKey}\0${r}`;
+          if (matchedStdinGroupKeys.has(groupKey)) continue;
+          const groupStats = exactGroups.get(groupKey);
+          if (groupStats) unmatchedStdinTerminalCount += groupStats.terminalCount;
+        }
+      }
+      const unmatchedCompletedCount = unmatchedCompletedByName.get(nameKey) ?? 0;
+      if (unmatchedStdinTerminalCount <= 0 || unmatchedStdinTerminalCount - unmatchedCompletedCount < runningItems.length) {
+        continue;
+      }
+      completeOldestRunning(runningItems, runningItems.length, ts);
+    }
+  }
+}
 
 interface SubagentDetails {
   model?: string;
@@ -910,32 +1316,50 @@ async function readSubagentDetails(file: string): Promise<SubagentDetails> {
     return {};
   }
   const input = fs.createReadStream(file);
+  const rl = readline.createInterface({ input, crlfDelay: Infinity });
   const details: SubagentDetails = {};
+  let linesRead = 0;
+  let plannerFollowups = 0;
+  let sawModelInPlanner = false;
   try {
-    for await (const raw of readline.createInterface({ input, crlfDelay: Infinity })) {
+    for await (const raw of rl) {
+      linesRead += 1;
       let entry: { type?: unknown; effort?: unknown; thinking_level?: unknown; model?: unknown; message?: { model?: unknown } } | null = null;
       try {
         entry = JSON.parse(raw);
-      } catch {
-        continue;
+      } catch {}
+      if (entry) {
+        if (entry.type === 'assistant') {
+          const split = splitModelAndEffort(entry.message?.model);
+          if (split.model) details.model = split.model;
+          const explicit = typeof entry.effort === 'string' ? effortInfo(entry.effort)?.level : undefined;
+          if (explicit ?? split.effort) details.effort = explicit ?? split.effort;
+          return details;
+        }
+        if (entry.type === 'PLANNER_RESPONSE') {
+          const hadModelBefore = sawModelInPlanner;
+          const split = splitModelAndEffort(entry.model);
+          if (split.model) details.model = split.model;
+          const explicitRaw = entry.effort ?? entry.thinking_level;
+          const explicit = typeof explicitRaw === 'string' ? effortInfo(explicitRaw)?.level : undefined;
+          if (explicit ?? split.effort) details.effort = explicit ?? split.effort;
+          if (details.model && details.effort) return details;
+          if (details.model) {
+            if (hadModelBefore) {
+              plannerFollowups += 1;
+              if (plannerFollowups >= SUBAGENT_PLANNER_FOLLOWUPS) return details;
+            } else {
+              sawModelInPlanner = true;
+            }
+          }
+        }
       }
-      if (!entry) continue;
-      if (entry.type === 'assistant') {
-        const split = splitModelAndEffort(entry.message?.model);
-        if (split.model) details.model = split.model;
-        const explicit = typeof entry.effort === 'string' ? effortInfo(entry.effort)?.level : undefined;
-        if (explicit ?? split.effort) details.effort = explicit ?? split.effort;
-        return details;
-      }
-      if (entry.type === 'PLANNER_RESPONSE') {
-        const split = splitModelAndEffort(entry.model);
-        if (split.model) details.model = split.model;
-        const explicitRaw = entry.effort ?? entry.thinking_level;
-        const explicit = typeof explicitRaw === 'string' ? effortInfo(explicitRaw)?.level : undefined;
-        if (explicit ?? split.effort) details.effort = explicit ?? split.effort;
+      if ((details.model && linesRead >= SUBAGENT_DETAIL_MODEL_LINE_LIMIT) || linesRead >= SUBAGENT_DETAIL_HARD_LINE_LIMIT) {
+        break;
       }
     }
   } catch {} finally {
+    rl.close();
     input.destroy();
   }
   return details;

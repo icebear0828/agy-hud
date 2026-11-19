@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -9,11 +11,49 @@ import * as modelsMod from './quota/models.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const WINDOWS_CREDENTIAL_REFRESH_DEBOUNCE_MS = 30 * 1000;
+export const BACKGROUND_REFRESH_COOLDOWN_MS = 15 * 1000;
 let lastWindowsCredentialRefreshAt = 0;
 
-function triggerBackgroundRefresh() {
+const expandHome = (p, home) => (p === '~' ? home : p.startsWith('~/') || p.startsWith('~\\') ? path.join(home, p.slice(2)) : p);
+
+export function resolveQuotaRoots(
+  env = process.env,
+  home = (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir(),
+) {
+  if (env.AGY_HUD_DATA_DIR?.trim()) return getAntigravityRoots(env, home);
+  if (env.AGY_CONFIG_DIR?.trim()) {
+    return [path.resolve(expandHome(env.AGY_CONFIG_DIR.trim(), home))];
+  }
+  return getAntigravityRoots(env, home);
+}
+
+export function resolveQuotaCachePath(
+  env = process.env,
+  home = (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir(),
+) {
+  if (env.AGY_HUD_DATA_DIR?.trim()) return cacheMod.getCachePath(env);
+  if (env.AGY_CONFIG_DIR?.trim()) {
+    return path.join(path.resolve(expandHome(env.AGY_CONFIG_DIR.trim(), home)), 'agy-hud-quota-cache.json');
+  }
+  return cacheMod.getCachePath(env);
+}
+
+export function buildRefreshArgs(cachePath, roots) {
+  const args = [__filename, '--refresh'];
+  if (typeof cachePath === 'string' && cachePath) {
+    args.push(`--cache-path=${cachePath}`);
+  }
+  if (Array.isArray(roots)) {
+    for (const root of roots) {
+      if (typeof root === 'string' && root) args.push(`--root=${root}`);
+    }
+  }
+  return args;
+}
+
+function triggerBackgroundRefresh({ cachePath, roots } = {}) {
   try {
-    const subprocess = spawn(process.execPath, [__filename, '--refresh'], {
+    const subprocess = spawn(process.execPath, buildRefreshArgs(cachePath, roots), {
       detached: true,
       stdio: 'ignore',
       env: { ...process.env, NODE_USE_ENV_PROXY: '1' },
@@ -22,10 +62,10 @@ function triggerBackgroundRefresh() {
   } catch {}
 }
 
-function triggerWindowsCredentialRefresh(backgroundRefresh, now, debounceMs) {
+function triggerWindowsCredentialRefresh(backgroundRefresh, now, debounceMs, refreshContext) {
   if (now - lastWindowsCredentialRefreshAt < debounceMs) return;
   lastWindowsCredentialRefreshAt = now;
-  backgroundRefresh();
+  backgroundRefresh(refreshContext);
 }
 
 export async function getQuota(options = {}) {
@@ -35,15 +75,16 @@ export async function getQuota(options = {}) {
     tokenReader = tokenMod.readToken,
     backgroundRefresh = triggerBackgroundRefresh,
     credentialReader = tokenMod.readWindowsCredentialTokens,
-    roots = getAntigravityRoots(),
+    roots = resolveQuotaRoots(),
     windowsCredentialRefreshDebounceMs = WINDOWS_CREDENTIAL_REFRESH_DEBOUNCE_MS,
-    cachePath = cacheMod.getCachePath(),
+    cachePath = resolveQuotaCachePath(),
   } = options;
 
+  const refreshContext = { cachePath, roots };
   const shouldRefreshWindowsCredential = fast && platform === 'win32';
   const refreshWindowsCredential = () => {
     if (!shouldRefreshWindowsCredential) return;
-    triggerWindowsCredentialRefresh(backgroundRefresh, Date.now(), windowsCredentialRefreshDebounceMs);
+    triggerWindowsCredentialRefresh(backgroundRefresh, Date.now(), windowsCredentialRefreshDebounceMs, refreshContext);
   };
 
   const tok = tokenReader({
@@ -51,6 +92,7 @@ export async function getQuota(options = {}) {
     roots,
     credentialReader,
     skipWindowsCredential: fast && platform === 'win32',
+    skipKeychain: fast,
   });
 
   if (!tok) {
@@ -70,8 +112,8 @@ export async function getQuota(options = {}) {
 
   if (needsRefresh) {
     const lastRefreshed = payload ? (payload.lastRefreshed || 0) : cacheMod.readCacheLastRefreshed(cachePath);
-    if (cacheMod.didAccessTokenRotate(payload, tok) || Date.now() - lastRefreshed > 30 * 1000) {
-      backgroundRefresh();
+    if (cacheMod.didAccessTokenRotate(payload, tok) || Date.now() - lastRefreshed > BACKGROUND_REFRESH_COOLDOWN_MS) {
+      backgroundRefresh(refreshContext);
     }
   }
 
@@ -91,8 +133,8 @@ export async function getQuota(options = {}) {
  */
 export function resolveActiveAccountSummary(env = process.env, home) {
   try {
-    const roots = getAntigravityRoots(env, home);
-    const cachePath = cacheMod.getCachePath(env);
+    const roots = resolveQuotaRoots(env, home);
+    const cachePath = resolveQuotaCachePath(env, home);
     const tok = tokenMod.readToken({ roots, skipKeychain: true, skipWindowsCredential: true });
     let email = null;
     if (tok) {
@@ -112,26 +154,62 @@ export function resolveActiveAccountSummary(env = process.env, home) {
   }
 }
 
-import fs from 'node:fs';
 function fsReadFile(p) {
   return fs.readFileSync(p, 'utf8');
 }
 
+export function parseRefreshArgs(argv = process.argv, env = process.env) {
+  let cachePath;
+  const roots = [];
+  for (const arg of argv) {
+    if (arg.startsWith('--cache-path=')) {
+      const value = arg.slice('--cache-path='.length);
+      if (value) cachePath = value;
+    } else if (arg.startsWith('--root=')) {
+      const value = arg.slice('--root='.length);
+      if (value) roots.push(value);
+    }
+  }
+  return {
+    roots: roots.length > 0 ? roots : resolveQuotaRoots(env),
+    cachePath: cachePath || resolveQuotaCachePath(env),
+  };
+}
+
+export async function runBackgroundRefresh(options = {}) {
+  const {
+    roots = resolveQuotaRoots(),
+    cachePath = resolveQuotaCachePath(),
+    readTokenFn = tokenMod.readToken,
+    clearTokenTempFn = tokenMod.clearTokenTemp,
+    fetchQuotaFn = cloudMod.fetchQuotaFromCloud,
+    fetchTierFn = cloudMod.fetchTierFromCloud,
+    fetchEmailFn = cloudMod.fetchAccountEmail,
+    writeCacheFn = cacheMod.writeCache,
+  } = options;
+
+  const tok = readTokenFn({ roots });
+  if (!tok) return { status: 'not_logged_in' };
+
+  const [fresh, tier, accountEmail] = await Promise.all([
+    fetchQuotaFn(tok.accessToken),
+    fetchTierFn(tok.accessToken),
+    fetchEmailFn(tok.accessToken),
+  ]);
+  if (fresh && fresh.unavailableReason === 'auth_failed') {
+    clearTokenTempFn(roots);
+    return { status: 'auth_failed' };
+  }
+  if (Array.isArray(fresh) && !fresh.unavailableReason && fresh.length > 0) {
+    writeCacheFn(fresh, tok, tier, accountEmail, fresh.providerQuota, cachePath);
+    return { status: 'refreshed', count: fresh.length };
+  }
+  return { status: 'skipped', reason: fresh?.unavailableReason || 'empty_quota' };
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename && process.argv.includes('--refresh')) {
   try {
-    const tok = tokenMod.readToken();
-    if (tok) {
-      const [fresh, tier, accountEmail] = await Promise.all([
-        cloudMod.fetchQuotaFromCloud(tok.accessToken),
-        cloudMod.fetchTierFromCloud(tok.accessToken),
-        cloudMod.fetchAccountEmail(tok.accessToken),
-      ]);
-      if (fresh && fresh.unavailableReason === 'auth_failed') {
-        tokenMod.clearTokenTemp();
-      } else if (fresh.length > 0 || accountEmail) {
-        cacheMod.writeCache(fresh, tok, tier, accountEmail, fresh.providerQuota);
-      }
-    }
+    await runBackgroundRefresh(parseRefreshArgs(process.argv, process.env));
   } catch {}
   process.exit(0);
 }

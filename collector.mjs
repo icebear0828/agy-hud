@@ -91,51 +91,159 @@ function discoverAgyPluginHookFiles(home) {
   return files;
 }
 
-function discoverAgySubagentTranscripts(configDir, transcriptPath) {
-  const result = {};
-  if (!transcriptPath) return result;
-  try {
-    const st = fs.statSync(transcriptPath);
-    if (!st.isFile() || st.size === 0) return result;
-    const maxBytes = 16 * 1024 * 1024;
-    const fd = fs.openSync(transcriptPath, 'r');
-    let content = '';
-    try {
-      const start = Math.max(0, st.size - maxBytes);
-      const len = st.size - start;
-      const buf = Buffer.allocUnsafe(len);
-      const bytesRead = fs.readSync(fd, buf, 0, len, start);
-      content = buf.subarray(0, bytesRead).toString('utf8');
-    } finally {
-      fs.closeSync(fd);
-    }
-    if (!content.includes('conversationId')) return result;
+const SUBAGENT_ID_PATTERNS = [
+  /\\?"conversationId\\?"\s*:\s*\\?"([\w-]{8,128})\\?"/g,
+  /(?:Launched subagent|conversationId)\s*[:=]\s*(?:\\?["'])?([\w-]{8,128})/gi,
+  /conversation:\/\/([\w-]{8,128})/g,
+];
 
-    const ids = [];
-    const seen = new Set();
-    for (const re of [
-      /\\?"conversationId\\?"\s*:\s*\\?"([\w-]{8,128})\\?"/g,
-      /(?:Launched subagent|conversationId)\s*[:=]\s*(?:\\?["'])?([\w-]{8,128})/gi,
-      /conversation:\/\/([\w-]{8,128})/g,
-    ]) {
+const VALID_SUBAGENT_ID = /^[\w-]{1,128}$/;
+
+function extractSubagentIds(content, seed = []) {
+  const ordered = [];
+  const moveOrAppend = (id) => {
+    if (typeof id !== 'string' || !VALID_SUBAGENT_ID.test(id)) return;
+    const idx = ordered.indexOf(id);
+    if (idx !== -1) ordered.splice(idx, 1);
+    ordered.push(id);
+  };
+
+  for (const id of seed) {
+    moveOrAppend(id);
+  }
+
+  if (/conversation(?:id|:\/\/)/i.test(content)) {
+    const hits = [];
+    for (const re of SUBAGENT_ID_PATTERNS) {
       for (const m of content.matchAll(re)) {
         const id = m[1];
-        if (id && !seen.has(id)) {
-          seen.add(id);
-          ids.push(id);
+        if (id && VALID_SUBAGENT_ID.test(id) && typeof m.index === 'number') {
+          hits.push({ index: m.index, id });
         }
       }
     }
+    hits.sort((a, b) => a.index - b.index);
+    for (const hit of hits) {
+      moveOrAppend(hit.id);
+    }
+  }
+  return ordered;
+}
+
+function readTranscriptSlice(filePath, start, end) {
+  const len = Math.max(0, end - start);
+  if (len === 0) return '';
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(len);
+    let totalRead = 0;
+    while (totalRead < len) {
+      const bytesRead = fs.readSync(fd, buf, totalRead, len - totalRead, start + totalRead);
+      if (bytesRead <= 0) break;
+      totalRead += bytesRead;
+    }
+    return buf.subarray(0, totalRead).toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readSubagentMapCache(cacheFile) {
+  if (!cacheFile) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+    if (
+      raw &&
+      typeof raw === 'object' &&
+      typeof raw.realpath === 'string' &&
+      typeof raw.ino === 'number' &&
+      typeof raw.size === 'number' &&
+      Number.isSafeInteger(raw.size) &&
+      raw.size >= 0 &&
+      Array.isArray(raw.ids)
+    ) {
+      return raw;
+    }
+  } catch {}
+  return null;
+}
+
+function writeSubagentMapCache(dataDir, cacheFile, entry) {
+  if (!dataDir || !cacheFile) return;
+  const tmp = `${cacheFile}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(tmp, JSON.stringify(entry), { mode: 0o600 });
+    fs.renameSync(tmp, cacheFile);
+  } catch {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {}
+  }
+}
+
+export function discoverAgySubagentTranscripts(configDir, transcriptPath, dataDir) {
+  const result = {};
+  if (!transcriptPath) return result;
+  try {
+    const realTranscript = fs.realpathSync(transcriptPath);
+    const st = fs.statSync(realTranscript);
+    if (!st.isFile()) return result;
+
+    const cacheFile = dataDir ? path.join(dataDir, 'agy-subagent-map.json') : null;
+    const cached = readSubagentMapCache(cacheFile);
+    if (st.size === 0) {
+      if (cacheFile && cached && cached.realpath === realTranscript) {
+        try { fs.rmSync(cacheFile, { force: true }); } catch {}
+      }
+      return result;
+    }
+
+    const maxBytes = 16 * 1024 * 1024;
+    const sameFile = Boolean(cached && cached.realpath === realTranscript && cached.ino === st.ino);
+
+    let ids;
+    if (sameFile && cached.size === st.size) {
+      ids = cached.ids.filter((id) => typeof id === 'string' && VALID_SUBAGENT_ID.test(id));
+    } else if (sameFile && st.size > cached.size) {
+      const overlapStart = Math.max(0, cached.size - 512);
+      const start = Math.max(overlapStart, st.size - maxBytes);
+      const seed = start === overlapStart ? cached.ids : [];
+      const content = readTranscriptSlice(realTranscript, start, st.size);
+      ids = extractSubagentIds(content, seed);
+      writeSubagentMapCache(dataDir, cacheFile, {
+        realpath: realTranscript,
+        ino: st.ino,
+        size: st.size,
+        ids: ids.slice(-64),
+      });
+    } else {
+      const start = Math.max(0, st.size - maxBytes);
+      const content = readTranscriptSlice(realTranscript, start, st.size);
+      ids = extractSubagentIds(content);
+      writeSubagentMapCache(dataDir, cacheFile, {
+        realpath: realTranscript,
+        ino: st.ino,
+        size: st.size,
+        ids: ids.slice(-64),
+      });
+    }
+
+    if (ids.length === 0) return result;
 
     const brainRoot = fs.realpathSync(path.join(configDir, 'brain'));
-    for (const id of ids.slice(-20)) {
+    const validEntries = [];
+    for (const id of ids) {
       const candidate = path.join(configDir, 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
       try {
         const real = fs.realpathSync(candidate);
         if (real.startsWith(`${brainRoot}${path.sep}`) && fs.statSync(real).isFile()) {
-          result[id] = candidate;
+          validEntries.push([id, real]);
         }
       } catch {}
+    }
+    for (const [id, real] of validEntries.slice(-20)) {
+      result[id] = real;
     }
   } catch {}
   return result;
@@ -199,7 +307,7 @@ export function logicPaths(paths, input) {
   const normalizedCwd = cwd ? cwd.replace(/\\/g, '/') : '';
   const projectKey = normalizedCwd ? normalizedCwd.replace(/:/g, '').replace(/\//g, '-') : '';
   const projectMemory = projectKey ? path.join(paths.claudeConfigDir, 'projects', projectKey, 'memory', 'MEMORY.md') : null;
-  const agySubagentTranscripts = discoverAgySubagentTranscripts(paths.configDir, transcript);
+  const agySubagentTranscripts = discoverAgySubagentTranscripts(paths.configDir, transcript, paths.dataDir);
 
   return {
     data: paths.dataDir,
@@ -293,11 +401,35 @@ export function stripLogic(dir, root) {
       files[pathToFileURL(sourcePath).href.slice(rootUrl.length)] = name;
       const target = path.join(dir, name);
       if (fs.existsSync(target)) continue;
-      fs.writeFileSync(`${target}.${process.pid}.tmp`, strip(source), { mode: 0o600 });
-      fs.renameSync(`${target}.${process.pid}.tmp`, target);
+      const tmp = `${target}.${process.pid}.tmp`;
+      try {
+        fs.writeFileSync(tmp, strip(source), { mode: 0o600 });
+        fs.renameSync(tmp, target);
+      } catch (err) {
+        try {
+          fs.rmSync(tmp, { force: true });
+        } catch {}
+        throw err;
+      }
     }
     const current = new Set(Object.values(files));
-    for (const name of fs.readdirSync(dir)) if (!current.has(name)) fs.rmSync(path.join(dir, name), { force: true });
+    const now = Date.now();
+    const staleTmpAgeMs = 60 * 1000;
+    for (const name of fs.readdirSync(dir)) {
+      if (current.has(name)) continue;
+      const full = path.join(dir, name);
+      if (name.endsWith('.tmp')) {
+        try {
+          const st = fs.statSync(full);
+          if (now - st.mtimeMs <= staleTmpAgeMs) continue;
+        } catch {
+          continue;
+        }
+      }
+      try {
+        fs.rmSync(full, { force: true });
+      } catch {}
+    }
     return { dir, files };
   } catch {
     return null;

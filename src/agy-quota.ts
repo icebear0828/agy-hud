@@ -4,67 +4,67 @@ import type {
   AgyProviderWindows,
   AgyQuotaProbe,
   AgyQuotaWindow,
+  AgyStdinQuotaBucket,
   StdinData,
   UsageData,
 } from './types.ts';
+
+export type AgyProviderKey = keyof AgyProviderQuotaSummary;
+
+export function isAgyImageModel(id: string | undefined, displayName?: string | null): boolean {
+  return Boolean((id && /image/i.test(id)) || (displayName && /image/i.test(displayName)));
+}
+
+export function classifyQuotaProvider(
+  id: string | undefined,
+  displayName?: string | null,
+  modelProvider?: string | null,
+): AgyProviderKey | null {
+  const text = `${id ?? ''} ${displayName ?? ''}`;
+  if (/argon/i.test(text)) return 'argon';
+  if (modelProvider === 'MODEL_PROVIDER_GOOGLE' || /gemini/i.test(text)) return 'google';
+  if (modelProvider === 'MODEL_PROVIDER_ANTHROPIC' || /claude|gpt/i.test(text)) return 'claude';
+  return null;
+}
+
+function toStdinQuotaWindow(bucket: AgyStdinQuotaBucket | undefined): AgyQuotaWindow | undefined {
+  if (!bucket || typeof bucket.remaining_fraction !== 'number' || !Number.isFinite(bucket.remaining_fraction)) {
+    return undefined;
+  }
+  return {
+    remainingFraction: Math.min(1, Math.max(0, bucket.remaining_fraction)),
+    resetTime: typeof bucket.reset_time === 'string' && bucket.reset_time ? bucket.reset_time : null,
+  };
+}
+
+function parseProviderStdinWindows(
+  fiveBucket: AgyStdinQuotaBucket | undefined,
+  weekBucket: AgyStdinQuotaBucket | undefined,
+): AgyProviderWindows | undefined {
+  const fiveHour = toStdinQuotaWindow(fiveBucket);
+  const weekly = toStdinQuotaWindow(weekBucket);
+  if (!fiveHour && !weekly) return undefined;
+  return {
+    ...(fiveHour ? { fiveHour } : {}),
+    ...(weekly ? { weekly } : {}),
+  };
+}
 
 export function parseAgyStdinQuota(quotaObj: StdinData['quota']): AgyProviderQuotaSummary | null {
   if (!quotaObj || typeof quotaObj !== 'object') return null;
   const result: AgyProviderQuotaSummary = {};
 
-  if (quotaObj['gemini-5h'] || quotaObj['gemini-weekly']) {
-    result.google = {};
-    const five = quotaObj['gemini-5h'];
-    if (five && typeof five.remaining_fraction === 'number') {
-      result.google.fiveHour = {
-        remainingFraction: Math.min(1, Math.max(0, five.remaining_fraction)),
-        resetTime: five.reset_time ?? null,
-      };
-    }
-    const week = quotaObj['gemini-weekly'];
-    if (week && typeof week.remaining_fraction === 'number') {
-      result.google.weekly = {
-        remainingFraction: Math.min(1, Math.max(0, week.remaining_fraction)),
-        resetTime: week.reset_time ?? null,
-      };
-    }
-  }
+  const google = parseProviderStdinWindows(quotaObj['gemini-5h'], quotaObj['gemini-weekly']);
+  if (google) result.google = google;
 
-  if (quotaObj['3p-5h'] || quotaObj['3p-weekly']) {
-    result.claude = {};
-    const five = quotaObj['3p-5h'];
-    if (five && typeof five.remaining_fraction === 'number') {
-      result.claude.fiveHour = {
-        remainingFraction: Math.min(1, Math.max(0, five.remaining_fraction)),
-        resetTime: five.reset_time ?? null,
-      };
-    }
-    const week = quotaObj['3p-weekly'];
-    if (week && typeof week.remaining_fraction === 'number') {
-      result.claude.weekly = {
-        remainingFraction: Math.min(1, Math.max(0, week.remaining_fraction)),
-        resetTime: week.reset_time ?? null,
-      };
-    }
-  }
+  const claude = parseProviderStdinWindows(quotaObj['3p-5h'], quotaObj['3p-weekly']);
+  if (claude) result.claude = claude;
 
-  if (quotaObj['argon-5h'] || quotaObj['argon-weekly'] || quotaObj['gemini-argon-wtu-weekly']) {
-    result.argon = {};
-    const five = quotaObj['argon-5h'];
-    if (five && typeof five.remaining_fraction === 'number') {
-      result.argon.fiveHour = {
-        remainingFraction: Math.min(1, Math.max(0, five.remaining_fraction)),
-        resetTime: five.reset_time ?? null,
-      };
-    }
-    const week = quotaObj['argon-weekly'] ?? quotaObj['gemini-argon-wtu-weekly'];
-    if (week && typeof week.remaining_fraction === 'number') {
-      result.argon.weekly = {
-        remainingFraction: Math.min(1, Math.max(0, week.remaining_fraction)),
-        resetTime: week.reset_time ?? null,
-      };
-    }
-  }
+  const argon = parseProviderStdinWindows(
+    quotaObj['argon-5h'],
+    quotaObj['argon-weekly'] ?? quotaObj['gemini-argon-wtu-weekly'],
+  );
+  if (argon) result.argon = argon;
 
   return Object.keys(result).length > 0 ? result : null;
 }
@@ -74,6 +74,56 @@ function isNonExpiredWindow(win: AgyQuotaWindow | undefined, now: number): win i
   if (!win.resetTime) return true;
   const ts = Date.parse(win.resetTime);
   return !Number.isFinite(ts) || ts > now;
+}
+
+const RESET_TIME_SKEW_MS = 60_000;
+
+function parseResetMs(resetTime: string | null | undefined): number | null {
+  if (!resetTime) return null;
+  const ts = Date.parse(resetTime);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+export function pickFresherQuotaWindow(
+  current: AgyQuotaWindow | undefined,
+  incoming: AgyQuotaWindow | undefined,
+  now = Date.now(),
+): AgyQuotaWindow | undefined {
+  if (!current) return incoming;
+  if (!incoming) return current;
+
+  const curLive = isNonExpiredWindow(current, now);
+  const incLive = isNonExpiredWindow(incoming, now);
+  if (!curLive && incLive) return incoming;
+  if (curLive && !incLive) return current;
+
+  const curTs = parseResetMs(current.resetTime);
+  const incTs = parseResetMs(incoming.resetTime);
+  if (curTs !== null && incTs !== null) {
+    if (incTs - curTs > RESET_TIME_SKEW_MS) return incoming;
+    if (curTs - incTs > RESET_TIME_SKEW_MS) return current;
+  } else if (curTs !== null && incTs === null) {
+    // Do not let an un-timestamped stale snapshot lock a newly reset full window with a valid future resetTime.
+    if (curLive && current.remainingFraction >= 1) return current;
+  } else if (incTs !== null && curTs === null) {
+    if (incLive && incoming.remainingFraction >= 1) return incoming;
+  }
+
+  if (incoming.remainingFraction < current.remainingFraction) return incoming;
+  if (current.remainingFraction < incoming.remainingFraction) return current;
+  if (incTs !== null && curTs === null) return incoming;
+  if (curTs !== null && incTs === null) return current;
+  return curTs !== null && incTs !== null && incTs > curTs ? incoming : current;
+}
+
+function pickModelTopLevelWindow(
+  windows: { fiveHour?: AgyQuotaWindow; weekly?: AgyQuotaWindow },
+  now: number,
+): AgyQuotaWindow | null {
+  const five = isNonExpiredWindow(windows.fiveHour, now) ? windows.fiveHour : null;
+  const week = isNonExpiredWindow(windows.weekly, now) ? windows.weekly : null;
+  if (five && week) return five.remainingFraction <= week.remainingFraction ? five : week;
+  return five ?? week;
 }
 
 export function mergeAgyQuotaProbe(probe: AgyQuotaProbe | null | undefined, stdin: StdinData, now = Date.now()): AgyQuotaProbe | null {
@@ -86,25 +136,51 @@ export function mergeAgyQuotaProbe(probe: AgyQuotaProbe | null | undefined, stdi
   if (!stdinPq) return base;
 
   const prevPq = base.providerQuota ?? {};
-  const mergedPq: AgyProviderQuotaSummary = { ...prevPq, ...stdinPq };
+  const mergedPq: AgyProviderQuotaSummary = { ...prevPq };
   for (const key of ['google', 'claude', 'argon'] as const) {
-    if (prevPq[key] || stdinPq[key]) {
-      mergedPq[key] = { ...(prevPq[key] ?? {}), ...(stdinPq[key] ?? {}) };
-    }
+    const prevWin = prevPq[key];
+    const incWin = stdinPq[key];
+    if (!prevWin && !incWin) continue;
+    const fiveHour = pickFresherQuotaWindow(prevWin?.fiveHour, incWin?.fiveHour, now);
+    const weekly = pickFresherQuotaWindow(prevWin?.weekly, incWin?.weekly, now);
+    const nextWin: AgyProviderWindows = {};
+    if (fiveHour) nextWin.fiveHour = fiveHour;
+    if (weekly) nextWin.weekly = weekly;
+    mergedPq[key] = nextWin;
   }
   base.providerQuota = mergedPq;
 
   base.models = base.models.map((m) => {
-    const isArgon = /argon/i.test(m.id) || /argon/i.test(m.displayName ?? '');
-    const isGoogle = !isArgon && (m.modelProvider === 'MODEL_PROVIDER_GOOGLE' || /gemini/i.test(m.id) || /gemini/i.test(m.displayName ?? ''));
-    const isClaude = m.modelProvider === 'MODEL_PROVIDER_ANTHROPIC' || /claude|gpt/i.test(m.id) || /claude|gpt/i.test(m.displayName ?? '');
-    const key = isArgon ? 'argon' : isGoogle ? 'google' : isClaude ? 'claude' : null;
-    const summary = key ? mergedPq[key] : undefined;
-    if (!summary) return m;
+    if (!m || isAgyImageModel(m.id, m.displayName)) return m;
+    const key = classifyQuotaProvider(m.id, m.displayName, m.modelProvider);
+    const stdinSummary = key ? stdinPq[key] : undefined;
+    if (!stdinSummary) return m;
+
     const windows = { ...(m.windows ?? {}) };
-    if (summary.fiveHour) windows.fiveHour = { ...summary.fiveHour, observedAt: now };
-    if (summary.weekly) windows.weekly = { ...summary.weekly, observedAt: now };
-    return { ...m, windows };
+    let changed = false;
+
+    if (stdinSummary.fiveHour) {
+      const pickedFive = pickFresherQuotaWindow(windows.fiveHour, stdinSummary.fiveHour, now);
+      if (pickedFive === stdinSummary.fiveHour) {
+        windows.fiveHour = { ...stdinSummary.fiveHour, observedAt: now };
+        changed = true;
+      }
+    }
+    if (stdinSummary.weekly) {
+      const pickedWeek = pickFresherQuotaWindow(windows.weekly, stdinSummary.weekly, now);
+      if (pickedWeek === stdinSummary.weekly) {
+        windows.weekly = { ...stdinSummary.weekly, observedAt: now };
+        changed = true;
+      }
+    }
+
+    if (!changed) return m;
+    const critical = pickModelTopLevelWindow(windows, now);
+    return {
+      ...m,
+      windows,
+      ...(critical ? { remainingFraction: critical.remainingFraction, resetTime: critical.resetTime } : {}),
+    };
   });
 
   return base;

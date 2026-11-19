@@ -1,4 +1,5 @@
 import type { AgyModelQuota, AgyQuotaProbe, AgyQuotaWindow } from '../types.ts';
+import { classifyQuotaProvider, isAgyImageModel, type AgyProviderKey } from '../agy-quota.ts';
 import { isCjkLanguage, t } from '../i18n/index.ts';
 import { sanitizeDisplayText } from '../utils/sanitize.ts';
 import type { Frame } from './frame.ts';
@@ -62,8 +63,14 @@ function pickCriticalWindow(q: AgyModelQuota, now: number): { remainingFraction:
 }
 
 function isImageModel(q: AgyModelQuota): boolean {
-  return Boolean(q.id?.includes('image') || q.displayName?.toLowerCase().includes('image'));
+  return isAgyImageModel(q.id, q.displayName);
 }
+
+const TABLE_BUCKET_KEYS: Record<AgyProviderKey, 'Google' | 'Claude' | 'Argon'> = {
+  google: 'Google',
+  claude: 'Claude',
+  argon: 'Argon',
+};
 
 function truncateAndPad(str: string, width: number, unicode: boolean): string {
   const ellipsis = unicode ? '…' : '...';
@@ -108,10 +115,8 @@ function renderProviderTable(f: Frame, probe: AgyQuotaProbe): string[] {
 
   for (const q of probe.models) {
     if (!q || isImageModel(q)) continue;
-    const isArgon = /argon/i.test(q.id || q.displayName || '');
-    const isGoogle = !isArgon && (q.modelProvider === 'MODEL_PROVIDER_GOOGLE' || /gemini/i.test(q.id || q.displayName || ''));
-    const isClaude = q.modelProvider === 'MODEL_PROVIDER_ANTHROPIC' || /claude|gpt/i.test(q.id || q.displayName || '');
-    const key = isArgon ? 'Argon' : isGoogle ? 'Google' : isClaude ? 'Claude' : null;
+    const providerKey = classifyQuotaProvider(q.id, q.displayName, q.modelProvider);
+    const key = providerKey ? TABLE_BUCKET_KEYS[providerKey] : null;
     if (!key) continue;
 
     if (isNonExpired(q.windows?.fiveHour, now)) {

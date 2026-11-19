@@ -14,7 +14,7 @@ import { getMemoryUsage, readMemory, type MemoryFacts } from './memory.ts';
 import { render } from './render/index.ts';
 import { getOutputSpeed } from './speed.ts';
 import { getUsageFromStdin } from './stdin.ts';
-import { addSubagentEfforts, parseTranscript } from './transcript.ts';
+import { addSubagentEfforts, parseTranscript, reconcileAgentsWithStdin } from './transcript.ts';
 import type { AgyQuotaProbe, RenderContext, StdinData, TranscriptData, UsageData } from './types.ts';
 import { getTerminalWidth } from './utils/terminal.ts';
 
@@ -88,6 +88,8 @@ export async function renderStdin(
     ask(needed),
     paths.transcript ? parseTranscript(paths.transcript, paths.data) : Promise.resolve(emptyTranscript()),
   ]);
+
+  reconcileAgentsWithStdin(transcript.agents, stdin.subagents, now);
 
   if (config.display.showAgents && transcript.agents.length > 0 && (paths.subagents || paths.agySubagentTranscripts)) {
     await addSubagentEfforts(paths.subagents ?? '', transcript.agents, paths.agySubagentTranscripts);
@@ -183,8 +185,7 @@ export async function renderStdin(
   const rendered = render(ctx, cols, now);
   const lines = rendered ? rendered.split('\n') : [];
   const warning = problemLine(loaded.problems);
-  if (warning && lines.length > 0) lines.push(warning);
-  else if (warning) lines.push(warning);
+  if (warning) lines.push(warning);
 
   return { lines, snapshot, failed: loaded.problems.length > 0 };
 }

@@ -345,6 +345,41 @@ describe('quota / token', () => {
       }
     });
 
+    test('skips Linux Keyring reader when skipKeychain is true and falls back to token file', () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-token-linux-skip-'));
+      try {
+        const home = path.join(tmp, 'home');
+        fs.mkdirSync(path.join(home, '.gemini', 'antigravity-cli'), { recursive: true });
+        fs.writeFileSync(
+          path.join(home, '.gemini', 'antigravity-cli', 'antigravity-oauth-token'),
+          JSON.stringify({ token: { access_token: 'linux-file-fallback' } })
+        );
+        let keyringReads = 0;
+
+        withEnv({
+          HOME: home,
+          USERPROFILE: home,
+          XDG_DATA_HOME: undefined,
+          APPDATA: undefined,
+          LOCALAPPDATA: undefined,
+        }, () => {
+          const token = readToken({
+            platform: 'linux',
+            skipKeychain: true,
+            keyringReader: () => {
+              keyringReads += 1;
+              return { accessToken: 'should-not-read', sourceFormat: 'linux-keyring' };
+            },
+          });
+
+          assert.equal(keyringReads, 0);
+          assert.equal(token.accessToken, 'linux-file-fallback');
+        });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
     test('prefers macOS Keychain reader over file tokens on darwin', () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-token-darwin-'));
       try {
@@ -472,6 +507,92 @@ describe('quota / token', () => {
       assert.equal(decodeKeyringRaw(''), null);
       assert.equal(decodeKeyringRaw(null), null);
       assert.equal(decodeKeyringRaw('   '), null);
+    });
+  });
+
+  describe('base64url JWT & keyring preference', () => {
+    test('extractEmailFromIdToken decodes unpadded base64url JWT payload containing - and _', () => {
+      const payloadPart = Buffer.from(
+        JSON.stringify({ email: 'url_safe+test@example.com', pad: '?>?>?~~' }),
+      ).toString('base64url');
+      assert.equal(payloadPart.includes('='), false);
+      assert.equal(payloadPart.includes('-') || payloadPart.includes('_'), true);
+      const jwt = `eyJhbGciOiJub25lIn0.${payloadPart}.sig`;
+      assert.equal(extractEmailFromIdToken(jwt), 'url_safe+test@example.com');
+    });
+
+    test('parseKeyringDecodedToken trims decoded base64 plain token and rejects whitespace-separated junk', () => {
+      const { parseKeyringDecodedToken } = tokenModule;
+      const paddedRaw = 'go-keyring-base64:' + Buffer.from('  ya29.trimmed-token\n').toString('base64');
+      assert.equal(parseKeyringDecodedToken(paddedRaw, 'linux-keyring')?.token.accessToken, 'ya29.trimmed-token');
+      assert.equal(parseKeyringDecodedToken('not a single token', 'linux-keyring'), null);
+    });
+
+    test('readToken prefers live keyringReader on linux and credentialReader on win32 unless skipped', () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-live-pref-'));
+      try {
+        const rootDir = path.join(tmp, 'root');
+        fs.mkdirSync(rootDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(rootDir, 'agy-hud-token.json'),
+          JSON.stringify({
+            writtenAt: Date.now(),
+            tokens: [{ accessToken: 'stale-temp-token', expiry: new Date(Date.now() + 3600_000).toISOString() }],
+          }),
+        );
+
+        let linuxCalls = 0;
+        const liveLinux = readToken({
+          platform: 'linux',
+          roots: [rootDir],
+          skipKeychain: false,
+          keyringReader: () => {
+            linuxCalls += 1;
+            return { accessToken: 'live-linux-token', sourceFormat: 'linux-keyring' };
+          },
+        });
+        assert.equal(linuxCalls, 1);
+        assert.equal(liveLinux?.accessToken, 'live-linux-token');
+
+        const fastLinux = readToken({
+          platform: 'linux',
+          roots: [rootDir],
+          skipKeychain: true,
+          keyringReader: () => {
+            linuxCalls += 1;
+            return { accessToken: 'should-not-run' };
+          },
+        });
+        assert.equal(linuxCalls, 1, 'skipKeychain=true must skip keyringReader');
+        assert.equal(fastLinux?.accessToken, 'stale-temp-token');
+
+        let winCalls = 0;
+        const liveWin = readToken({
+          platform: 'win32',
+          roots: [rootDir],
+          skipWindowsCredential: false,
+          credentialReader: () => {
+            winCalls += 1;
+            return { accessToken: 'live-win-token', sourceFormat: 'windows-credential' };
+          },
+        });
+        assert.equal(winCalls, 1);
+        assert.equal(liveWin?.accessToken, 'live-win-token');
+
+        const fastWin = readToken({
+          platform: 'win32',
+          roots: [rootDir],
+          skipWindowsCredential: true,
+          credentialReader: () => {
+            winCalls += 1;
+            return { accessToken: 'should-not-run' };
+          },
+        });
+        assert.equal(winCalls, 1, 'skipWindowsCredential=true must skip credentialReader');
+        assert.equal(fastWin?.accessToken, 'stale-temp-token');
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
     });
   });
 });

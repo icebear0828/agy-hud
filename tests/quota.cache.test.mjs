@@ -226,9 +226,10 @@ describe('quota / cache', () => {
       }
     });
 
-    test('writeCache limits fresh cache TTL to maximum 2 minutes even with long resetTime', () => {
+    test('writeCache limits fresh cache TTL to maximum 30 seconds even with long resetTime', () => {
       const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
       try {
+        assert.equal(quotaModule.MAX_CACHE_FRESH_MS, 30 * 1000);
         const longResetTime = new Date(Date.now() + 3600 * 1000).toISOString(); // 1 hour later
         const mockData = [{ id: 'gemini-3.5-flash-low', remainingFraction: 0.5, resetTime: longResetTime }];
 
@@ -237,9 +238,9 @@ describe('quota / cache', () => {
         });
 
         const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
-        const maxAllowedExpiry = Date.now() + 2 * 60 * 1000 + 5000; // 2m + 5s buffer
-        const minAllowedExpiry = Date.now() + 2 * 60 * 1000 - 5000;
-        assert.ok(raw.expiresAt >= minAllowedExpiry && raw.expiresAt <= maxAllowedExpiry, `expiresAt ${raw.expiresAt} must be close to 2 minutes from now`);
+        const maxAllowedExpiry = Date.now() + quotaModule.MAX_CACHE_FRESH_MS + 5000; // 30s + 5s buffer
+        const minAllowedExpiry = Date.now() + quotaModule.MAX_CACHE_FRESH_MS - 5000;
+        assert.ok(raw.expiresAt >= minAllowedExpiry && raw.expiresAt <= maxAllowedExpiry, `expiresAt ${raw.expiresAt} must be close to 30 seconds from now`);
       } finally {
         if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
         else fs.writeFileSync(CACHE_PATH, previousCache);
@@ -281,23 +282,138 @@ describe('quota / cache', () => {
       const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
       try {
         fs.rmSync(CACHE_PATH, { force: true });
+        const futureReset = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
         const data = [{ id: 'm', remainingFraction: 0.5, resetTime: null, windows: {} }];
         const fullProviderQuota = {
-          google: { weekly: { remainingFraction: 0.9, resetTime: '2026-09-10T00:00:00Z' } },
-          claude: { weekly: { remainingFraction: 0.8, resetTime: '2026-09-10T00:00:00Z' } },
+          google: {
+            fiveHour: { remainingFraction: 0.9, resetTime: futureReset },
+            weekly: { remainingFraction: 0.9, resetTime: futureReset },
+          },
+          claude: { weekly: { remainingFraction: 0.8, resetTime: futureReset } },
         };
         writeCache(data, 'tok', null, null, fullProviderQuota);
 
-        // Second write only carries google provider quota (claude missing/timed out)
+        // Second write only carries google fiveHour (claude missing, google weekly omitted)
         const partialProviderQuota = {
-          google: { weekly: { remainingFraction: 0.85, resetTime: '2026-09-10T00:00:00Z' } },
+          google: { fiveHour: { remainingFraction: 0.85, resetTime: futureReset } },
         };
         writeCache(data, 'tok', null, null, partialProviderQuota);
 
         const payload = readCachePayload('tok');
         assert.ok(payload);
-        assert.equal(payload.providerQuota.google.weekly.remainingFraction, 0.85);
+        assert.equal(payload.providerQuota.google.fiveHour.remainingFraction, 0.85);
+        assert.equal(payload.providerQuota.google.weekly.remainingFraction, 0.9, 'sibling window inside same provider must be preserved');
         assert.equal(payload.providerQuota.claude.weekly.remainingFraction, 0.8, 'claude provider quota must be preserved');
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('writeCache drops expired providerQuota windows, sanitizes expired model resetTime, and bounds expiresAt by providerQuota', () => {
+      const { readCachePayload } = quotaModule;
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const expiredReset = new Date(Date.now() - 60_000).toISOString();
+        const soonReset = new Date(Date.now() + 10_000).toISOString();
+        const farReset = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+        // Seed expired claude weekly + valid google fiveHour
+        writeCache(
+          [{ id: 'm', remainingFraction: 0.5, resetTime: farReset, windows: {} }],
+          'tok-exp',
+          null,
+          null,
+          {
+            claude: { weekly: { remainingFraction: 0.2, resetTime: expiredReset } },
+            google: { fiveHour: { remainingFraction: 0.6, resetTime: farReset } },
+          },
+        );
+
+        // Model carries an expired top-level resetTime while live weekly window is in future; providerQuota bounds expiresAt to soonReset (<30s)
+        writeCache(
+          [
+            {
+              id: 'm',
+              remainingFraction: 0.4,
+              resetTime: expiredReset,
+              windows: {
+                fiveHour: { remainingFraction: 0.4, resetTime: expiredReset },
+                weekly: { remainingFraction: 0.7, resetTime: farReset },
+              },
+            },
+          ],
+          'tok-exp',
+          null,
+          null,
+          {
+            argon: { fiveHour: { remainingFraction: 0.5, resetTime: soonReset } },
+          },
+        );
+
+        const payload = readCachePayload('tok-exp');
+        assert.ok(payload);
+        assert.equal(payload.providerQuota.claude, undefined, 'expired cached providerQuota windows must be dropped');
+        assert.equal(payload.providerQuota.google.fiveHour.remainingFraction, 0.6);
+        assert.equal(payload.data[0].resetTime, farReset, 'expired top-level model resetTime must fall back to live window');
+        assert.equal(payload.data[0].remainingFraction, 0.7);
+        assert.ok(payload.expiresAt > Date.now(), 'expired top-level resetTime must not pull expiresAt into the past');
+        assert.ok(payload.expiresAt <= Date.parse(soonReset) + 50, 'providerQuota sooner resetTime must bound expiresAt');
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('writeCache drops previous account identity and quota when accessToken rotates without resolved email', () => {
+      const { readCachePayload } = quotaModule;
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const farReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        const sharedSource = path.join('stable', 'antigravity-shared-token');
+        writeCache(
+          [{ id: 'm', remainingFraction: 0.9, resetTime: farReset, windows: {} }],
+          { accessToken: 'tok-acct-1', sourcePath: sharedSource, email: 'user1@example.com' },
+          'Pro',
+          'user1@example.com',
+          { claude: { weekly: { remainingFraction: 0.9, resetTime: farReset } } },
+        );
+
+        // Access token rotated (e.g. account switched) and new token has no email claim yet
+        writeCache(
+          [{ id: 'm', remainingFraction: 0.3, resetTime: farReset, windows: {} }],
+          { accessToken: 'tok-acct-2', sourcePath: sharedSource },
+          null,
+          null,
+          { google: { weekly: { remainingFraction: 0.3, resetTime: farReset } } },
+        );
+
+        const payload = readCachePayload({ accessToken: 'tok-acct-2', sourcePath: sharedSource });
+        assert.ok(payload);
+        assert.equal(payload.accountEmail, null, 'must not inherit accountEmail after rotated token lacking email');
+        assert.equal(payload.tier, null, 'must not inherit tier after rotated token lacking email');
+        assert.equal(payload.providerQuota.claude, undefined, 'must not inherit previous account quota on unverified token rotation');
+        assert.equal(payload.providerQuota.google.weekly.remainingFraction, 0.3);
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('readCacheRaw and readCachePayload reject payloads with mismatched CACHE_VERSION', () => {
+      const { readCachePayload, readCacheRaw, CACHE_VERSION } = quotaModule;
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        writeCache([{ id: 'm', remainingFraction: 0.5, resetTime: null, windows: {} }], 'tok-ver');
+        const wrongVer = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+        wrongVer.version = CACHE_VERSION - 1;
+        fs.writeFileSync(CACHE_PATH, JSON.stringify(wrongVer));
+
+        assert.equal(readCacheRaw(), null);
+        assert.equal(readCachePayload('tok-ver'), null);
       } finally {
         if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
         else fs.writeFileSync(CACHE_PATH, previousCache);

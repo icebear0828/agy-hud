@@ -40,7 +40,7 @@ export function extractEmailFromIdToken(idToken) {
   const parts = idToken.split('.');
   if (parts.length !== 3) return undefined;
   try {
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
     if (payload && typeof payload.email === 'string' && payload.email.includes('@')) {
       return payload.email;
     }
@@ -252,6 +252,26 @@ export function readWindowsCredentialTokens(platform = process.platform, roots =
   }
 }
 
+export function parseKeyringDecodedToken(raw, sourceFormat) {
+  const parsed = decodeKeyringRaw(raw);
+  if (!parsed) return null;
+  let token = null;
+  if (typeof parsed === 'string') {
+    const trimmed = parsed.trim();
+    if (trimmed && !/\s/.test(trimmed)) token = { accessToken: trimmed };
+  } else {
+    token = parseTokenPayload(parsed);
+  }
+  if (!token) return null;
+  const entry = {
+    accessToken: token.accessToken,
+    expiry: token.expiry,
+    sourceFormat,
+    ...(token.email ? { email: token.email } : {}),
+  };
+  return { token, tokens: [entry] };
+}
+
 export function readLinuxKeyringTokens(platform = process.platform, roots = getAntigravityRoots()) {
   if (platform !== 'linux') return null;
   try {
@@ -265,22 +285,10 @@ export function readLinuxKeyringTokens(platform = process.platform, roots = getA
       timeout: 5000,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-    const parsed = decodeKeyringRaw(trimmed);
+    const parsed = parseKeyringDecodedToken(raw, 'linux-keyring');
     if (!parsed) return null;
-    const token = typeof parsed === 'string'
-      ? (!/\s/.test(parsed) ? { accessToken: parsed } : null)
-      : parseTokenPayload(parsed);
-    if (!token) return null;
-    const tokens = [{
-      accessToken: token.accessToken,
-      expiry: token.expiry,
-      sourceFormat: 'linux-keyring',
-      ...(token.email ? { email: token.email } : {}),
-    }];
-    writeWindowsTokenTemp(tokens, roots);
-    return { ...token, sourceFormat: 'linux-keyring', all: tokens };
+    writeWindowsTokenTemp(parsed.tokens, roots);
+    return { ...parsed.token, sourceFormat: 'linux-keyring', all: parsed.tokens };
   } catch {
     return null;
   }
@@ -303,19 +311,9 @@ export function readMacosKeychainTokens(platform = process.platform) {
       timeout: 5000,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    const parsed = decodeKeyringRaw(raw);
+    const parsed = parseKeyringDecodedToken(raw, 'macos-keychain');
     if (!parsed) return null;
-    const token = typeof parsed === 'string'
-      ? (!/\s/.test(parsed) ? { accessToken: parsed } : null)
-      : parseTokenPayload(parsed);
-    if (!token) return null;
-    const tokens = [{
-      accessToken: token.accessToken,
-      expiry: token.expiry,
-      sourceFormat: 'macos-keychain',
-      ...(token.email ? { email: token.email } : {}),
-    }];
-    return { ...token, sourceFormat: 'macos-keychain', all: tokens };
+    return { ...parsed.token, sourceFormat: 'macos-keychain', all: parsed.tokens };
   } catch {
     return null;
   }
@@ -366,19 +364,21 @@ export function readToken(options = {}) {
   }
 
   if (platform === 'win32') {
-    const tempToken = readWindowsTokenTemp(roots);
-    if (tempToken) return { ...tempToken, sourceFormat: tempToken.sourceFormat || 'windows-credential' };
     if (!skipWindowsCredential) {
       const credentialToken = credentialReader(platform, roots);
       if (credentialToken) return credentialToken;
     }
+    const tempToken = readWindowsTokenTemp(roots);
+    if (tempToken) return { ...tempToken, sourceFormat: tempToken.sourceFormat || 'windows-credential' };
   }
 
   if (platform === 'linux') {
+    if (!skipKeychain) {
+      const keyringToken = normalizeKeyringTokenResult(keyringReader(platform, roots));
+      if (keyringToken) return keyringToken;
+    }
     const tempToken = readWindowsTokenTemp(roots);
     if (tempToken) return { ...tempToken, sourceFormat: tempToken.sourceFormat || 'linux-keyring' };
-    const keyringToken = normalizeKeyringTokenResult(keyringReader(platform, roots));
-    if (keyringToken) return keyringToken;
   }
 
   for (const candidate of getTokenCandidates(roots)) {

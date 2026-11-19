@@ -359,5 +359,108 @@ describe('quota / getQuota orchestrator', () => {
         else fs.writeFileSync(CACHE_PATH, previousCache);
       }
     });
+
+    test('passes skipKeychain matching fast flag to tokenReader', async () => {
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const seenSkipKeychain = [];
+
+        await getQuota({
+          fast: true,
+          platform: 'linux',
+          tokenReader: (opts) => {
+            seenSkipKeychain.push(opts.skipKeychain);
+            return null;
+          },
+          backgroundRefresh: () => {},
+        });
+
+        await getQuota({
+          fast: false,
+          platform: 'linux',
+          tokenReader: (opts) => {
+            seenSkipKeychain.push(opts.skipKeychain);
+            return null;
+          },
+          backgroundRefresh: () => {},
+        });
+
+        assert.deepEqual(seenSkipKeychain, [true, false]);
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('triggers background refresh when cache is older than BACKGROUND_REFRESH_COOLDOWN_MS (15s)', async () => {
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        assert.equal(quotaModule.BACKGROUND_REFRESH_COOLDOWN_MS, 15 * 1000);
+        const stalePayload = {
+          version: 3,
+          expiresAt: Date.now() - 1000,
+          lastRefreshed: Date.now() - 20_000,
+          cacheKeyHash: 'different-user',
+          tokenHash: 'different-token',
+          data: [{ id: 'test', remainingFraction: 0.5, resetTime: null }],
+        };
+        fs.writeFileSync(CACHE_PATH, JSON.stringify(stalePayload), { mode: 0o600 });
+
+        let refreshes = 0;
+        await getQuota({
+          fast: true,
+          tokenReader: () => ({ accessToken: 'new-unmatched-token', sourcePath: '/new/path' }),
+          backgroundRefresh: () => { refreshes += 1; },
+        });
+
+        assert.equal(refreshes, 1, 'should refresh once cooldown (15s) has elapsed');
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+  });
+
+  describe('AGY_CONFIG_DIR & runBackgroundRefresh consistency', () => {
+    test('resolveQuotaRoots, resolveQuotaCachePath, and refresh arg helpers preserve AGY_CONFIG_DIR', () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-cfg-dir-'));
+      try {
+        const home = path.join(tmp, 'home');
+        const customCfg = path.join(tmp, 'custom-agy');
+        const env = { HOME: home, USERPROFILE: home, AGY_CONFIG_DIR: customCfg, AGY_HUD_DATA_DIR: '' };
+
+        const roots = quotaModule.resolveQuotaRoots(env, home);
+        const cachePath = quotaModule.resolveQuotaCachePath(env, home);
+        assert.deepEqual(roots, [path.resolve(customCfg)]);
+        assert.equal(cachePath, path.join(path.resolve(customCfg), 'agy-hud-quota-cache.json'));
+
+        const args = quotaModule.buildRefreshArgs(cachePath, roots);
+        const parsed = quotaModule.parseRefreshArgs(args, {});
+        assert.equal(parsed.cachePath, cachePath);
+        assert.deepEqual(parsed.roots, roots);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    test('runBackgroundRefresh skips writing cache when quota probe fails with unavailableReason', async () => {
+      let writeCount = 0;
+      const unavailableEmpty = Object.assign([], { unavailableReason: 'network_error' });
+
+      const res = await quotaModule.runBackgroundRefresh({
+        roots: ['/nonexistent/root'],
+        cachePath: '/nonexistent/cache.json',
+        readTokenFn: () => ({ accessToken: 'tok-refresh' }),
+        fetchQuotaFn: async () => unavailableEmpty,
+        fetchTierFn: async () => 'Pro',
+        fetchEmailFn: async () => 'user@example.com',
+        writeCacheFn: () => { writeCount += 1; },
+      });
+
+      assert.equal(writeCount, 0, 'empty unavailable quota probe must not overwrite valid cache');
+      assert.equal(res.status, 'skipped');
+      assert.equal(res.reason, 'network_error');
+    });
   });
 });
