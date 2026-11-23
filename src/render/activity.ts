@@ -116,11 +116,11 @@ export function mcpLine(f: Frame): string | null {
   return `${prefix} ${label(`MCPs (${all.length}):`, f.config?.colors)} ${items.join(', ')}`;
 }
 
-export function agentsLine(f: Frame): string | null {
+export function agentLines(f: Frame): string[] {
   const display = f.config?.display;
-  if (display?.showAgents !== true) return null;
+  if (display?.showAgents !== true) return [];
   const agents = f.transcript?.agents ?? [];
-  if (agents.length === 0) return null;
+  if (agents.length === 0) return [];
 
   const sym = symbols(f.unicode);
   const running = agents.filter((a: AgentEntry) => a.status === 'running');
@@ -148,7 +148,7 @@ export function agentsLine(f: Frame): string | null {
     return `${icon} ${kind}${meta}${desc}${elapsed}`;
   });
   if (running.length > 3) items.push(dim(`+${running.length - 3} running`));
-  return items.join(f.sep);
+  return items;
 }
 
 export function todosLine(f: Frame): string | null {

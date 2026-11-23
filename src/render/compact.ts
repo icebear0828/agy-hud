@@ -24,7 +24,7 @@ import {
   versionPart,
 } from './parts.ts';
 import { addedDirsLine, cacheHitRateLine, imageQuotaLine, memoryLine, promptCacheLine, sessionTimeLine } from './lines.ts';
-import { agentsLine, mcpLine, skillsLine, todosLine, toolsLine } from './activity.ts';
+import { agentLines, mcpLine, skillsLine, todosLine, toolsLine } from './activity.ts';
 import { agyQuotaExtraLines } from './quota-table.ts';
 import { usageParts } from './usage.ts';
 import { gitFilesLine } from './vcs.ts';
@@ -91,7 +91,7 @@ export function renderCompact(f: Frame): string[] {
     toolsLine(f),
     skillsLine(f),
     mcpLine(f),
-    agentsLine(f),
+    ...agentLines(f),
     todosLine(f),
   ].filter((l): l is string => Boolean(l));
 

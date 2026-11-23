@@ -182,12 +182,12 @@ describe('collector / subagent map cache, stripLogic tmp guard & version sync', 
     }
   });
 
-  test('manifest versions are synchronized at 0.4.8', () => {
+  test('manifest versions are synchronized at 0.4.9', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
     const plugin = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugin.json'), 'utf8'));
     const ext = JSON.parse(fs.readFileSync(path.join(ROOT, 'gemini-extension.json'), 'utf8'));
 
-    assert.equal(pkg.version, '0.4.8');
+    assert.equal(pkg.version, '0.4.9');
     assert.equal(plugin.version, pkg.version);
     assert.equal(ext.version, pkg.version);
   });

@@ -99,6 +99,8 @@ export interface HudColorOverrides {
 
 export const DEFAULT_ELEMENT_ORDER: HudElement[] = ELEMENTS.filter((element) => element !== 'cost');
 export const DEFAULT_MERGE_GROUPS: HudElement[][] = [['context', 'usage']];
+export const UNMERGEABLE_ELEMENTS: ReadonlySet<HudElement> = new Set(['project', 'agents']);
+const MERGEABLE_ELEMENTS = ELEMENTS.filter((element) => !UNMERGEABLE_ELEMENTS.has(element));
 export const DEFAULT_PROJECT_LINE_ORDER: FirstLineSegment[] = [];
 
 export interface HudConfig {
@@ -424,14 +426,14 @@ const names = (known: readonly unknown[], nonEmpty: boolean): Rule =>
     return kept.length > 0 || !nonEmpty ? kept : fallback;
   });
 
-const mergeGroups = rule(`a list of groups, each 2 or more of ${list(ELEMENTS)}, each element in one group`, (value, fallback) => {
+const mergeGroups = rule(`a list of groups, each 2 or more of ${list(MERGEABLE_ELEMENTS)}, each element in one group`, (value, fallback) => {
   if (!Array.isArray(value)) return fallback;
   if (value.length === 0) return [];
   const used = new Set<unknown>();
   const groups: unknown[][] = [];
   for (const group of value) {
     if (!Array.isArray(group)) continue;
-    const members = [...new Set(group.filter((item) => (ELEMENTS as readonly unknown[]).includes(item) && !used.has(item)))];
+    const members = [...new Set(group.filter((item) => (MERGEABLE_ELEMENTS as readonly unknown[]).includes(item) && !used.has(item)))];
     if (members.length < 2) continue;
     members.forEach((member) => used.add(member));
     groups.push(members);

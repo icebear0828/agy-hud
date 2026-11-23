@@ -1,5 +1,5 @@
 import type { FirstLineSegment, HudElement } from '../config.ts';
-import { DEFAULT_ELEMENT_ORDER, DEFAULT_MERGE_GROUPS } from '../config.ts';
+import { DEFAULT_ELEMENT_ORDER, DEFAULT_MERGE_GROUPS, UNMERGEABLE_ELEMENTS } from '../config.ts';
 import type { Frame } from './frame.ts';
 import { dim, label } from './colors.ts';
 import { visibleWidth, separatorLine } from './ansi.ts';
@@ -36,7 +36,7 @@ import {
   sessionTimeLine,
   sessionTokensLine,
 } from './lines.ts';
-import { agentsLine, mcpLine, skillsLine, todosLine, toolsLine } from './activity.ts';
+import { agentLines, mcpLine, skillsLine, todosLine, toolsLine } from './activity.ts';
 import { agyQuotaExtraLines } from './quota-table.ts';
 import { usageParts } from './usage.ts';
 import { gitFilesLine } from './vcs.ts';
@@ -129,10 +129,8 @@ function renderSingleElement(f: Frame, element: HudElement, align: LabelAlign, c
       const line = mcpLine(f);
       return line ? [line] : [];
     }
-    case 'agents': {
-      const line = agentsLine(f);
-      return line ? [line] : [];
-    }
+    case 'agents':
+      return agentLines(f);
     case 'todos': {
       const line = todosLine(f);
       return line ? [line] : [];
@@ -180,15 +178,17 @@ export function renderExpanded(f: Frame): string[] {
     includeMemoryInWidth: display?.showMemoryUsage === true,
     includePromptCacheInWidth: display?.showPromptCache === true,
   };
-  const costSeparate = order.includes('cost') || mergeGroups.some((g) => g.includes('cost'));
-
   const groupByElement = new Map<HudElement, HudElement[]>();
-  for (const group of mergeGroups) {
+  for (const rawGroup of mergeGroups) {
+    if (!Array.isArray(rawGroup)) continue;
+    const group = [...new Set(rawGroup.filter((member) => !UNMERGEABLE_ELEMENTS.has(member) && !groupByElement.has(member)))];
     if (group.length < 2) continue;
     for (const member of group) {
-      if (!groupByElement.has(member)) groupByElement.set(member, group);
+      groupByElement.set(member, group);
     }
   }
+
+  const costSeparate = order.includes('cost') || groupByElement.has('cost');
 
   const emitted = new Set<HudElement>();
   const primaryLines: string[] = [];
@@ -198,7 +198,7 @@ export function renderExpanded(f: Frame): string[] {
     if (emitted.has(element)) continue;
 
     const group = groupByElement.get(element);
-    if (group && element !== 'project') {
+    if (group && !UNMERGEABLE_ELEMENTS.has(element)) {
       const rowSegments: Array<{ element: HudElement; text: string }> = [];
       let allActivity = true;
       for (const member of group) {
@@ -226,7 +226,7 @@ export function renderExpanded(f: Frame): string[] {
       continue;
     }
 
-    if (element === 'sessionTokens') {
+    if (element === 'sessionTokens' || element === 'agents') {
       for (const r of rendered) activityLines.push(r);
       continue;
     }

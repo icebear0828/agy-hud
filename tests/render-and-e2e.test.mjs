@@ -309,6 +309,148 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
     assert.ok(wrapped.every((row) => visibleWidth(row) <= 14));
   });
 
+  test('renders each running subagent on its own line in expanded and compact layouts', () => {
+    const agents = [
+      { id: 'b1', type: 'scout', description: 'scan repo', status: 'running', startTime: new Date(NOW - 419_000) },
+      { id: 'b2', type: 'scout', description: 'scan docs', status: 'running', startTime: new Date(NOW - 419_000) },
+      { id: 'b3', type: 'reviewer', description: 'check diff', status: 'running', startTime: new Date(NOW - 12_000) },
+    ];
+    for (const lineLayout of ['expanded', 'compact']) {
+      const plain = stripAnsi(renderPlain(baseCtx({
+        config: mergeConfig({ lineLayout, display: { showAgents: true } }),
+        transcript: { ...baseCtx().transcript, agents },
+      }), 160, NOW));
+      const rows = plain.split('\n');
+      const agentRows = rows.filter((row) => /◐ (scout|reviewer)/.test(row));
+      assert.equal(agentRows.length, agents.length, `${lineLayout}: expected one row per subagent in ${plain}`);
+      assert.equal(rows.filter((row) => row.includes('scout')).length, 2);
+      assert.equal(rows.filter((row) => row.includes('reviewer')).length, 1);
+      for (const row of rows) assert.ok(!row.includes('│ ◐'), `${lineLayout}: subagents must not share a row: ${row}`);
+    }
+
+    const overflow = Array.from({ length: 5 }, (_, i) => ({
+      id: `o${i}`, type: 'coder', description: `task ${i}`, status: 'running', startTime: new Date(NOW - 5_000),
+    }));
+    for (const lineLayout of ['expanded', 'compact']) {
+      const overflowRows = stripAnsi(renderPlain(baseCtx({
+        config: mergeConfig({ lineLayout, display: { showAgents: true } }),
+        transcript: { ...baseCtx().transcript, agents: overflow },
+      }), 160, NOW)).split('\n');
+      const coderRows = overflowRows.filter((row) => row.includes('◐ coder'));
+      assert.equal(coderRows.length, 3, `${lineLayout}: expected 3 running coder rows`);
+      for (const row of coderRows) {
+        assert.match(row, /^◐ coder \(task [234]\) 5s$/);
+        assert.ok(!row.includes('│'), `${lineLayout}: running subagent row must not contain separator: ${row}`);
+      }
+      const markerRows = overflowRows.filter((row) => row.trim() === '+2 running');
+      assert.equal(markerRows.length, 1, `${lineLayout}: overflow marker must be its own row`);
+      assert.equal(markerRows[0], '+2 running');
+      for (const row of overflowRows) {
+        assert.ok(!row.includes('│ +2 running'), `${lineLayout}: overflow marker must not share a row: ${row}`);
+      }
+    }
+  });
+
+  test('renders completed subagents on separate lines and keeps agents/project out of mergeGroups', () => {
+    const completed = [
+      { id: 'c1', type: 'scout', description: 'old scan', status: 'completed', startTime: new Date(NOW - 30_000), endTime: new Date(NOW - 20_000) },
+      { id: 'c2', type: 'coder', description: 'write fix', status: 'completed', startTime: new Date(NOW - 18_000), endTime: new Date(NOW - 10_000) },
+      { id: 'c3', type: 'reviewer', description: 'audit fix', status: 'completed', startTime: new Date(NOW - 9_000), endTime: new Date(NOW - 1_000) },
+    ];
+    for (const lineLayout of ['expanded', 'compact']) {
+      const plain = stripAnsi(renderPlain(baseCtx({
+        config: mergeConfig({ lineLayout, display: { showAgents: true } }),
+        transcript: { ...baseCtx().transcript, agents: completed },
+      }), 160, NOW));
+      const rows = plain.split('\n');
+      const completedAgentRows = rows.filter((row) => /^✓ (scout|coder|reviewer)\b/.test(row));
+      assert.equal(completedAgentRows.length, 2, `${lineLayout}: expected latest 2 completed subagents on separate rows in ${plain}`);
+      assert.ok(rows.includes('✓ coder (write fix) 8s'), `${lineLayout}: missing c2 completed row`);
+      assert.ok(rows.includes('✓ reviewer (audit fix) 8s'), `${lineLayout}: missing c3 completed row`);
+      assert.ok(!plain.includes('old scan'), `${lineLayout}: oldest completed subagent should be truncated`);
+      for (const row of completedAgentRows) {
+        assert.ok(!row.includes('│'), `${lineLayout}: completed subagent row must not contain separator: ${row}`);
+      }
+      for (const row of rows) {
+        assert.ok(!row.includes('│ ✓ coder') && !row.includes('│ ✓ reviewer'), `${lineLayout}: completed subagent must not be merged: ${row}`);
+      }
+    }
+
+    const agents = [
+      { id: 'm1', type: 'scout', description: 'scan repo', status: 'running', startTime: new Date(NOW - 10_000) },
+      { id: 'm2', type: 'scout', description: 'scan docs', status: 'running', startTime: new Date(NOW - 8_000) },
+      { id: 'm3', type: 'reviewer', description: 'check diff', status: 'running', startTime: new Date(NOW - 5_000) },
+    ];
+    const mergedCfg = mergeConfig({
+      display: { showAgents: true, mergeGroups: [['agents', 'todos'], ['tools', 'agents']] },
+    });
+    assert.deepEqual(mergedCfg.display.mergeGroups, [['context', 'usage']]);
+
+    const rawFrameCfg = mergeConfig({ display: { showAgents: true } });
+    rawFrameCfg.display.mergeGroups = [['agents', 'todos'], ['tools', 'agents']];
+
+    for (const [labelName, cfg] of [['normalized', mergedCfg], ['unnormalized-frame', rawFrameCfg]]) {
+      const plain = stripAnsi(renderPlain(baseCtx({
+        config: cfg,
+        transcript: { ...baseCtx().transcript, agents },
+      }), 160, NOW));
+      const rows = plain.split('\n');
+      const agentRows = rows.filter((row) => /◐ (scout|reviewer)/.test(row));
+      assert.equal(agentRows.length, agents.length, `${labelName}: expected one row per subagent in ${plain}`);
+      for (const row of agentRows) {
+        assert.ok(!row.includes('│'), `${labelName}: subagent row must not contain separator: ${row}`);
+        assert.ok(
+          !row.includes('Finish tests') && !row.includes('Read') && !row.includes('Edit'),
+          `${labelName}: subagent row must not merge with tools or todos: ${row}`,
+        );
+      }
+      const toolsRow = rows.find((row) => row.includes('Read') && row.includes('Edit'));
+      const todosRow = rows.find((row) => row.includes('Finish tests'));
+      assert.ok(toolsRow, `${labelName}: expected tools row`);
+      assert.ok(todosRow, `${labelName}: expected todos row`);
+      assert.notEqual(toolsRow, todosRow, `${labelName}: tools and todos should remain separate`);
+      assert.ok(!toolsRow.includes('scout') && !toolsRow.includes('reviewer'), `${labelName}: tools row must not include subagents`);
+      assert.ok(!todosRow.includes('scout') && !todosRow.includes('reviewer'), `${labelName}: todos row must not include subagents`);
+    }
+
+    const mixedGroupCfg = mergeConfig({
+      display: { showAgents: true, mergeGroups: [['agents', 'tools', 'todos']] },
+    });
+    assert.deepEqual(mixedGroupCfg.display.mergeGroups, [['tools', 'todos']]);
+    const mixedRawCfg = mergeConfig({ display: { showAgents: true } });
+    mixedRawCfg.display.mergeGroups = [['agents', 'tools', 'todos']];
+    for (const [labelName, cfg] of [['mixed-normalized', mixedGroupCfg], ['mixed-unnormalized', mixedRawCfg]]) {
+      const rows = stripAnsi(renderPlain(baseCtx({
+        config: cfg,
+        transcript: { ...baseCtx().transcript, agents },
+      }), 160, NOW)).split('\n');
+      const agentRows = rows.filter((row) => /◐ (scout|reviewer)/.test(row));
+      assert.equal(agentRows.length, agents.length, `${labelName}: expected each subagent on its own row`);
+      for (const row of agentRows) {
+        assert.ok(!row.includes('│'), `${labelName}: subagent row must not contain separator: ${row}`);
+      }
+      assert.ok(
+        rows.some((row) => row.includes('Read') && row.includes('Finish tests') && !row.includes('scout') && !row.includes('reviewer')),
+        `${labelName}: mergeable members tools and todos should still merge without agents`,
+      );
+    }
+
+    const projectGroupCfg = mergeConfig({
+      language: 'en',
+      display: { quotaStyle: 'minimal', mergeGroups: [['project', 'context', 'usage']] },
+    });
+    assert.deepEqual(projectGroupCfg.display.mergeGroups, [['context', 'usage']]);
+    const projectRawCfg = mergeConfig({ language: 'en', display: { quotaStyle: 'minimal' } });
+    projectRawCfg.display.mergeGroups = [['project', 'context', 'usage']];
+    for (const [labelName, cfg] of [['project-normalized', projectGroupCfg], ['project-unnormalized', projectRawCfg]]) {
+      const rows = stripAnsi(renderPlain(baseCtx({ config: cfg }), 160, NOW)).split('\n');
+      const projectRow = rows.find((row) => row.includes('[Gemini 3 Pro (High)]'));
+      const contextRow = rows.find((row) => row.includes('Context'));
+      assert.ok(projectRow && !projectRow.includes('Context'), `${labelName}: project row must not merge with context`);
+      assert.ok(contextRow && contextRow.includes('5h:') && !contextRow.includes('Gemini 3 Pro'), `${labelName}: context and usage should merge without project`);
+    }
+  });
+
   test('CLI entrypoint handles piped stdin, empty stdin, baseline env, and /hud subcommands cleanly', () => {
     const payload = JSON.stringify({
       model: { id: 'gemini-3-pro', display_name: 'Gemini 3 Pro' },
