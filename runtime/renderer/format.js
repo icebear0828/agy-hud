@@ -172,6 +172,7 @@ function formatTurnCacheBadge(metrics, label, colors, isCompact, thresholds = {}
 
 /** Format seconds into "XhYm" / "Ym" / "now" (compact). */
 function formatDuration(secs) {
+  if (!Number.isFinite(secs)) return '';
   if (secs <= 0) return 'now';
   const d = Math.floor(secs / 86400);
   const h = Math.floor((secs % 86400) / 3600);

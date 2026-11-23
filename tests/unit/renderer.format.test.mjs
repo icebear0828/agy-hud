@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert';
 import { abbreviateDisplayName, compactModelName, formatQuotaPercent } from '../../runtime/renderer.js';
+import { formatDuration } from '../../runtime/renderer/format.js';
 
 describe('renderer / format helpers', () => {
   describe('abbreviateDisplayName', () => {
@@ -63,6 +64,19 @@ describe('renderer / format helpers', () => {
       assert.equal(formatQuotaPercent(0.5), 50);
       assert.equal(formatQuotaPercent(0.0), 0);
       assert.equal(formatQuotaPercent(null), 0);
+    });
+  });
+
+  describe('formatDuration', () => {
+    test('guards non-finite inputs to prevent NaNm and formats valid durations', () => {
+      assert.equal(formatDuration(Number.NaN), '');
+      assert.equal(formatDuration(Number.POSITIVE_INFINITY), '');
+      assert.equal(formatDuration(undefined), '');
+      assert.equal(formatDuration(0), 'now');
+      assert.equal(formatDuration(-10), 'now');
+      assert.equal(formatDuration(1800), '30m');
+      assert.equal(formatDuration(3 * 3600 + 12 * 60), '3h12m');
+      assert.equal(formatDuration(4 * 86400 + 3 * 3600), '4d3h');
     });
   });
 });
