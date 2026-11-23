@@ -264,7 +264,8 @@ function buildMenuItems(wizardState, callbacks = {}) {
         return LANGUAGE_LABELS.auto;
       },
       toggle: () => {
-        const idx = LANGUAGE_CYCLE.indexOf(config.language);
+        const curLang = (config.language === 'en' || config.language === 'zh') ? config.language : undefined;
+        const idx = LANGUAGE_CYCLE.indexOf(curLang);
         const next = LANGUAGE_CYCLE[(idx + 1) % LANGUAGE_CYCLE.length];
         if (next === undefined) {
           delete config.language;

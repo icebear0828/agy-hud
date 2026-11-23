@@ -58,6 +58,7 @@ test('CLI renders a baseline HUD when agy sends empty stdin', async () => {
     assert.equal(result.code, 0);
     assert.equal(result.stderr, '');
     assert.match(result.stdout, /Unknown Model/);
+    assert.doesNotMatch(result.stdout, /[│█░─⎇⚿⛁≈]/);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

@@ -51,7 +51,7 @@ const FALLBACK_MODEL_PRICING = [
   { key: 'pro',    pattern: /pro/i,    input: 1.25,  output: 5.00,  cacheRead: 0.3125 },
   { key: 'flash',  pattern: /flash/i,  input: 0.075, output: 0.30,  cacheRead: 0.01875 },
   { key: 'gpt4',   pattern: /gpt-?4/i, input: 2.50,  output: 10.00, cacheRead: 1.25 },
-  { key: 'gpt',    pattern: /gpt/i,    input: 2.50,  output: 10.00, cacheRead: 1.25 },
+  { key: 'gpt',    pattern: /gpt/i,    input: 0.50,  output: 2.00,  cacheRead: 0.125 },
 ];
 
 const FALLBACK_DEFAULT_PRICING = {

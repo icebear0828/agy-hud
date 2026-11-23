@@ -100,6 +100,13 @@ describe('config-wizard / state & menu reducer', () => {
     langItem.toggle();
     assert.equal(ws.config.language, undefined);
 
+    // Also verify starting from loadConfig()'s default language: 'auto' advances in a single press
+    const wsAuto = createWizardState({ language: 'auto', display: {} }, { localExists: false });
+    const autoLangItem = buildMenuItems(wsAuto).find(i => i.key === 'language');
+    assert.equal(autoLangItem.getValue(), 'Auto (detect)');
+    autoLangItem.toggle();
+    assert.equal(wsAuto.config.language, 'en');
+
     const capItem = items.find(i => i.key === 'showQuotaCapacity');
     assert.equal(capItem.getValue(), 'Enabled');
     capItem.toggle();

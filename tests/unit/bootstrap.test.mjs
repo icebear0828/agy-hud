@@ -23,39 +23,10 @@ const require = createRequire(import.meta.url);
 const bootstrapModule = require(path.join(projectRoot, 'scripts', 'bootstrap.js'));
 const { RUNTIME_FILES, installRuntime, cleanStalePluginFiles } = bootstrapModule;
 
-// Build a staging source directory only if a planned RUNTIME_FILES entry
-// (e.g. runtime/quota-capacity.js prior to branch integration) is not yet on disk.
-let stagedSourceDir = null;
-function getCompleteSourceDir() {
-  const missing = RUNTIME_FILES.filter(rel =>
-    !fs.existsSync(path.join(projectRoot, ...rel.split('/')))
-  );
-  if (missing.length === 0) return projectRoot;
-  if (stagedSourceDir) return stagedSourceDir;
-
-  stagedSourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-staged-src-'));
-  for (const rel of RUNTIME_FILES) {
-    const src = path.join(projectRoot, ...rel.split('/'));
-    const dst = path.join(stagedSourceDir, ...rel.split('/'));
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
-    if (fs.existsSync(src)) {
-      fs.copyFileSync(src, dst);
-    } else {
-      fs.writeFileSync(dst, "'use strict';\nmodule.exports = {};\n", 'utf8');
-    }
-  }
-  return stagedSourceDir;
-}
-
 process.on('exit', () => {
   try {
     fs.rmSync(testDataDir, { recursive: true, force: true });
   } catch {}
-  if (stagedSourceDir) {
-    try {
-      fs.rmSync(stagedSourceDir, { recursive: true, force: true });
-    } catch {}
-  }
 });
 
 function walkRuntimeFiles(dir, baseDir = projectRoot) {
@@ -80,6 +51,12 @@ test('RUNTIME_FILES includes every runtime/**/*.js and runtime/agy-hud.config.js
       `runtime file missing from RUNTIME_FILES: ${rel}`
     );
   }
+  for (const rel of RUNTIME_FILES) {
+    assert.ok(
+      fs.existsSync(path.join(projectRoot, ...rel.split('/'))),
+      `RUNTIME_FILES entry does not exist on disk: ${rel}`
+    );
+  }
   assert.ok(RUNTIME_FILES.includes('runtime/config-wizard.js'));
   assert.ok(RUNTIME_FILES.includes('runtime/quota-capacity.js'));
 });
@@ -93,7 +70,7 @@ test('bootstrap installs runtime files and writes statusLine from a source direc
         ...process.env,
         HOME: home,
         USERPROFILE: home,
-        AGY_HUD_SETUP_SOURCE_DIR: getCompleteSourceDir(),
+        AGY_HUD_SETUP_SOURCE_DIR: projectRoot,
         APPDATA: '',
         LOCALAPPDATA: '',
         XDG_DATA_HOME: '',
@@ -183,7 +160,7 @@ test('bootstrap refreshes quota cache during setup when a token is available', a
 
     const result = await installRuntime({
       homeDir: home,
-      sourceDir: getCompleteSourceDir(),
+      sourceDir: projectRoot,
       platform: 'linux',
       keyringReader: () => null,
       env: {
@@ -236,7 +213,7 @@ test('bootstrap skips quota refresh when the available token is expired', async 
 
     const result = await installRuntime({
       homeDir: home,
-      sourceDir: getCompleteSourceDir(),
+      sourceDir: projectRoot,
       platform: 'linux',
       keyringReader: () => null,
       env: {
@@ -307,7 +284,7 @@ test('bootstrap migrates legacy runtime config and preserves persistent global c
 
     const commonOpts = {
       homeDir: home,
-      sourceDir: getCompleteSourceDir(),
+      sourceDir: projectRoot,
       platform: 'linux',
       keyringReader: () => null,
       env: {
@@ -358,7 +335,7 @@ test('bootstrap clears stale agy-hud-update-status.json on successful install', 
 
     await installRuntime({
       homeDir: home,
-      sourceDir: getCompleteSourceDir(),
+      sourceDir: projectRoot,
       platform: 'linux',
       keyringReader: () => null,
       env: {
@@ -378,7 +355,7 @@ test('bootstrap clears stale agy-hud-update-status.json on successful install', 
 
 test('bootstrap downloads RUNTIME_FILES with bounded concurrency and rolls back on single-file failure', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-concurrent-dl-'));
-  const srcRoot = getCompleteSourceDir();
+  const srcRoot = projectRoot;
   let inFlight = 0;
   let maxInFlight = 0;
   let failPath = null;
