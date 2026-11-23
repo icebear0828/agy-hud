@@ -12,7 +12,7 @@ const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-test-parser-'
 process.env.AGY_HUD_DATA_DIR = testDataDir;
 
 const require = createRequire(import.meta.url);
-const { getSessionState, parseAgyQuota } = require('../../runtime/parser.js');
+const { getSessionState, getActiveAccountEmail, parseAgyQuota } = require('../../runtime/parser.js');
 
 process.on('exit', () => {
   try {
@@ -572,5 +572,106 @@ test('parseAgyQuota returns null for missing or invalid quota', () => {
   assert.equal(parseAgyQuota(null), null);
   assert.equal(parseAgyQuota({}), null);
   assert.equal(parseAgyQuota('invalid'), null);
+  assert.equal(parseAgyQuota({ 'gemini-5h': {} }), null);
+  assert.equal(parseAgyQuota({ 'gemini-5h': { remaining_fraction: 0.5, reset_time: 'not-a-date' } }), null);
+});
+
+test('parseAgyQuota supports Argon keys, clamps fractions, and handles Proto3 omitted zero', () => {
+  const parsed = parseAgyQuota({
+    'argon-5h': { remaining_fraction: 1.4, reset_time: '2026-12-01T10:00:00Z' },
+    'argon-weekly': { remaining_fraction: -0.2, reset_time: '2026-12-07T10:00:00Z' },
+    'gemini-4-argon-weekly': { remaining_fraction: 0.45, reset_time: '2026-12-07T10:00:00Z' },
+    'gemini-5h': { reset_time: '2026-12-01T10:00:00Z' }, // Proto3 omitted 0 with valid reset_time
+  });
+
+  assert.ok(parsed);
+  assert.equal(parsed.argon.fiveHour.remainingFraction, 1);
+  assert.equal(parsed.argon.weekly.remainingFraction, 0, 'clamped -0.2 -> 0 is lower than 0.45');
+  assert.equal(parsed.google.fiveHour.remainingFraction, 0);
+  assert.equal(parsed.google.fiveHour.resetTime, '2026-12-01T10:00:00Z');
+});
+
+test('getSessionState decodes oauth_creds.json base64url id_token containing - and _', async () => {
+  await withTempHome(async (geminiDir) => {
+    const payloadObj = {
+      email: 'url-safe@example.com',
+      pad: '>>>???>>>???\u00fb\u00ff',
+    };
+    const encodedPayload = Buffer.from(JSON.stringify(payloadObj), 'utf8').toString('base64url');
+    assert.ok(encodedPayload.includes('-') && encodedPayload.includes('_'));
+    const token = `eyJhbGciOiJSUzI1NiJ9.${encodedPayload}.sig`;
+
+    fs.writeFileSync(path.join(geminiDir, 'oauth_creds.json'), JSON.stringify({ id_token: token }));
+    const state = await getSessionState('missing-transcript.jsonl');
+    assert.equal(state.username, 'url-safe@example.com');
+  });
+});
+
+test('getSessionState captures sessionStartedAt, handles skipUsername, and passes preloadedToken', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-started-'));
+  try {
+    const transcriptPath = path.join(tempDir, 'transcript.jsonl');
+    fs.writeFileSync(transcriptPath, [
+      JSON.stringify({ step_index: 1, type: 'USER_INPUT', created_at: '2026-10-08T10:05:00Z' }),
+      JSON.stringify({ step_index: 2, type: 'PLANNER_RESPONSE', created_at: '2026-10-08T10:05:04Z' }),
+      JSON.stringify({ step_index: 0, type: 'INIT', created_at: '2026-10-08T10:00:00Z' }),
+      '',
+    ].join('\n'));
+
+    const state = await getSessionState(transcriptPath, tempDir, { skipUsername: true });
+    assert.equal(state.sessionStartedAt, Date.parse('2026-10-08T10:00:00Z'));
+    assert.equal(state.username, '');
+
+    const stateEmpty = await getSessionState(null, tempDir, {
+      preloadedToken: { accessToken: 't', sourceFormat: 'macos-keychain', email: 'preloaded@example.com' },
+    });
+    assert.equal(stateEmpty.sessionStartedAt, null);
+    assert.equal(stateEmpty.username, 'preloaded@example.com');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('getActiveAccountEmail passes skipWindowsCredential and skipLinuxKeyring when skipCredentialSubprocess is true', () => {
+  let receivedOpts = null;
+  const email = getActiveAccountEmail({
+    skipCredentialSubprocess: true,
+    tokenReader: (opts) => {
+      receivedOpts = opts;
+      return { accessToken: 'tok', sourceFormat: 'antigravity-cli', email: 'fast@example.com' };
+    },
+  });
+  assert.equal(email, 'fast@example.com');
+  assert.equal(receivedOpts.skipWindowsCredential, true);
+  assert.equal(receivedOpts.skipLinuxKeyring, true);
+  assert.deepEqual(receivedOpts.roots, [testDataDir], 'must preserve getAntigravityRoots() when HOME is not overridden');
+});
+
+test('getSessionState handles large transcripts and detects structured RESOURCE_EXHAUSTED without content string', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-parser-large-'));
+  try {
+    const transcriptPath = path.join(tempDir, 'transcript.jsonl');
+    const lines = [];
+    for (let i = 1; i <= 2000; i += 1) {
+      lines.push(JSON.stringify({ step_index: i, type: 'GENERIC', message: 'normal log line ' + i }));
+    }
+    const futureReset = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+    lines.push(JSON.stringify({
+      step_index: 2001,
+      created_at: new Date().toISOString(),
+      error: {
+        status: 'RESOURCE_EXHAUSTED',
+        details: [{ quotaResetTimeStamp: futureReset }],
+      },
+    }));
+    fs.writeFileSync(transcriptPath, lines.join('\n') + '\n');
+
+    const state = await getSessionState(transcriptPath, tempDir, { skipUsername: true });
+    assert.equal(state.steps, 2001);
+    assert.equal(state.imageExhausted?.exhausted, true);
+    assert.equal(state.imageExhausted?.resetTime, futureReset);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 

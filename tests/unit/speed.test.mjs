@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { getOutputSpeed, formatSpeed, getSpeedCachePath } from '../../runtime/speed.js';
+import { getOutputSpeed, formatSpeed, getSpeedCachePath, pruneStaleSpeedCache } from '../../runtime/speed.js';
 
 let tempDir;
 
@@ -88,4 +88,48 @@ test('formatSpeed formats output speed in en and zh', () => {
   assert.equal(formatSpeed(null, 'en'), null);
   assert.equal(formatSpeed(42.56, 'en'), 'out: 42.6 tok/s');
   assert.equal(formatSpeed(42.56, 'zh'), '输出: 42.6 tok/s');
+});
+
+test('cumulative total_output_tokens computes delta output over deltaMs instead of inflating', () => {
+  const cumFrame = (totalOut, apiMs) => ({
+    transcript_path: path.join(tempDir, 'cum-session.jsonl'),
+    context_window: {
+      total_input_tokens: 50_000,
+      total_output_tokens: totalOut,
+    },
+    cost: { total_api_duration_ms: apiMs },
+  });
+
+  // Baseline turn: 1000 cumulative output at 1000ms -> null
+  assert.equal(getOutputSpeed(cumFrame(1000, 1000), tempDir), null);
+
+  // Next turn: 1000 -> 1400 (+400 output) over 4000ms -> 100 tok/s (NOT 1400 / 4 = 350!)
+  assert.equal(getOutputSpeed(cumFrame(1400, 5000), tempDir), 100);
+
+  // Unchanged cumulative output while API duration grows -> holds 100 tok/s
+  assert.equal(getOutputSpeed(cumFrame(1400, 8000), tempDir), 100);
+
+  // Next turn: 1400 -> 1600 (+200 output) over 2000ms -> 100 tok/s
+  assert.equal(getOutputSpeed(cumFrame(1600, 10000), tempDir), 100);
+
+  // Cumulative counter reset (< previous) -> resets cleanly to null
+  assert.equal(getOutputSpeed(cumFrame(100, 12000), tempDir), null);
+});
+
+test('pruneStaleSpeedCache removes files older than 7 days and keeps fresh files', () => {
+  const cacheDir = path.join(tempDir, 'speed-cache');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const staleFile = path.join(cacheDir, 'stale.json');
+  const freshFile = path.join(cacheDir, 'fresh.json');
+  fs.writeFileSync(staleFile, '{}');
+  fs.writeFileSync(freshFile, '{}');
+
+  const now = Date.now();
+  const tenDaysAgo = new Date(now - 10 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(staleFile, tenDaysAgo, tenDaysAgo);
+
+  const deleted = pruneStaleSpeedCache(cacheDir, now);
+  assert.equal(deleted, 1);
+  assert.equal(fs.existsSync(staleFile), false);
+  assert.equal(fs.existsSync(freshFile), true);
 });

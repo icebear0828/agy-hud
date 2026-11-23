@@ -46,7 +46,7 @@ function readLedger(ledgerPath) {
       date: raw.date,
       sessions,
       week: {
-        start: isAmount(week.start) ? week.start : 0,
+        start: (isAmount(week.start) && week.start > 0) ? week.start : null,
         carry: isAmount(week.carry) ? week.carry : 0,
       },
     };
@@ -120,6 +120,15 @@ function getCostTotals(agyData, options = {}, deps = defaultDeps, state = null) 
     changed = true;
   }
 
+  if (ledger.week.start === null) {
+    const earliestTs = Object.values(ledger.sessions).reduce(
+      (min, s) => (s.ts < min ? s.ts : min),
+      now
+    );
+    ledger.week.start = earliestTs;
+    changed = true;
+  }
+
   // Restart the week when the quota window behind the weekly bar opened after accumulation began.
   const resetAt = options?.sevenDayResetAt instanceof Date
     ? options.sevenDayResetAt.getTime()
@@ -144,7 +153,7 @@ function getCostTotals(agyData, options = {}, deps = defaultDeps, state = null) 
   const rawSessionId = agyData?.session_id || agyData?.conversation_id || state?.transcriptPath || '';
   const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : '';
 
-  const cost = getNativeCostUsd(agyData, options) ?? (state ? getSessionCostUsd(agyData, state, options) : null);
+  const cost = getNativeCostUsd(agyData, options) ?? getSessionCostUsd(agyData, state, options);
 
   if (sessionId && cost !== null && Number.isFinite(cost)) {
     const session = ledger.sessions[sessionId];

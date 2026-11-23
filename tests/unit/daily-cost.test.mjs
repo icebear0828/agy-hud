@@ -149,3 +149,44 @@ test('weekly total spans days and follows the quota window', () => {
   totals = getCostTotals({ session_id: 'b', cost: { total_cost_usd: 2.5 } }, next, deps(NOON + DAY_MS + 2000));
   assert.equal(totals.weekUsd, 2.0);
 });
+
+test('legacy ledger without week.start preserves active session weekly spend', () => {
+  const ledgerPath = getDailyCostLedgerPath(tempDir);
+  fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+  fs.writeFileSync(ledgerPath, JSON.stringify({
+    date: localDateKey(NOON),
+    sessions: {
+      legacy: { baseline: 1.0, weekBaseline: 1.0, total: 3.5, ts: NOON - 10_000 },
+    },
+    // Legacy format without week.start (or week.start === 0)
+    week: { start: 0, carry: 0 },
+  }));
+
+  const opts = { sevenDayResetAt: new Date(NOON + 2 * DAY_MS) };
+  const totals = getCostTotals({}, opts, deps(NOON));
+  assert.equal(totals.todayUsd, 2.5);
+  assert.equal(totals.weekUsd, 2.5, 'legacy week.start === 0 must not wipe active week spend');
+});
+
+test('computes token-based session cost even when state is null', () => {
+  const baseStdin = {
+    session_id: 'token-only',
+    model: { id: 'gemini-3.8-flash' },
+    context_window: {
+      total_input_tokens: 100_000,
+      total_output_tokens: 10_000,
+    },
+  };
+  assert.equal(todayUsd(baseStdin, undefined, deps(NOON), null), 0);
+
+  const nextStdin = {
+    session_id: 'token-only',
+    model: { id: 'gemini-3.8-flash' },
+    context_window: {
+      total_input_tokens: 200_000,
+      total_output_tokens: 20_000,
+    },
+  };
+  // Delta: +100k input ($0.0075) + +10k output ($0.003) = $0.0105
+  assert.equal(todayUsd(nextStdin, undefined, deps(NOON + 1000), null)?.toFixed(4), '0.0105');
+});

@@ -21,6 +21,12 @@ const MODEL_PRICING = [
     cacheRead: 0.08,
   },
   {
+    pattern: /argon/i,
+    input: 1.25,
+    output: 5.00,
+    cacheRead: 0.3125,
+  },
+  {
     pattern: /pro/i,
     input: 1.25,
     output: 5.00,
@@ -38,6 +44,12 @@ const MODEL_PRICING = [
     output: 10.00,
     cacheRead: 1.25,
   },
+  {
+    pattern: /gpt/i,
+    input: 0.50,
+    output: 2.00,
+    cacheRead: 0.125,
+  },
 ];
 
 const DEFAULT_PRICING = {
@@ -46,12 +58,21 @@ const DEFAULT_PRICING = {
   cacheRead: 0.01875,
 };
 
+function getModelPricing(modelNameOrId) {
+  const modelStr = String(modelNameOrId || '');
+  return MODEL_PRICING.find(p => p.pattern.test(modelStr)) || DEFAULT_PRICING;
+}
+
 function isBedrockModelId(id) {
   return typeof id === 'string' && (id.startsWith('anthropic.') || id.startsWith('us.anthropic.') || id.startsWith('eu.anthropic.'));
 }
 
 function isVertexModelId(id) {
   return typeof id === 'string' && (id.startsWith('claude-') && id.includes('@'));
+}
+
+function isRoutedModelId(id) {
+  return isBedrockModelId(id) || isVertexModelId(id);
 }
 
 /**
@@ -67,15 +88,28 @@ function getNativeCostUsd(agyData, options = {}) {
     return null;
   }
   const modelId = agyData?.model?.id || '';
-  const routed = isBedrockModelId(modelId) || isVertexModelId(modelId);
+  const routed = isRoutedModelId(modelId);
   if (routed && (!options?.allowRoutedCost || cost === 0)) {
     return null;
   }
   return cost;
 }
 
+function firstFiniteToken(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null || value === '') continue;
+    const num = Number(value);
+    if (Number.isFinite(num) && num >= 0) return num;
+  }
+  return undefined;
+}
+
 /**
  * Calculates estimated cost from token counts and model pricing.
+ * Aligns cached vs uncached input token billing with renderer.js:
+ * when `total_input_tokens` (session cumulative) is present, cached tokens
+ * from `current_usage` or top-level fields are subtracted so they are not
+ * double-billed at the uncached input rate.
  *
  * @param {string} modelNameOrId
  * @param {Object} tokens
@@ -84,17 +118,41 @@ function getNativeCostUsd(agyData, options = {}) {
 function calculateTokenCost(modelNameOrId, tokens) {
   if (!tokens || typeof tokens !== 'object') return null;
 
-  const modelStr = String(modelNameOrId || '');
-  const pricing = MODEL_PRICING.find(p => p.pattern.test(modelStr)) || DEFAULT_PRICING;
+  const pricing = getModelPricing(modelNameOrId);
+  const cu = tokens.current_usage && typeof tokens.current_usage === 'object'
+    ? tokens.current_usage
+    : null;
 
-  const inTokens = Number(tokens.input_tokens || tokens.total_input_tokens || 0);
-  const outTokens = Number(tokens.output_tokens || tokens.total_output_tokens || 0);
-  const cacheTokens = Number(tokens.cache_read_input_tokens || tokens.cache_read_tokens || 0);
+  const cacheRead = firstFiniteToken(
+    cu?.cache_read_input_tokens,
+    tokens.cache_read_input_tokens,
+    tokens.cache_read_tokens
+  ) ?? 0;
+  const cacheWrite = firstFiniteToken(
+    cu?.cache_creation_input_tokens,
+    tokens.cache_creation_input_tokens
+  ) ?? 0;
+  const cacheTotal = cacheRead + cacheWrite;
+
+  let uncachedIn = 0;
+  const totalIn = firstFiniteToken(tokens.total_input_tokens);
+  if (totalIn !== undefined) {
+    uncachedIn = Math.max(0, totalIn - cacheTotal);
+  } else {
+    uncachedIn = firstFiniteToken(tokens.input_tokens, cu?.input_tokens) ?? 0;
+  }
+
+  const outTokens = firstFiniteToken(
+    tokens.total_output_tokens,
+    tokens.output_tokens,
+    cu?.output_tokens
+  ) ?? 0;
 
   const cost = (
-    (inTokens / 1_000_000) * pricing.input +
+    (uncachedIn / 1_000_000) * pricing.input +
+    (cacheWrite / 1_000_000) * pricing.input +
     (outTokens / 1_000_000) * pricing.output +
-    (cacheTokens / 1_000_000) * pricing.cacheRead
+    (cacheRead / 1_000_000) * pricing.cacheRead
   );
 
   return Number.isFinite(cost) && cost >= 0 ? cost : null;
@@ -109,12 +167,17 @@ function calculateTokenCost(modelNameOrId, tokens) {
  * @returns {number|null}
  */
 function getSessionCostUsd(agyData, state = null, options = {}) {
+  const modelId = agyData?.model?.id || '';
+  if (isRoutedModelId(modelId) && !options?.allowRoutedCost) {
+    return null;
+  }
+
   const native = getNativeCostUsd(agyData, options);
   if (native !== null) {
     return native;
   }
 
-  const modelName = agyData?.model?.display_name || agyData?.model?.id || '';
+  const modelName = agyData?.model?.display_name || modelId;
   const usage = agyData?.context_window || state?.usage;
   if (!usage) return null;
 
@@ -135,6 +198,9 @@ function formatUsd(amount) {
 }
 
 module.exports = {
+  MODEL_PRICING,
+  DEFAULT_PRICING,
+  getModelPricing,
   getNativeCostUsd,
   calculateTokenCost,
   getSessionCostUsd,

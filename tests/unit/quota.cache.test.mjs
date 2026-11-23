@@ -11,8 +11,12 @@ import {
 const {
   isCachePayloadFresh,
   readCache,
+  readCacheSnapshot,
   writeCache,
+  mergeProviderQuota,
   getCachedTier,
+  getCachedAccountEmail,
+  readCachePayload,
   readCacheLastRefreshed,
   readCacheFallback,
 } = quotaModule;
@@ -277,20 +281,20 @@ describe('quota / cache', () => {
     });
 
     test('writeCache preserves existing provider quota when new response omits a provider', () => {
-      const { readCachePayload } = quotaModule;
       const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
       try {
         fs.rmSync(CACHE_PATH, { force: true });
+        const futureWeekly = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
         const data = [{ id: 'm', remainingFraction: 0.5, resetTime: null, windows: {} }];
         const fullProviderQuota = {
-          google: { weekly: { remainingFraction: 0.9, resetTime: '2026-09-10T00:00:00Z' } },
-          claude: { weekly: { remainingFraction: 0.8, resetTime: '2026-09-10T00:00:00Z' } },
+          google: { weekly: { remainingFraction: 0.9, resetTime: futureWeekly } },
+          claude: { weekly: { remainingFraction: 0.8, resetTime: futureWeekly } },
         };
         writeCache(data, 'tok', null, null, fullProviderQuota);
 
         // Second write only carries google provider quota (claude missing/timed out)
         const partialProviderQuota = {
-          google: { weekly: { remainingFraction: 0.85, resetTime: '2026-09-10T00:00:00Z' } },
+          google: { weekly: { remainingFraction: 0.85, resetTime: futureWeekly } },
         };
         writeCache(data, 'tok', null, null, partialProviderQuota);
 
@@ -298,6 +302,84 @@ describe('quota / cache', () => {
         assert.ok(payload);
         assert.equal(payload.providerQuota.google.weekly.remainingFraction, 0.85);
         assert.equal(payload.providerQuota.claude.weekly.remainingFraction, 0.8, 'claude provider quota must be preserved');
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('mergeProviderQuota deep-merges sibling windows and prunes expired observations', () => {
+      const now = Date.parse('2026-11-23T12:00:00Z');
+      const future5h = '2026-11-23T16:00:00Z';
+      const futureWeekly = '2026-11-30T00:00:00Z';
+      const past5h = '2026-11-23T10:00:00Z';
+
+      const prev = {
+        google: {
+          fiveHour: { remainingFraction: 0.7, resetTime: future5h },
+          weekly: { remainingFraction: 0.9, resetTime: futureWeekly },
+        },
+        claude: {
+          fiveHour: { remainingFraction: 0.4, resetTime: past5h }, // expired
+        },
+      };
+      const incoming = {
+        google: {
+          fiveHour: { remainingFraction: 0.65, resetTime: future5h },
+        },
+      };
+
+      const merged = mergeProviderQuota(prev, incoming, now);
+      assert.equal(merged.google.fiveHour.remainingFraction, 0.65);
+      assert.equal(merged.google.weekly.remainingFraction, 0.9, 'sibling weekly window must be preserved');
+      assert.equal(merged.claude, undefined, 'expired claude window must be pruned');
+    });
+
+    test('writeCache creates missing parent dir, ignores past resetTime, and considers providerQuota resetTime', () => {
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      const cacheDir = path.dirname(CACHE_PATH);
+      try {
+        fs.rmSync(cacheDir, { recursive: true, force: true });
+        const pastReset = new Date(Date.now() - 60_000).toISOString();
+        const soonProviderReset = new Date(Date.now() + 30_000).toISOString();
+        const data = [{ id: 'm', remainingFraction: 0.5, resetTime: pastReset, windows: {} }];
+        const providerQuota = {
+          google: { fiveHour: { remainingFraction: 0.6, resetTime: soonProviderReset } },
+        };
+
+        writeCache(data, 'tok-dir', 'Google AI Pro', 'u@example.com', providerQuota);
+        assert.equal(fs.existsSync(CACHE_PATH), true, 'writeCache must create missing parent directory');
+        const payload = readCachePayload('tok-dir');
+        assert.ok(payload.expiresAt > Date.now(), 'past m.resetTime must NOT produce expiresAt <= now');
+        assert.ok(payload.expiresAt <= Date.parse(soonProviderReset) + 1000, 'expiresAt must cap to future providerQuota resetTime');
+      } finally {
+        fs.mkdirSync(cacheDir, { recursive: true });
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('readCacheSnapshot enables zero-re-read reuse across cache readers', () => {
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const futureReset = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        writeCache(
+          [{ id: 'm', remainingFraction: 0.5, resetTime: futureReset, windows: {} }],
+          'snap-tok',
+          'Google AI Ultra',
+          'snap@example.com'
+        );
+
+        const snapshot = readCacheSnapshot();
+        // Remove file on disk — readers given snapshot must not re-read disk
+        fs.rmSync(CACHE_PATH, { force: true });
+
+        assert.equal(getCachedTier(snapshot), 'Google AI Ultra');
+        assert.equal(getCachedAccountEmail('snap-tok', snapshot), 'snap@example.com');
+        assert.equal(readCachePayload('snap-tok', snapshot)?.data?.[0]?.id, 'm');
+        assert.ok(readCacheLastRefreshed(snapshot) > 0);
+        assert.equal(readCacheFallback(snapshot)?.data?.[0]?.id, 'm');
       } finally {
         if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
         else fs.writeFileSync(CACHE_PATH, previousCache);

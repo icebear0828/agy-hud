@@ -53,7 +53,7 @@ function extractEmailFromIdToken(idToken) {
   const parts = idToken.split('.');
   if (parts.length !== 3) return undefined;
   try {
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
     if (payload && typeof payload.email === 'string' && payload.email.includes('@')) {
       return payload.email;
     }
@@ -183,13 +183,17 @@ function parseTokenPayload(raw) {
 
 function writeWindowsTokenTemp(tokens, roots = getAntigravityRoots()) {
   if (!Array.isArray(tokens) || tokens.length === 0) return;
+  const target = resolveTokenTempPath(roots);
+  const tmpPath = `${target}.tmp.${process.pid}.${Date.now()}`;
   try {
-    const tmp = resolveTokenTempPath(roots);
-    fs.mkdirSync(path.dirname(tmp), { recursive: true });
+    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
     // mode 0o600 — the file holds OAuth access tokens, so keep permissions
     // narrow even though this is only a short-lived mirror.
-    fs.writeFileSync(tmp, JSON.stringify({ tokens, writtenAt: Date.now() }), { mode: 0o600 });
-  } catch { /* best-effort cache */ }
+    fs.writeFileSync(tmpPath, JSON.stringify({ tokens, writtenAt: Date.now() }), { mode: 0o600 });
+    fs.renameSync(tmpPath, target);
+  } catch {
+    try { fs.unlinkSync(tmpPath); } catch {}
+  }
 }
 
 function readWindowsTokenTemp(roots = getAntigravityRoots()) {
@@ -200,6 +204,26 @@ function readWindowsTokenTemp(roots = getAntigravityRoots()) {
   } catch {
     return null;
   }
+}
+
+function normalizeWindowsCredentialTokens(rawTokens, now = Date.now()) {
+  const normalized = (Array.isArray(rawTokens) ? rawTokens : [])
+    .filter(token => token && token.accessToken)
+    .map(token => {
+      const email = (typeof token.id_token_email === 'string' && token.id_token_email.includes('@'))
+        ? token.id_token_email
+        : ((typeof token.email === 'string' && token.email.includes('@'))
+          ? token.email
+          : extractEmailFromIdToken(token.id_token));
+      const expiry = normalizeExpiryDate(token.expiry ?? token.expiry_date);
+      return {
+        accessToken: token.accessToken,
+        ...(expiry !== undefined ? { expiry } : {}),
+        ...(email ? { email } : {}),
+        sourceFormat: 'windows-credential',
+      };
+    });
+  return selectUsableTokens(normalized, now, now);
 }
 
 function buildWindowsCredentialScript() {
@@ -235,11 +259,15 @@ function buildWindowsCredentialScript() {
     '          try {',
     '            $o=$enc.GetString($bytes)|ConvertFrom-Json',
     '            $tok=$o.token',
+    '            $email=if($o.id_token_email){$o.id_token_email}elseif($o.email){$o.email}else{$null}',
     '            if($tok -and $tok.access_token){',
-    '              $tokens += [pscustomobject]@{ accessToken=$tok.access_token; expiry=$tok.expiry }',
+    '              $exp=if($tok.expiry){$tok.expiry}else{$tok.expiry_date}',
+    '              $idTok=if($o.id_token){$o.id_token}elseif($tok.id_token){$tok.id_token}else{$null}',
+    '              $tokens += [pscustomobject]@{ accessToken=$tok.access_token; expiry=$exp; email=$email; id_token=$idTok }',
     '              break',
     '            } elseif($o.access_token){',
-    '              $tokens += [pscustomobject]@{ accessToken=$o.access_token; expiry=$o.expiry }',
+    '              $exp=if($o.expiry){$o.expiry}else{$o.expiry_date}',
+    '              $tokens += [pscustomobject]@{ accessToken=$o.access_token; expiry=$exp; email=$email; id_token=$o.id_token }',
     '              break',
     '            }',
     '          } catch {}',
@@ -275,8 +303,7 @@ function readWindowsCredentialTokens(platform = process.platform, roots = getAnt
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const parsed = JSON.parse(raw.trim() || '{"tokens":[]}');
-    const valid = selectUsableTokens(parsed.tokens, Date.now())
-      .map(token => ({ ...token, sourceFormat: 'windows-credential' }));
+    const valid = normalizeWindowsCredentialTokens(parsed.tokens, Date.now());
     if (valid.length === 0) return null;
     writeWindowsTokenTemp(valid, roots);
     return { ...tokenResultFromTokens(valid), sourceFormat: 'windows-credential' };
@@ -451,6 +478,7 @@ function readToken(options = {}) {
     platform = process.platform,
     roots = getAntigravityRoots(),
     skipWindowsCredential = false,
+    skipLinuxKeyring = false,
     skipKeychain = false,
     credentialReader = readWindowsCredentialTokens,
     keyringReader = readLinuxKeyringTokens,
@@ -478,13 +506,16 @@ function readToken(options = {}) {
   }
 
   // Linux: agy stores its OAuth token in the system keyring (D-Bus Secret
-  // Service). Check the short-lived JSON cache first; fall back to python3.
+  // Service). Check the short-lived JSON cache first; fall back to python3
+  // unless skipped on the statusline fast path (delegated to background --refresh).
   if (platform === 'linux') {
     const tempToken = readWindowsTokenTemp(roots);
     if (tempToken) return { ...tempToken, sourceFormat: tempToken.sourceFormat || 'linux-keyring' };
 
-    const keyringToken = normalizeKeyringTokenResult(keyringReader(platform, roots));
-    if (keyringToken) return keyringToken;
+    if (!skipLinuxKeyring) {
+      const keyringToken = normalizeKeyringTokenResult(keyringReader(platform, roots));
+      if (keyringToken) return keyringToken;
+    }
   }
 
   for (const candidate of getTokenCandidates(roots)) {
@@ -535,6 +566,7 @@ module.exports = {
   writeWindowsTokenTemp,
   readWindowsTokenTemp,
   clearTokenTemp,
+  normalizeWindowsCredentialTokens,
   buildWindowsCredentialScript,
   readWindowsCredentialTokens,
   readLinuxKeyringTokens,

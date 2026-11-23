@@ -168,24 +168,28 @@ function parseQuotaSummary(data) {
     if (!group || !Array.isArray(group.buckets)) continue;
     const buckets = group.buckets;
     const displayName = (group.displayName || '').toLowerCase();
-    const hasArgonBucket = buckets.some(b => b && typeof b.bucketId === 'string' && b.bucketId.includes('argon'));
-    const hasGeminiBucket = buckets.some(b => b && typeof b.bucketId === 'string' && b.bucketId.startsWith('gemini-') && !b.bucketId.includes('argon'));
-    const has3pBucket = buckets.some(b => b && typeof b.bucketId === 'string' && b.bucketId.startsWith('3p-'));
-    let target = null;
-    if (displayName.includes('argon') || hasArgonBucket) target = 'argon';
-    else if (displayName.includes('gemini') || hasGeminiBucket) target = 'google';
-    else if (displayName.includes('claude') || displayName.includes('3p') || has3pBucket) target = 'claude';
-    else continue;
+    let groupFallbackTarget = null;
+    if (displayName.includes('argon')) groupFallbackTarget = 'argon';
+    else if (displayName.includes('gemini')) groupFallbackTarget = 'google';
+    else if (displayName.includes('claude') || displayName.includes('3p')) groupFallbackTarget = 'claude';
 
     for (const b of buckets) {
       if (!b || typeof b.resetTime !== 'string') continue;
       const ts = Date.parse(b.resetTime);
       if (!Number.isFinite(ts)) continue;
-      const bucketId = b.bucketId || '';
+      const bucketId = typeof b.bucketId === 'string' ? b.bucketId : '';
+      const bucketIdLower = bucketId.toLowerCase();
+      let target = null;
+      if (bucketIdLower.includes('argon')) target = 'argon';
+      else if (bucketIdLower.startsWith('3p-')) target = 'claude';
+      else if (bucketIdLower.startsWith('gemini-')) target = 'google';
+      else target = groupFallbackTarget;
+      if (!target) continue;
+
       const windowRaw = b.window || '';
       let winType = null;
-      if (windowRaw === 'weekly' || bucketId.includes('weekly')) winType = 'weekly';
-      else if (windowRaw === '5h' || bucketId.includes('5h') || bucketId.includes('fiveHour')) winType = 'fiveHour';
+      if (windowRaw === 'weekly' || bucketIdLower.includes('weekly')) winType = 'weekly';
+      else if (windowRaw === '5h' || bucketIdLower.includes('5h') || bucketIdLower.includes('fivehour')) winType = 'fiveHour';
       else continue;
       // Proto3 may omit a default 0 remainingFraction.
       let rf = typeof b.remainingFraction === 'number' ? b.remainingFraction : 0;
@@ -261,9 +265,10 @@ function enrichModelsWithQuotaSummary(models, summary, now = Date.now()) {
  * Non-critical: returns null on any failure to allow graceful downgrade.
  * @param {string} accessToken
  * @param {Object} [injectedConfig] optional pre-loaded config to avoid double load
+ * @param {AbortSignal} [externalSignal] optional parent signal to cancel early
  * @returns {Promise<{google:Object, claude:Object}|null>}
  */
-async function fetchUserQuotaSummaryFromCloud(accessToken, injectedConfig) {
+async function fetchUserQuotaSummaryFromCloud(accessToken, injectedConfig, externalSignal = null) {
   let config = injectedConfig;
   if (!config) {
     const { loadConfig } = require('../config.js');
@@ -271,7 +276,12 @@ async function fetchUserQuotaSummaryFromCloud(accessToken, injectedConfig) {
   }
   const endpoints = resolveEndpoints(config);
   for (const endpoint of endpoints) {
+    if (externalSignal?.aborted) return null;
     const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    if (externalSignal) {
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       const r = await fetch(`${endpoint}/v1internal:retrieveUserQuotaSummary`, {
@@ -281,18 +291,21 @@ async function fetchUserQuotaSummaryFromCloud(accessToken, injectedConfig) {
         signal: controller.signal,
       });
       if (!r.ok) {
-        clearTimeout(timeoutId);
         continue;
       }
       const data = await r.json();
-      clearTimeout(timeoutId);
       const parsed = parseQuotaSummary(data);
       if (parsed) return parsed;
       // Response ok but unparsable -> try next endpoint
       continue;
     } catch {
-      clearTimeout(timeoutId);
+      if (externalSignal?.aborted) return null;
       /* try next endpoint */
+    } finally {
+      clearTimeout(timeoutId);
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onExternalAbort);
+      }
     }
   }
   return null;
@@ -318,7 +331,13 @@ async function fetchQuotaFromCloud(accessToken) {
     : null;
 
   // Kick off summary fetch in parallel — non-blocking, graceful fallback on failure.
-  const summaryPromise = fetchUserQuotaSummaryFromCloud(accessToken, config).catch(() => null);
+  // Share an AbortController so early failure in fetchAvailableModels cancels it immediately.
+  const summaryAbort = new AbortController();
+  const summaryPromise = fetchUserQuotaSummaryFromCloud(
+    accessToken,
+    config,
+    summaryAbort.signal
+  ).catch(() => null);
 
   let normalized = null;
   for (const endpoint of endpoints) {
@@ -357,6 +376,7 @@ async function fetchQuotaFromCloud(accessToken) {
     }
   }
   if (!normalized) {
+    summaryAbort.abort();
     return createUnavailableQuotaResult(sawAuthFailure ? 'auth_failed' : 'quota_fetch_failed');
   }
   // Enrich with summary if available; never fail the whole call if summary fetch errors.
