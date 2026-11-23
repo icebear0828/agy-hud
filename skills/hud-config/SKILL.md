@@ -17,4 +17,4 @@ description: 当用户想要配置或自定义 agy-hud 的显示设置（主题�
 2. **写入配置文件**：
    根据用户的选择，读取当前配置（或新建配置），并使用文件修改工具将配置保存到对应的 `agy-hud.config.json` 中：
    - 局部路径：当前项目根目录的 `./agy-hud.config.json`
-   - 全局路径：用户主目录下的 `~/.gemini/antigravity-cli/agy-hud-runtime/runtime/agy-hud.config.json`
+   - 全局路径：用户主目录下的 `~/.gemini/antigravity-cli/agy-hud.config.json`

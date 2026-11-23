@@ -13,7 +13,13 @@ const {
   clearTokenTemp,
 } = quotaModule;
 const tokenModule = quotaModule.tokenMod || (await import('../../runtime/quota/token.js'));
-const { decodeKeyringRaw, extractEmailFromIdToken } = tokenModule;
+const {
+  decodeKeyringRaw,
+  extractEmailFromIdToken,
+  normalizeWindowsCredentialTokens,
+  writeWindowsTokenTemp,
+  readWindowsTokenTemp,
+} = tokenModule;
 
 describe('quota / token', () => {
   describe('selectUsableTokens', () => {
@@ -472,6 +478,78 @@ describe('quota / token', () => {
       assert.equal(decodeKeyringRaw(''), null);
       assert.equal(decodeKeyringRaw(null), null);
       assert.equal(decodeKeyringRaw('   '), null);
+    });
+  });
+
+  describe('base64url JWT decoding, skipLinuxKeyring, Windows expiry normalization, atomic temp write', () => {
+    test('extractEmailFromIdToken decodes base64url JWT payloads containing - and _', () => {
+      // Craft a JSON payload whose base64url encoding contains BOTH '-' (0x3e) and '_' (0x3f).
+      const payloadObj = {
+        email: 'user+test@example.com',
+        note: '>>>???>>>???\u00fb\u00ff',
+      };
+      const encodedPayload = Buffer.from(JSON.stringify(payloadObj), 'utf8').toString('base64url');
+      assert.ok(encodedPayload.includes('-'), `expected '-' in base64url payload: ${encodedPayload}`);
+      assert.ok(encodedPayload.includes('_'), `expected '_' in base64url payload: ${encodedPayload}`);
+      const jwt = `eyJhbGciOiJSUzI1NiJ9.${encodedPayload}.sig`;
+      assert.equal(extractEmailFromIdToken(jwt), 'user+test@example.com');
+    });
+
+    test('readToken skips Linux keyringReader when skipLinuxKeyring is true', () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-token-skip-linux-'));
+      try {
+        const cliDir = path.join(tmp, 'antigravity-cli');
+        fs.mkdirSync(cliDir, { recursive: true });
+        let keyringCalls = 0;
+
+        const token = readToken({
+          platform: 'linux',
+          roots: [cliDir],
+          skipLinuxKeyring: true,
+          keyringReader: () => {
+            keyringCalls += 1;
+            return { accessToken: 'should-not-be-called' };
+          },
+        });
+        assert.equal(token, null);
+        assert.equal(keyringCalls, 0);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    test('normalizeWindowsCredentialTokens normalizes numeric expiry_date and extracts email', () => {
+      const now = Date.parse('2026-05-20T20:00:00Z');
+      const futureMs = Date.parse('2026-05-20T20:15:00Z');
+      const pastMs = Date.parse('2026-05-20T19:00:00Z');
+      const tokens = normalizeWindowsCredentialTokens([
+        { accessToken: 'num-epoch', expiry_date: futureMs, id_token_email: 'win@example.com' },
+        { accessToken: 'str-epoch', expiry: String(futureMs) },
+        { accessToken: 'expired-epoch', expiry_date: String(pastMs) },
+      ], now);
+
+      assert.equal(tokens.length, 2);
+      assert.equal(tokens[0].accessToken, 'num-epoch');
+      assert.equal(tokens[0].expiry, '2026-05-20T20:15:00.000Z');
+      assert.equal(tokens[0].email, 'win@example.com');
+      assert.equal(tokens[1].accessToken, 'str-epoch');
+      assert.equal(tokens[1].expiry, '2026-05-20T20:15:00.000Z');
+    });
+
+    test('writeWindowsTokenTemp writes atomically without leaving tmp files behind', () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-token-atomic-'));
+      try {
+        const cliDir = path.join(tmp, 'nested', 'antigravity-cli');
+        const expiry = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+        writeWindowsTokenTemp([{ accessToken: 'atomic-tok', expiry }], [cliDir]);
+
+        const readBack = readWindowsTokenTemp([cliDir]);
+        assert.equal(readBack?.accessToken, 'atomic-tok');
+        const files = fs.readdirSync(cliDir);
+        assert.deepEqual(files, ['agy-hud-token.json']);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
     });
   });
 });

@@ -7,14 +7,24 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const uninstallModule = require('../../runtime/uninstall.js');
-const { removeExtraFiles, removeWindowsShShims, clearStatusLine, uninstall } = uninstallModule;
+const {
+  isOurStatusLineCommand,
+  removeExtraFiles,
+  removeWindowsShShims,
+  clearStatusLine,
+  uninstall,
+} = uninstallModule;
 
-test('removeExtraFiles removes agy-hud-payload.json and hud directory', () => {
+test('removeExtraFiles removes runtime caches, update status, capacity ledger, lock, and global config', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'uninstall-extra-test-'));
   try {
     const payloadFile = path.join(tmp, 'agy-hud-payload.json');
     const tokenFile = path.join(tmp, 'agy-hud-token.json');
     const cacheFile = path.join(tmp, 'agy-hud-quota-cache.json');
+    const updateStatusFile = path.join(tmp, 'agy-hud-update-status.json');
+    const quotaCapacityFile = path.join(tmp, 'quota-capacity.json');
+    const refreshLockFile = path.join(tmp, 'agy-hud-refresh.lock');
+    const globalConfigFile = path.join(tmp, 'agy-hud.config.json');
     const errorFile = path.join(tmp, 'agy-hud-error.log');
     const dailyCostFile = path.join(tmp, 'daily-cost.json');
     const speedCacheDir = path.join(tmp, 'speed-cache');
@@ -24,6 +34,10 @@ test('removeExtraFiles removes agy-hud-payload.json and hud directory', () => {
     fs.writeFileSync(payloadFile, '{}');
     fs.writeFileSync(tokenFile, '{}');
     fs.writeFileSync(cacheFile, '{}');
+    fs.writeFileSync(updateStatusFile, '{}');
+    fs.writeFileSync(quotaCapacityFile, '{}');
+    fs.writeFileSync(refreshLockFile, '12345');
+    fs.writeFileSync(globalConfigFile, '{}');
     fs.writeFileSync(errorFile, '{}');
     fs.writeFileSync(dailyCostFile, '{}');
     fs.mkdirSync(speedCacheDir, { recursive: true });
@@ -34,27 +48,69 @@ test('removeExtraFiles removes agy-hud-payload.json and hud directory', () => {
 
     const removed = removeExtraFiles(tmp);
 
-    assert.ok(removed.includes(payloadFile));
-    assert.ok(removed.includes(tokenFile));
-    assert.ok(removed.includes(cacheFile));
-    assert.ok(removed.includes(errorFile));
-    assert.ok(removed.includes(dailyCostFile));
-    assert.ok(removed.includes(speedCacheDir));
-    assert.ok(removed.includes(hudDir));
-    assert.ok(!fs.existsSync(payloadFile));
-    assert.ok(!fs.existsSync(tokenFile));
-    assert.ok(!fs.existsSync(cacheFile));
-    assert.ok(!fs.existsSync(errorFile));
-    assert.ok(!fs.existsSync(dailyCostFile));
-    assert.ok(!fs.existsSync(speedCacheDir));
-    assert.ok(!fs.existsSync(hudDir));
+    for (const target of [
+      payloadFile,
+      tokenFile,
+      cacheFile,
+      updateStatusFile,
+      quotaCapacityFile,
+      refreshLockFile,
+      globalConfigFile,
+      errorFile,
+      dailyCostFile,
+      speedCacheDir,
+      hudDir,
+    ]) {
+      assert.ok(removed.includes(target), `expected ${path.basename(target)} to be removed`);
+      assert.ok(!fs.existsSync(target), `expected ${path.basename(target)} to not exist`);
+    }
     assert.ok(fs.existsSync(otherFile));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-test('clearStatusLine removes statusLine field if it points to our runtime', () => {
+test('removeExtraFiles can preserve persistent global config when preserveConfig is true', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'uninstall-preserve-cfg-'));
+  try {
+    const globalConfigFile = path.join(tmp, 'agy-hud.config.json');
+    const updateStatusFile = path.join(tmp, 'agy-hud-update-status.json');
+    fs.writeFileSync(globalConfigFile, '{"language":"zh"}');
+    fs.writeFileSync(updateStatusFile, '{}');
+
+    const removed = removeExtraFiles(tmp, { preserveConfig: true });
+
+    assert.ok(removed.includes(updateStatusFile));
+    assert.ok(!removed.includes(globalConfigFile));
+    assert.ok(fs.existsSync(globalConfigFile));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('isOurStatusLineCommand normalizes slashes and case for Windows paths', () => {
+  const runtimeDir = 'C:\\Users\\Alice\\.gemini\\antigravity-cli\\agy-hud-runtime';
+  assert.equal(
+    isOurStatusLineCommand(
+      'c:/users/alice/.gemini/antigravity-cli/agy-hud-runtime/runtime/bin/agy-hud.cmd',
+      runtimeDir
+    ),
+    true
+  );
+  assert.equal(
+    isOurStatusLineCommand(
+      'C:\\USERS\\ALICE\\.GEMINI\\ANTIGRAVITY-CLI\\AGY-HUD-RUNTIME\\runtime\\bin\\agy-hud.cmd',
+      runtimeDir
+    ),
+    true
+  );
+  assert.equal(
+    isOurStatusLineCommand('C:\\Other\\Tool\\statusline.cmd', runtimeDir),
+    false
+  );
+});
+
+test('clearStatusLine removes statusLine field if it points to our runtime (including Windows casing/slashes)', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'uninstall-settings-test-'));
   try {
     const settingsPath = path.join(tmp, 'settings.json');
@@ -63,7 +119,7 @@ test('clearStatusLine removes statusLine field if it points to our runtime', () 
     const settingsObj = {
       statusLine: {
         type: 'command',
-        command: `node "${runtimeDir}/runtime/bin/agy-hud.js"`,
+        command: `node "${runtimeDir.replace(/\//g, '\\').toUpperCase()}\\runtime\\bin\\agy-hud.js"`,
         enabled: true
       },
       otherField: 'value'
@@ -107,33 +163,83 @@ test('clearStatusLine leaves foreign statusLine commands untouched', () => {
   }
 });
 
-test('removeWindowsShShims cleans up only our shims on Windows', () => {
+test('removeWindowsShShims cleans up current and older marker-tagged shims but keeps third-party shims', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'uninstall-shims-test-'));
   try {
     const installer = require('../../runtime/statusline-installer.js');
     const shimContents = installer.buildShShimContents();
 
     const ourShim = path.join(tmp, 'sh.cmd');
-    const foreignShim = path.join(tmp, 'sh.bat');
+    const olderMarkedShim = path.join(tmp, 'sh.bat');
 
-    // Create our shim matching exact contents
     fs.writeFileSync(ourShim, shimContents, 'utf8');
-    // Create foreign shim with different contents
-    fs.writeFileSync(foreignShim, 'different contents', 'utf8');
+    fs.writeFileSync(olderMarkedShim, `@echo off\r\n${installer.SH_SHIM_MARKER}\r\ncmd /c %*\r\n`, 'utf8');
 
-    // Mock getWindowsAgyBinDirs to return our temp directory
     const originalGetDirs = installer.getWindowsAgyBinDirs;
     installer.getWindowsAgyBinDirs = () => [tmp];
 
     try {
       const removed = removeWindowsShShims('win32', {});
       assert.ok(removed.includes(ourShim));
-      assert.ok(!removed.includes(foreignShim));
+      assert.ok(removed.includes(olderMarkedShim));
       assert.ok(!fs.existsSync(ourShim));
+      assert.ok(!fs.existsSync(olderMarkedShim));
+
+      // Third-party shim without marker must remain untouched
+      const foreignShim = path.join(tmp, 'sh.bat');
+      fs.writeFileSync(foreignShim, 'different contents', 'utf8');
+      const removedSecond = removeWindowsShShims('win32', {});
+      assert.deepEqual(removedSecond, []);
       assert.ok(fs.existsSync(foreignShim));
     } finally {
       installer.getWindowsAgyBinDirs = originalGetDirs;
     }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('top-level uninstall({ env, homeDir }) operates only inside isolated tmp home', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'uninstall-isolated-home-'));
+  const fakeHome = path.join(tmp, 'home');
+  const fakeTmp = path.join(tmp, 'tmp');
+  const root = path.join(fakeHome, '.gemini', 'antigravity-cli');
+  const runtimeDir = path.join(root, 'agy-hud-runtime');
+  const settingsPath = path.join(root, 'settings.json');
+  try {
+    fs.mkdirSync(path.join(runtimeDir, 'runtime', 'bin'), { recursive: true });
+    fs.mkdirSync(fakeTmp, { recursive: true });
+    fs.writeFileSync(path.join(runtimeDir, 'runtime', 'bin', 'agy-hud.js'), '// stub');
+    fs.writeFileSync(path.join(root, 'agy-hud-update-status.json'), '{}');
+    fs.writeFileSync(path.join(root, 'quota-capacity.json'), '{}');
+    fs.writeFileSync(path.join(root, 'agy-hud-refresh.lock'), '1');
+    fs.writeFileSync(path.join(fakeTmp, 'agy-hud-token.json'), '{}');
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      statusLine: {
+        type: 'command',
+        command: `"node" "${path.join(runtimeDir, 'runtime', 'bin', 'agy-hud.js')}"`,
+      },
+      keepMe: true,
+    }, null, 2));
+
+    const result = uninstall({
+      env: {},
+      homeDir: fakeHome,
+      tmpDir: fakeTmp,
+      platform: 'linux',
+    });
+
+    assert.equal(result.settingsPath, settingsPath);
+    assert.equal(result.statusLine.changed, true);
+    assert.equal(fs.existsSync(runtimeDir), false);
+    assert.equal(fs.existsSync(path.join(root, 'agy-hud-update-status.json')), false);
+    assert.equal(fs.existsSync(path.join(root, 'quota-capacity.json')), false);
+    assert.equal(fs.existsSync(path.join(root, 'agy-hud-refresh.lock')), false);
+    assert.equal(fs.existsSync(path.join(fakeTmp, 'agy-hud-token.json')), false);
+
+    const updatedSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    assert.equal(updatedSettings.statusLine, undefined);
+    assert.equal(updatedSettings.keepMe, true);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

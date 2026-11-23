@@ -89,7 +89,7 @@ describe('renderer / metadata line', () => {
     const agyData = {
       context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 }
     };
-    const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } });
+    const output = renderHUD(state, agyData, { language: 'en', display: { useNerdFonts: false, unicode: true } });
     assert.match(output, /1 MEMORY.md/);
     assert.match(output, /4 rules/);
     assert.match(output, /1 MCPs/);
@@ -108,7 +108,7 @@ describe('renderer / metadata line', () => {
     const agyData = {
       context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 }
     };
-    const output = renderHUD(state, agyData, { display: { useNerdFonts: false, unicode: true } });
+    const output = renderHUD(state, agyData, { language: 'en', display: { useNerdFonts: false, unicode: true } });
     assert.match(output, /1 GEMINI.md/);
     assert.match(output, /2 hooks/);
     assert.doesNotMatch(output, /0 rules/);
@@ -248,6 +248,7 @@ describe('renderer / display visibility toggles', () => {
     };
 
     const output = renderHUD(state, agyData, {
+      language: 'en',
       display: {
         showGitBranch: false,
         showTokenBar: false,
@@ -418,5 +419,103 @@ describe('renderer / username', () => {
     assert.match(output, /safe-suffix/);
     assert.doesNotMatch(output, /\x1b\]52/);
     assert.doesNotMatch(output, /\x1b\\/);
+  });
+});
+
+describe('renderer / P0 & P1 hardening', () => {
+  test('AGY_HUD_FORCE_ASCII and AGY_HUD_FORCE_UNICODE env overrides take precedence over config.display.unicode', () => {
+    const prevAscii = process.env.AGY_HUD_FORCE_ASCII;
+    const prevUnicode = process.env.AGY_HUD_FORCE_UNICODE;
+    const state = { steps: 1, branch: 'main' };
+    const agyData = { context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 50 } };
+
+    try {
+      delete process.env.AGY_HUD_FORCE_UNICODE;
+      process.env.AGY_HUD_FORCE_ASCII = '1';
+      const forcedAscii = renderHUD(state, agyData, { display: { unicode: true, useNerdFonts: false } });
+      assert.doesNotMatch(forcedAscii, /[│█░─⎇⚿⛁]/);
+      assert.match(forcedAscii, /\|/);
+      assert.match(forcedAscii, /\[B\] main/);
+
+      delete process.env.AGY_HUD_FORCE_ASCII;
+      process.env.AGY_HUD_FORCE_UNICODE = '1';
+      const forcedUnicode = renderHUD(state, agyData, { display: { unicode: false, useNerdFonts: false } });
+      assert.match(forcedUnicode, /│/);
+      assert.match(forcedUnicode, /⎇ main/);
+    } finally {
+      if (prevAscii === undefined) delete process.env.AGY_HUD_FORCE_ASCII;
+      else process.env.AGY_HUD_FORCE_ASCII = prevAscii;
+      if (prevUnicode === undefined) delete process.env.AGY_HUD_FORCE_UNICODE;
+      else process.env.AGY_HUD_FORCE_UNICODE = prevUnicode;
+    }
+  });
+
+  test('clamps extreme or non-finite used_percentage values without throwing RangeError', () => {
+    const state = { steps: 1, branch: 'main' };
+    for (const used of [120, -10, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const output = renderHUD(
+        state,
+        { context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: used } },
+        { display: { unicode: true, useNerdFonts: false } }
+      );
+      assert.match(output, /\[[█░]{10}\]/);
+      assert.doesNotMatch(output, /NaN%/);
+    }
+  });
+
+  test('sanitizes updateInfo.latestVersion against terminal escape injection', () => {
+    const state = { steps: 1, branch: 'main' };
+    const agyData = { context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 } };
+    const updateInfo = {
+      updateAvailable: true,
+      latestVersion: '2.0.0\x1b]52;c;bad\x07\x1b[31m',
+    };
+    const output = renderHUD(state, agyData, { display: { unicode: false } }, [], 'Pro', updateInfo);
+    assert.match(output, /\[UP\] v2\.0\.0/);
+    assert.doesNotMatch(output, /\x1b\]52/);
+    assert.doesNotMatch(output, /\x07/);
+  });
+
+  test('never renders ~NaNm on invalid resetTime across compact and image quota', () => {
+    const state = {
+      steps: 1,
+      branch: 'main',
+      imageExhausted: { exhausted: true, resetTime: 'not-a-date' },
+    };
+    const agyData = {
+      model: { id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet 4.6' },
+      context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 10 },
+    };
+    const quotaData = [
+      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6', modelProvider: 'MODEL_PROVIDER_ANTHROPIC', remainingFraction: 0.7, resetTime: 'invalid-date' },
+      { id: 'gemini-3.1-flash-image', displayName: 'Gemini 3.1 Flash Image', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.9, resetTime: 'invalid-date' },
+    ];
+    const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', showImageQuota: true, unicode: false } }, quotaData);
+    assert.doesNotMatch(output, /NaN/);
+  });
+
+  test('localizes Quota, Image Quota, and metadata labels when language is zh', () => {
+    const resetTime = new Date(Date.now() + 2 * 3600_000).toISOString();
+    const state = {
+      steps: 1,
+      branch: 'main',
+      rulesCount: 3,
+      mcpCount: 2,
+      hooksCount: 1,
+    };
+    const agyData = {
+      model: { id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet 4.6' },
+      context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 10 },
+    };
+    const quotaData = [
+      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6', modelProvider: 'MODEL_PROVIDER_ANTHROPIC', remainingFraction: 0.7, resetTime },
+      { id: 'gemini-3.1-flash-image', displayName: 'Gemini 3.1 Flash Image', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.9, resetTime },
+    ];
+    const output = renderHUD(state, agyData, { language: 'zh', display: { quotaStyle: 'compact', showImageQuota: true, unicode: false } }, quotaData);
+    assert.match(output, /额度: 70%/);
+    assert.match(output, /图像额度:/);
+    assert.match(output, /3 规则/);
+    assert.match(output, /2 MCP/);
+    assert.match(output, /1 钩子/);
   });
 });

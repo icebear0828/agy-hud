@@ -135,6 +135,7 @@ jobs:
           cp plugin.json gemini-extension.json package.json README.md README_zh.md release_tmp/
           cp -r runtime release_tmp/
           cp -r scripts release_tmp/
+          [ -d skills ] && cp -r skills release_tmp/ || true
           (cd release_tmp && zip -qr ../agy-hud.zip .)
           rm -rf release_tmp
 
@@ -144,7 +145,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release_tmp | Out-Null
           Copy-Item plugin.json,gemini-extension.json,package.json,README.md,README_zh.md release_tmp\
-          Copy-Item -Recurse runtime,scripts release_tmp\
+          Copy-Item -Recurse runtime,scripts,skills release_tmp\
           if (Test-Path agy-hud.zip) { Remove-Item agy-hud.zip -Force }
           Compress-Archive -Path release_tmp\* -DestinationPath agy-hud.zip
           Remove-Item -Recurse -Force release_tmp

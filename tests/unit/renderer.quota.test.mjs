@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert';
 import { renderHUD } from '../../runtime/renderer.js';
+import { visibleColumnWidth } from '../../runtime/renderer/quota-render.js';
 
 describe('renderer / quota lines', () => {
   describe('table mode', () => {
@@ -217,7 +218,7 @@ describe('renderer / quota lines', () => {
         { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6 (Thinking)', modelProvider: 'MODEL_PROVIDER_ANTHROPIC', remainingFraction: 0.2, resetTime: new Date(Date.now() + 4 * 86400000).toISOString() },
         { id: 'gemini-3-flash-agent', displayName: 'Gemini 3.5 Flash (High)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 1, resetTime: new Date(Date.now() + 3600000).toISOString() },
       ];
-      const config = { display: { quotaStyle: 'compact', unicode: false } };
+      const config = { language: 'en', display: { quotaStyle: 'compact', unicode: false } };
       const output = renderHUD(state, agyData, config, quotaData);
 
       // Single 'Quota:' label, no window suffix — renderer displays only
@@ -241,7 +242,7 @@ describe('renderer / quota lines', () => {
         { id: 'gemini-3-flash-agent', displayName: 'Gemini 3.5 Flash (High)', modelProvider: 'MODEL_PROVIDER_GOOGLE', remainingFraction: 0.5, resetTime: null },
       ];
 
-      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+      const output = renderHUD(state, agyData, { language: 'en', display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
       assert.match(output, /Quota: 50%/);
     });
@@ -270,7 +271,7 @@ describe('renderer / quota lines', () => {
         },
       ];
 
-      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+      const output = renderHUD(state, agyData, { language: 'en', display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
       // Must pick the binding weekly window (82%), not top-level 100%
       assert.match(output, /Quota: 82%/);
@@ -294,7 +295,7 @@ describe('renderer / quota lines', () => {
         },
       ];
 
-      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+      const output = renderHUD(state, agyData, { language: 'en', display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
       assert.match(output, /Quota: 100%.*~4h/);
     });
@@ -430,7 +431,7 @@ describe('renderer / quota lines', () => {
         remainingFraction: 0.74,
         resetTime: new Date(Date.now() + 2 * 3600 * 1000).toISOString(),
       }];
-      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+      const output = renderHUD(state, agyData, { language: 'en', display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
       assert.match(output, /Quota: 74%/);
     });
@@ -448,7 +449,7 @@ describe('renderer / quota lines', () => {
         remainingFraction: 0.65,
         resetTime: new Date(Date.now() + 5 * 86400 * 1000).toISOString(),
       }];
-      const output = renderHUD(state, agyData, { display: { quotaStyle: 'compact', unicode: false } }, quotaData);
+      const output = renderHUD(state, agyData, { language: 'en', display: { quotaStyle: 'compact', unicode: false } }, quotaData);
 
       assert.match(output, /Quota: 65%/);
       assert.match(output, /~5d/);
@@ -590,7 +591,7 @@ describe('renderer / quota lines', () => {
         }
       ];
 
-      const output = renderHUD(state, agyData, { display: { unicode: true, useNerdFonts: false, showImageQuota: true } }, quotaData);
+      const output = renderHUD(state, agyData, { language: 'en', display: { unicode: true, useNerdFonts: false, showImageQuota: true } }, quotaData);
       assert.match(output, /Image Quota:/);
       assert.match(output, /90%/);
       assert.match(output, /~3h49m/);
@@ -610,7 +611,7 @@ describe('renderer / quota lines', () => {
         { id: 'gemini-3.1-flash-image', displayName: 'Gemini 3.1 Flash Image', remainingFraction: 0.0 }
       ];
 
-      const output = renderHUD(state, agyData, { display: { unicode: true, useNerdFonts: false } }, quotaData);
+      const output = renderHUD(state, agyData, { language: 'en', display: { unicode: true, useNerdFonts: false } }, quotaData);
       assert.match(output, /Image Quota Exhausted/);
       assert.match(output, /03h14m/);
     });
@@ -628,6 +629,237 @@ describe('renderer / quota lines', () => {
       const output = renderHUD(state, agyData, { display: { unicode: true, useNerdFonts: false, quotaStyle: 'table' } }, quotaData);
       // Image model must NOT appear as a separate table column row
       assert.doesNotMatch(output, /Gemini 3\.1 Flash I/);
+    });
+  });
+
+  describe('divider alignment, ASCII truncation, and Argon 5h label', () => {
+    test('provider quota table divider matches row width (67 hbars, 69 total cols <= 80)', () => {
+      const now = Date.now();
+      const quotaData = [];
+      quotaData.providerQuota = {
+        google: {
+          fiveHour: { remainingFraction: 0.9, resetTime: new Date(now + 3600_000).toISOString() },
+          weekly: { remainingFraction: 0.8, resetTime: new Date(now + 5 * 86400_000).toISOString() },
+        },
+        claude: {
+          fiveHour: { remainingFraction: 0.7, resetTime: new Date(now + 3600_000).toISOString() },
+          weekly: { remainingFraction: 0.6, resetTime: new Date(now + 5 * 86400_000).toISOString() },
+        },
+      };
+      const clean = renderHUD({ steps: 1, branch: 'main' }, { context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 } }, { display: { unicode: true } }, quotaData)
+        .replace(/\x1b\[[0-9;]*m/g, '');
+      const lines = clean.split('\n');
+      const divLine = lines.find(l => l.includes('───'));
+      const g5Line = lines.find(l => l.includes('Google 5h'));
+      assert.ok(divLine && g5Line);
+      assert.equal(divLine.length, g5Line.length);
+      assert.equal(divLine.trim().length, 67);
+      assert.ok(divLine.length <= 80);
+    });
+
+    test('renders Argon 5h label when only fiveHour argon window is present', () => {
+      const now = Date.now();
+      const quotaData = [];
+      quotaData.providerQuota = {
+        argon: {
+          fiveHour: { remainingFraction: 0.75, resetTime: new Date(now + 2 * 3600_000).toISOString() },
+        },
+      };
+      const clean = renderHUD({ steps: 1, branch: 'main' }, { context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 } }, { display: { unicode: true } }, quotaData)
+        .replace(/\x1b\[[0-9;]*m/g, '');
+      assert.match(clean, /Argon 5h\s+\[[█░]+\]\s+75%/);
+      assert.doesNotMatch(clean, /Argon week/);
+    });
+
+    test('models mode divider matches 2-column row width and ASCII truncation does not overflow columns', () => {
+      const now = Date.now();
+      const quotaData = [
+        { id: 'very-long-model', displayName: 'Super Extremely Long Experimental Model Name v99', remainingFraction: 0.6, resetTime: new Date(now + 3600_000).toISOString() },
+        { id: 'short-model', displayName: 'Short Model', remainingFraction: 0.8, resetTime: new Date(now + 3600_000).toISOString() },
+        { id: 'second-row-a', displayName: 'Gemini 3.5 Flash (High)', remainingFraction: 0.5, resetTime: new Date(now + 3600_000).toISOString() },
+        { id: 'second-row-b', displayName: 'Claude Sonnet 4.6 (Thinking)', remainingFraction: 0.4, resetTime: new Date(now + 3600_000).toISOString() },
+      ];
+      const clean = renderHUD(
+        { steps: 1, branch: 'main' },
+        { context_window: { total_input_tokens: 0, total_output_tokens: 0, used_percentage: 0 } },
+        { display: { quotaStyle: 'models', columnWidth: 40, unicode: false } },
+        quotaData
+      ).replace(/\x1b\[[0-9;]*m/g, '');
+      const lines = clean.split('\n');
+      const divLine = lines.find(l => l.trim().startsWith('---'));
+      const row1 = lines.find(l => l.includes('Short Model'));
+      const row2 = lines.find(l => l.includes('Gemini 3.5 Flash'));
+      assert.ok(divLine && row1 && row2);
+      assert.equal(divLine.trim().length, 83); // columnWidth * 2 + 3
+      assert.equal(row1.indexOf('|'), row2.indexOf('|'), 'ASCII truncated column must align | identically');
+      assert.equal(row1.length, divLine.length);
+      assert.equal(row2.length, divLine.length);
+    });
+  });
+
+  describe('quota capacity estimation rendering', () => {
+    const baseAgyData = {
+      model: { id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet 4.6 (Thinking)' },
+      context_window: { total_input_tokens: 1000, total_output_tokens: 200, used_percentage: 5 },
+    };
+    const now = Date.now();
+    const baseQuotaData = [
+      {
+        id: 'claude-sonnet-4-6',
+        displayName: 'Claude Sonnet 4.6 (Thinking)',
+        modelProvider: 'MODEL_PROVIDER_ANTHROPIC',
+        remainingFraction: 0.7,
+        resetTime: new Date(now + (3 * 3600 + 12 * 60) * 1000).toISOString(),
+        windows: {
+          fiveHour: { remainingFraction: 0.7, resetTime: new Date(now + (3 * 3600 + 12 * 60) * 1000).toISOString(), observedAt: now },
+          weekly: { remainingFraction: 0.85, resetTime: new Date(now + 5 * 86400_000).toISOString(), observedAt: now },
+        },
+      },
+    ];
+    const readyCap = {
+      bucket: 'claude',
+      modelName: 'Sonnet 4.6',
+      modelKey: 'sonnet',
+      fiveHour: { status: 'ready', confidence: 'high', isPrior: false, remainingTokens: 420_000, totalTokens: 600_000, remainingFraction: 0.7, exhausted: false },
+      weekly: { status: 'ready', confidence: 'high', isPrior: false, remainingTokens: 3_400_000, totalTokens: 4_000_000, remainingFraction: 0.85, exhausted: false },
+      criticalWindow: 'fiveHour',
+      critical: { status: 'ready', confidence: 'high', isPrior: false, remainingTokens: 420_000, totalTokens: 600_000, remainingFraction: 0.7, exhausted: false },
+    };
+
+    const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '');
+
+    test('renders EN/ZH x Unicode/ASCII in table and models modes within 78 columns', () => {
+      const cases = [
+        { lang: 'en', unicode: true, style: 'table', expected: '  ≈ Est (Sonnet 4.6): 5h ~420k/600k tok │ week ~3.4M/4M tok' },
+        { lang: 'zh', unicode: true, style: 'table', expected: '  ≈ 估算 (Sonnet 4.6): 5h ~420k/600k tok │ 周 ~3.4M/4M tok' },
+        { lang: 'en', unicode: false, style: 'table', expected: '  ~ Est (Sonnet 4.6): 5h ~420k/600k tok | week ~3.4M/4M tok' },
+        { lang: 'zh', unicode: false, style: 'table', expected: '  ~ 估算 (Sonnet 4.6): 5h ~420k/600k tok | 周 ~3.4M/4M tok' },
+        { lang: 'en', unicode: true, style: 'models', expected: '  ≈ Est (Sonnet 4.6): 5h ~420k/600k tok │ week ~3.4M/4M tok' },
+      ];
+      for (const c of cases) {
+        const clean = strip(renderHUD(
+          { steps: 1, branch: 'main', quotaCapacity: readyCap },
+          baseAgyData,
+          { language: c.lang, display: { quotaStyle: c.style, unicode: c.unicode } },
+          baseQuotaData
+        ));
+        const capLine = clean.split('\n').at(-1);
+        assert.equal(capLine, c.expected);
+        assert.ok(visibleColumnWidth(capLine) <= 78, `line width ${visibleColumnWidth(capLine)} > 78`);
+      }
+    });
+
+    test('renders single-window calibrated (--), prior (*), calibrating, and exhausted (red 0)', () => {
+      const singleCap = {
+        ...readyCap,
+        weekly: { status: 'idle', confidence: 'none', isPrior: false, remainingTokens: null, totalTokens: null },
+      };
+      const singleClean = strip(renderHUD(
+        { steps: 1, branch: 'main', quotaCapacity: singleCap },
+        baseAgyData,
+        { language: 'en', display: { unicode: true } },
+        baseQuotaData
+      ));
+      assert.equal(singleClean.split('\n').at(-1), '  ≈ Est (Sonnet 4.6): 5h ~420k/600k tok │ week --');
+
+      const priorCap = {
+        ...readyCap,
+        fiveHour: { ...readyCap.fiveHour, isPrior: true, confidence: 'prior', remainingTokens: 600_000 },
+        weekly: { ...readyCap.weekly, isPrior: true, confidence: 'prior', remainingTokens: 4_000_000 },
+      };
+      const priorClean = strip(renderHUD(
+        { steps: 1, branch: 'main', quotaCapacity: priorCap },
+        baseAgyData,
+        { language: 'en', display: { unicode: true } },
+        baseQuotaData
+      ));
+      assert.equal(priorClean.split('\n').at(-1), '  ≈ Est (Sonnet 4.6): 5h ~600k/600k tok* │ week ~4M/4M tok*');
+
+      const calCap = {
+        bucket: 'claude',
+        modelName: 'Sonnet 4.6',
+        fiveHour: { status: 'calibrating', observedDeltaQ: 0.012, minDeltaQ: 0.02 },
+        weekly: { status: 'idle', observedDeltaQ: 0, minDeltaQ: 0.01 },
+      };
+      const calEn = strip(renderHUD(
+        { steps: 1, branch: 'main', quotaCapacity: calCap },
+        baseAgyData,
+        { language: 'en', display: { unicode: true } },
+        baseQuotaData
+      ));
+      assert.equal(calEn.split('\n').at(-1), '  ≈ Est (Sonnet 4.6): calibrating (1.2%/2%)');
+
+      const calZh = strip(renderHUD(
+        { steps: 1, branch: 'main', quotaCapacity: calCap },
+        baseAgyData,
+        { language: 'zh', display: { unicode: true } },
+        baseQuotaData
+      ));
+      assert.equal(calZh.split('\n').at(-1), '  ≈ 估算 (Sonnet 4.6): 校准中 (1.2%/2%)');
+
+      const exhaustedCap = {
+        ...readyCap,
+        fiveHour: { ...readyCap.fiveHour, remainingTokens: 0, remainingFraction: 0, exhausted: true },
+      };
+      const exhaustedRaw = renderHUD(
+        { steps: 1, branch: 'main', quotaCapacity: exhaustedCap },
+        baseAgyData,
+        { language: 'en', display: { unicode: true } },
+        baseQuotaData
+      );
+      assert.match(exhaustedRaw, /\x1b\[31m0\x1b\[90m\/600k tok/);
+      assert.equal(strip(exhaustedRaw).split('\n').at(-1), '  ≈ Est (Sonnet 4.6): 5h 0/600k tok │ week ~3.4M/4M tok');
+    });
+
+    test('adds 0 extra lines when idle or disabled, and caps long model labels to <= 78 columns', () => {
+      const idleCap = {
+        bucket: 'claude',
+        modelName: 'Sonnet 4.6',
+        fiveHour: { status: 'idle' },
+        weekly: { status: 'idle' },
+      };
+      const withIdle = strip(renderHUD(
+        { steps: 1, branch: 'main', quotaCapacity: idleCap },
+        baseAgyData,
+        { language: 'en', display: { unicode: true } },
+        baseQuotaData
+      ));
+      const withDisabled = strip(renderHUD(
+        { steps: 1, branch: 'main', quotaCapacity: readyCap },
+        baseAgyData,
+        { language: 'en', display: { unicode: true, showQuotaCapacity: false } },
+        baseQuotaData
+      ));
+      assert.equal(withIdle, withDisabled);
+      assert.doesNotMatch(withIdle, /Est \(/);
+
+      const longCap = { ...readyCap, modelName: 'Super Long Experimental Model Name v99.9' };
+      const longClean = strip(renderHUD(
+        { steps: 1, branch: 'main', quotaCapacity: longCap },
+        baseAgyData,
+        { language: 'en', display: { unicode: true } },
+        baseQuotaData
+      ));
+      const capLine = longClean.split('\n').at(-1);
+      assert.ok(visibleColumnWidth(capLine) <= 78, `long model capacity line ${visibleColumnWidth(capLine)} > 78`);
+    });
+
+    test('compact mode appends inline suffix (~420k/600k) on line 2 without adding extra line', () => {
+      const outWithCap = strip(renderHUD(
+        { steps: 1, branch: 'main', quotaCapacity: readyCap },
+        baseAgyData,
+        { language: 'en', display: { quotaStyle: 'compact', unicode: false } },
+        baseQuotaData
+      ));
+      const outWithoutCap = strip(renderHUD(
+        { steps: 1, branch: 'main', quotaCapacity: readyCap },
+        baseAgyData,
+        { language: 'en', display: { quotaStyle: 'compact', unicode: false, showQuotaCapacity: false } },
+        baseQuotaData
+      ));
+      assert.equal(outWithCap.split('\n').length, outWithoutCap.split('\n').length);
+      assert.match(outWithCap, /Quota: 70% ~3h12m \(~420k\/600k\)/);
+      assert.doesNotMatch(outWithoutCap, /\(~420k\/600k\)/);
     });
   });
 });

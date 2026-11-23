@@ -1,13 +1,20 @@
-import { describe, test } from 'node:test';
+import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { quotaModule, CACHE_PATH } from './_helpers/quota-test-utils.mjs';
 
-const { getQuota } = quotaModule;
+const { getQuota, refreshQuotaCache, REFRESH_LOCK_PATH, createUnavailableQuotaResult } = quotaModule;
 
 describe('quota / getQuota orchestrator', () => {
+  beforeEach(() => {
+    fs.rmSync(REFRESH_LOCK_PATH, { force: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(REFRESH_LOCK_PATH, { force: true });
+  });
   describe('fast path with cache', () => {
     test('returns cached quota without background refresh', async () => {
       const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
@@ -358,6 +365,167 @@ describe('quota / getQuota orchestrator', () => {
         if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
         else fs.writeFileSync(CACHE_PATH, previousCache);
       }
+    });
+
+    test('prevents refresh storms via on-disk lock across repeated rotated-token or failed-refresh calls', async () => {
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const tokenSourcePath = path.join('storm-user', 'antigravity-oauth-token');
+        const cachedQuota = [{
+          id: 'gemini-3-flash-agent',
+          displayName: 'Gemini 3.5 Flash (High)',
+          remainingFraction: 0.77,
+          resetTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        }];
+        quotaModule.writeCache(cachedQuota, {
+          accessToken: 'old-access-token',
+          sourcePath: tokenSourcePath,
+        });
+
+        let refreshes = 0;
+        const baseNow = Date.now();
+        await getQuota({
+          fast: true,
+          now: baseNow,
+          tokenReader: () => ({ accessToken: 'rotated-access-token', sourcePath: tokenSourcePath }),
+          backgroundRefresh: () => { refreshes += 1; },
+        });
+        await getQuota({
+          fast: true,
+          now: baseNow + 2000,
+          tokenReader: () => ({ accessToken: 'rotated-access-token', sourcePath: tokenSourcePath }),
+          backgroundRefresh: () => { refreshes += 1; },
+        });
+        assert.equal(refreshes, 1, 'second call within 30s TTL must be debounced by on-disk lock');
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('returns expired_token (and triggers win32 refresh) when token is expired and matching cache is stale', async () => {
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const tok = {
+          accessToken: 'stale-matching-token',
+          sourcePath: path.join('expired-match', 'oauth_creds.json'),
+          expiry: '2000-01-01T00:00:00.000Z',
+        };
+        quotaModule.writeCache(
+          [{ id: 'gemini-3-flash-agent', remainingFraction: 0.5, resetTime: null }],
+          tok
+        );
+        // Expire the matching cache on disk
+        const raw = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+        raw.expiresAt = Date.now() - 60_000;
+        fs.writeFileSync(CACHE_PATH, JSON.stringify(raw), { mode: 0o600 });
+
+        let refreshes = 0;
+        const result = await getQuota({
+          fast: true,
+          platform: 'win32',
+          tokenReader: () => tok,
+          backgroundRefresh: () => { refreshes += 1; },
+          windowsCredentialRefreshDebounceMs: 0,
+        });
+
+        assert.equal(result.unavailableReason, 'expired_token');
+        assert.equal(result.length, 0);
+        assert.equal(refreshes, 1, 'must fall through to refreshWindowsCredential when tokenExpired && !isFresh');
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+      }
+    });
+
+    test('fast: true skips credentialReader on win32 and keyringReader on linux, and supports preloadedToken', async () => {
+      const previousCache = fs.existsSync(CACHE_PATH) ? fs.readFileSync(CACHE_PATH, 'utf8') : null;
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-fast-skip-'));
+      try {
+        fs.rmSync(CACHE_PATH, { force: true });
+        const emptyRoot = path.join(tmp, 'antigravity-cli');
+        fs.mkdirSync(emptyRoot, { recursive: true });
+
+        let credCalls = 0;
+        let keyringCalls = 0;
+        let readerCalls = 0;
+
+        await getQuota({
+          fast: true,
+          platform: 'win32',
+          roots: [emptyRoot],
+          credentialReader: () => { credCalls += 1; return null; },
+          backgroundRefresh: () => {},
+        });
+        fs.rmSync(REFRESH_LOCK_PATH, { force: true });
+        let linuxRefreshes = 0;
+        await getQuota({
+          fast: true,
+          platform: 'linux',
+          roots: [emptyRoot],
+          keyringReader: () => { keyringCalls += 1; return null; },
+          backgroundRefresh: () => { linuxRefreshes += 1; },
+        });
+        await getQuota({
+          fast: true,
+          preloadedToken: null,
+          roots: [emptyRoot],
+          tokenReader: () => { readerCalls += 1; return null; },
+          backgroundRefresh: () => {},
+        });
+
+        assert.equal(credCalls, 0, 'fast: true must never invoke Windows credentialReader');
+        assert.equal(keyringCalls, 0, 'fast: true must never invoke Linux keyringReader');
+        assert.equal(linuxRefreshes, 1, 'fast: true on linux should delegate missing token to background refresh');
+        assert.equal(readerCalls, 0, 'preloadedToken must skip tokenReader');
+      } finally {
+        if (previousCache === null) fs.rmSync(CACHE_PATH, { force: true });
+        else fs.writeFileSync(CACHE_PATH, previousCache);
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('refreshQuotaCache (--refresh)', () => {
+    test('does NOT call writeCache when fetchQuotaFromCloud fails (quota_fetch_failed) even if accountEmail succeeds', async () => {
+      let writeCalls = 0;
+      const ok = await refreshQuotaCache({
+        readTokenFn: () => ({ accessToken: 'live-tok' }),
+        fetchQuotaFn: async () => createUnavailableQuotaResult('quota_fetch_failed'),
+        fetchTierFn: async () => 'Google AI Pro',
+        fetchEmailFn: async () => 'a@b.com',
+        writeCacheFn: () => { writeCalls += 1; },
+        clearTokenTempFn: () => {},
+      });
+
+      assert.equal(ok, false);
+      assert.equal(writeCalls, 0, 'must NOT overwrite cache on quota_fetch_failed');
+    });
+
+    test('clears temp token only after all candidate tokens fail with auth_failed', async () => {
+      let cleared = 0;
+      let writtenToken = null;
+      const ok = await refreshQuotaCache({
+        readTokenFn: () => ({
+          accessToken: 'bad-tok',
+          all: [{ accessToken: 'bad-tok' }, { accessToken: 'good-tok' }],
+        }),
+        fetchQuotaFn: async (tok) => (
+          tok === 'bad-tok'
+            ? createUnavailableQuotaResult('auth_failed')
+            : [{ id: 'gemini-3-flash-agent', remainingFraction: 0.9 }]
+        ),
+        fetchTierFn: async () => 'Google AI Pro',
+        fetchEmailFn: async () => 'good@example.com',
+        writeCacheFn: (_data, tok) => { writtenToken = tok.accessToken; },
+        clearTokenTempFn: () => { cleared += 1; },
+      });
+
+      assert.equal(ok, true);
+      assert.equal(writtenToken, 'good-tok');
+      assert.equal(cleared, 0);
     });
   });
 });

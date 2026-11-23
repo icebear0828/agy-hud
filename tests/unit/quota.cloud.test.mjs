@@ -207,6 +207,31 @@ describe('quota / cloud', () => {
         globalThis.fetch = originalFetch;
       }
     });
+
+    test('aborts in-flight summaryPromise when fetchAvailableModels fails early', async () => {
+      const originalFetch = globalThis.fetch;
+      let summarySignal = null;
+      globalThis.fetch = async (url, options) => {
+        if (String(url).includes('retrieveUserQuotaSummary')) {
+          summarySignal = options?.signal;
+          return new Promise((resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          });
+        }
+        return { ok: false, status: 401, json: async () => ({}) };
+      };
+
+      try {
+        const quotas = await withEnv({ AGY_HUD_ENDPOINTS: 'https://mock.test' }, () =>
+          fetchQuotaFromCloud('expired-token')
+        );
+        assert.equal(quotas.unavailableReason, 'auth_failed');
+        assert.ok(summarySignal, 'summary fetch should receive an AbortSignal');
+        assert.equal(summarySignal.aborted, true, 'summary fetch signal must be aborted on early failure');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe('extractTierName', () => {
@@ -420,6 +445,28 @@ describe('quota / cloud', () => {
       assert.ok(parsed?.argon);
       assert.equal(parsed.argon.weekly.remainingFraction, 0.60);
       assert.equal(parsed.argon.fiveHour, undefined);
+    });
+
+    test('classifies mixed Gemini and Argon buckets in a single group by bucketId first', () => {
+      const resetTime = '2026-12-31T12:00:00Z';
+      const parsed = parseQuotaSummary({
+        groups: [
+          {
+            displayName: 'Gemini Models',
+            buckets: [
+              { bucketId: 'gemini-5h', window: '5h', remainingFraction: 0.88, resetTime },
+              { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0.72, resetTime },
+              { bucketId: 'gemini-4-argon-weekly', window: 'weekly', remainingFraction: 0.55, resetTime },
+            ],
+          },
+        ],
+      });
+
+      assert.ok(parsed?.google, 'google buckets must not be swallowed by argon');
+      assert.equal(parsed.google.fiveHour.remainingFraction, 0.88);
+      assert.equal(parsed.google.weekly.remainingFraction, 0.72);
+      assert.ok(parsed?.argon, 'argon bucket must be classified to argon');
+      assert.equal(parsed.argon.weekly.remainingFraction, 0.55);
     });
   });
 

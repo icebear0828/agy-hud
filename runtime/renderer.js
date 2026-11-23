@@ -27,25 +27,38 @@ const { pickCriticalWindow } = require('./quota/models.js');
 const { getSessionCostUsd, formatUsd } = require('./cost.js');
 const { getCostTotals } = require('./daily-cost.js');
 const { getOutputSpeed } = require('./speed.js');
+const { getQuotaCapacityEstimates } = require('./quota-capacity.js');
 
 /**
  * Renders the HUD string for the status line using native ANSI escape codes.
  * Falls back to ASCII when the terminal can't render box-drawing / Nerd Font
- * glyphs (detected via encoding.js, override via config.display.unicode).
+ * glyphs (detected via encoding.js, override via env or config.display.unicode).
  *
  * @param {Object} state
  * @param {Object} agyData
  * @param {Object} config
  * @param {Array}  quotaData  — from quota.js getQuota()
+ * @param {string} tierName
  * @param {Object} updateInfo — local cache info about updates
  * @returns {string}
  */
 function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const display = config?.display || {};
   const useNerd = display.useNerdFonts === true;
-  const unicode = typeof display.unicode === 'boolean'
-    ? display.unicode
-    : supportsUnicode();
+
+  // Explicit env overrides take precedence over config.display.unicode,
+  // followed by config.display.unicode, then runtime terminal detection.
+  let unicode;
+  if (process.env.AGY_HUD_FORCE_ASCII === '1') {
+    unicode = false;
+  } else if (process.env.AGY_HUD_FORCE_UNICODE === '1') {
+    unicode = true;
+  } else if (typeof display.unicode === 'boolean') {
+    unicode = display.unicode;
+  } else {
+    unicode = supportsUnicode();
+  }
+
   const showGitBranch = display.showGitBranch !== false;
   const showTokenBar = display.showTokenBar !== false;
   const showBreadcrumbs = display.showBreadcrumbs !== false;
@@ -53,6 +66,7 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const showUsername = display.showUsername === true;
   const showTurnCacheHitRate = display.showTurnCacheHitRate === true;
   const showImageQuota = display.showImageQuota === true;
+  const showQuotaCapacity = display.showQuotaCapacity !== false;
   const showCost = display.showCost === true;
   const showDailyCost = display.showDailyCost === true;
   const showWeeklyCost = display.showWeeklyCost === true;
@@ -67,7 +81,8 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const dim = '\x1b[2m';
 
   const getThemeColor = (key, defaultColor) => {
-    const name = config?.theme?.[key] || defaultColor;
+    const theme = config?.theme && typeof config.theme === 'object' ? config.theme : null;
+    const name = theme?.[key] || defaultColor;
     return ANSI_COLORS[name] || ANSI_COLORS[defaultColor];
   };
 
@@ -143,35 +158,35 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
 
   const branchName = `${blue}${branchIcon}${sanitizeTerminalText(state.branch || 'unknown', 80)}${reset}`;
 
-  // Compact arrow glyphs for token breakdown
-  const inArrow = unicode ? '↑' : '^';
-  const outArrow = unicode ? '↓' : 'v';
-  const cacheArrow = unicode ? '⟳' : 'c:';
-
   // Data extraction
   const usage = agyData?.context_window || {};
   const totalInput = usage.total_input_tokens || 0;
   const totalOutput = usage.total_output_tokens || 0;
-  const ctxPercent = usage.used_percentage || 0;
+  const rawCtxPercent = usage.used_percentage;
+  const ctxPercent = Number.isFinite(rawCtxPercent)
+    ? Math.min(100, Math.max(0, rawCtxPercent))
+    : 0;
   const plan = sanitizeTerminalText(tierName || agyData?.plan_tier || 'Free', 80);
-  const tasks = agyData?.task_count || 0;
 
   // Extract model information
   const rawModelName = agyData?.model?.display_name || agyData?.model?.id || 'Unknown Model';
   const modelName = sanitizeTerminalText(simplifyModelName(rawModelName), 80);
 
   const createProgressBar = (percent, color, width = 10, isUsage = true) => {
-    const completed = Math.round((percent / 100) * width);
-    const remaining = width - completed;
+    const safePercent = Number.isFinite(percent)
+      ? Math.min(100, Math.max(0, percent))
+      : 0;
+    const completed = Math.min(width, Math.max(0, Math.round((safePercent / 100) * width)));
+    const remaining = Math.max(0, width - completed);
 
     // Auto-color based on usage vs remaining
     let finalColor = color;
     if (isUsage) {
-      if (percent > critThresh * 100) finalColor = red;
-      else if (percent > warnThresh * 100) finalColor = yellow;
+      if (safePercent > critThresh * 100) finalColor = red;
+      else if (safePercent > warnThresh * 100) finalColor = yellow;
     } else {
-      if (percent <= (1 - critThresh) * 100) finalColor = red;
-      else if (percent <= (1 - warnThresh) * 100) finalColor = yellow;
+      if (safePercent <= (1 - critThresh) * 100) finalColor = red;
+      else if (safePercent <= (1 - warnThresh) * 100) finalColor = yellow;
       else finalColor = green;
     }
 
@@ -180,7 +195,9 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
 
   const truncateAndPad = (str, width) => {
     if (str.length > width) {
-      return str.substring(0, width - 1) + glyph.ellipsis;
+      const ellipsis = glyph.ellipsis;
+      if (width <= ellipsis.length) return ellipsis.slice(0, Math.max(0, width));
+      return str.substring(0, width - ellipsis.length) + ellipsis;
     }
     return str.padEnd(width, ' ');
   };
@@ -236,7 +253,10 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
 
   if (updateInfo && updateInfo.updateAvailable) {
     const updateIcon = unicode ? '⟳' : '[UP]';
-    line1Parts.push(`${yellow}${updateIcon} v${updateInfo.latestVersion}${reset}`);
+    const safeVersion = sanitizeTerminalText(updateInfo.latestVersion, 40);
+    if (safeVersion) {
+      line1Parts.push(`${yellow}${updateIcon} v${safeVersion}${reset}`);
+    }
   }
   const line1 = line1Parts.join(divider);
 
@@ -317,6 +337,17 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const ctxPctStr = `${Math.round(ctxPercent)}%`;
   const ctxStr = `${cyan}${ctxIcon}${formatTokens(totalInput)}/${formatTokens(usage.context_window_size || 0)}${reset} ${ctxBar} ${cyan}${ctxPctStr}${reset}`;
 
+  // Quota capacity estimate (5h & weekly)
+  const quotaCapacity = !showQuotaCapacity
+    ? null
+    : (state?.quotaCapacity !== undefined
+      ? state.quotaCapacity
+      : getQuotaCapacityEstimates(agyData, state, quotaData, {
+          minDeltaQ: display.quotaCapacityMinDelta,
+          tierName,
+          quotaSource: state?.quotaSource || 'cache',
+        }));
+
   // In compact mode, find current model's quota and append to line 2
   let currentModelQuota = null;
   if (isCompact && quotaData && quotaData.length > 0) {
@@ -386,24 +417,46 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
     let timeStr = '';
     const resetTime = critical.resetTime || currentModelQuota.resetTime;
     if (resetTime) {
-      const secsLeft = Math.max(0, Math.round((new Date(resetTime).getTime() - Date.now()) / 1000));
-      timeStr = ` ${gray}~${formatDuration(secsLeft)}${reset}`;
+      const resetMs = new Date(resetTime).getTime();
+      if (Number.isFinite(resetMs)) {
+        const secsLeft = Math.max(0, Math.round((resetMs - Date.now()) / 1000));
+        const formatted = formatDuration(secsLeft);
+        if (formatted) timeStr = ` ${gray}~${formatted}${reset}`;
+      }
     }
-    line2Parts.push(`${pctColor}Quota: ${pct}%${reset}${timeStr}`);
+    let compactEstSuffix = '';
+    if (quotaCapacity) {
+      const targetWin = (critical.window && quotaCapacity[critical.window]?.status === 'ready')
+        ? quotaCapacity[critical.window]
+        : (quotaCapacity.critical?.status === 'ready'
+          ? quotaCapacity.critical
+          : (quotaCapacity.fiveHour?.status === 'ready'
+            ? quotaCapacity.fiveHour
+            : (quotaCapacity.weekly?.status === 'ready' ? quotaCapacity.weekly : null)));
+      if (targetWin) {
+        const remPart = (targetWin.exhausted || targetWin.remainingTokens === 0)
+          ? `${red}0${gray}`
+          : `~${formatTokens(targetWin.remainingTokens || 0)}`;
+        const star = targetWin.isPrior ? '*' : '';
+        compactEstSuffix = ` ${gray}(${remPart}/${formatTokens(targetWin.totalTokens || 0)}${star})${reset}`;
+      }
+    }
+    line2Parts.push(`${pctColor}${text.quotaLabel}: ${pct}%${reset}${timeStr}${compactEstSuffix}`);
   }
 
   // Render Image Quota or rate limit exhaustion status
   const imageExhausted = state.imageExhausted;
   let isImageExhaustedDisplayed = false;
-  if (imageExhausted) {
-    const secsLeft = Math.max(0, Math.round((new Date(imageExhausted.resetTime).getTime() - Date.now()) / 1000));
+  if (imageExhausted && imageExhausted.resetTime) {
+    const resetMs = new Date(imageExhausted.resetTime).getTime();
+    const secsLeft = Number.isFinite(resetMs) ? Math.max(0, Math.round((resetMs - Date.now()) / 1000)) : 0;
     if (secsLeft > 0) {
       const pad = (n) => String(n).padStart(2, '0');
       const h = Math.floor(secsLeft / 3600);
       const m = Math.floor((secsLeft % 3600) / 60);
       const countdownStr = `${pad(h)}h${pad(m)}m`;
       const icon = unicode ? '⚠️ ' : '[!] ';
-      line2Parts.push(`${red}${icon}Image Quota Exhausted (Resets in: ${countdownStr})${reset}`);
+      line2Parts.push(`${red}${icon}${text.imageQuotaExhausted} (${text.resetsIn}: ${countdownStr})${reset}`);
       isImageExhaustedDisplayed = true;
     }
   }
@@ -417,10 +470,14 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
       const imgIcon = unicode ? '🖼️ ' : '[IMG] ';
       let timeStr = '';
       if (imgQ.resetTime) {
-        const secsLeft = Math.max(0, Math.round((new Date(imgQ.resetTime).getTime() - Date.now()) / 1000));
-        if (secsLeft > 0) timeStr = ` ${gray}~${formatDuration(secsLeft)}${reset}`;
+        const resetMs = new Date(imgQ.resetTime).getTime();
+        if (Number.isFinite(resetMs)) {
+          const secsLeft = Math.max(0, Math.round((resetMs - Date.now()) / 1000));
+          const formatted = formatDuration(secsLeft);
+          if (secsLeft > 0 && formatted) timeStr = ` ${gray}~${formatted}${reset}`;
+        }
       }
-      line2Parts.push(`${cyan}${imgIcon}Image Quota: ${bar} ${pctColor}${pct}%${reset}${timeStr}`);
+      line2Parts.push(`${cyan}${imgIcon}${text.imageQuotaLabel}: ${bar} ${pctColor}${pct}%${reset}${timeStr}`);
     }
   }
 
@@ -443,19 +500,26 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
   const rulesCount = state.rulesCount || 0;
   const mcpCount = state.mcpCount || 0;
   const hooksCount = state.hooksCount || 0;
-  if (rulesCount > 0) metaParts.push(`${gray}${rulesCount} rules${reset}`);
-  if (mcpCount > 0) metaParts.push(`${gray}${mcpCount} MCPs${reset}`);
-  if (hooksCount > 0) metaParts.push(`${gray}${hooksCount} hooks${reset}`);
+  if (rulesCount > 0) metaParts.push(`${gray}${rulesCount} ${text.rulesLabel}${reset}`);
+  if (mcpCount > 0) metaParts.push(`${gray}${mcpCount} ${text.mcpsLabel}${reset}`);
+  if (hooksCount > 0) metaParts.push(`${gray}${hooksCount} ${text.hooksLabel}${reset}`);
   const line3 = metaParts.length > 0 ? metaParts.join(divider) : '';
 
-  const { renderQuotaColumn, renderProviderQuotaTable, renderCompactQuotaLine } = createQuotaRenderers({
-    colors: { cyan, reset, gray, red, yellow, green },
+  const {
+    renderQuotaColumn,
+    renderProviderQuotaTable,
+    renderCompactQuotaLine,
+    renderQuotaCapacityLine,
+  } = createQuotaRenderers({
+    colors: { cyan, reset, gray, red, yellow, green, dim },
     glyph,
     thresholds: { warnThresh, critThresh },
     nameWidth,
     divider,
     createProgressBar,
     truncateAndPad,
+    text,
+    unicode,
   });
 
   // Build quota lines
@@ -480,17 +544,21 @@ function renderHUD(state, agyData, config, quotaData, tierName, updateInfo) {
           rows.push(`  ${col1}`);
         }
       }
-      const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
+      const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 3)}${reset}`;
       quotaLines = `\n${dividerLine}\n` + rows.join('\n') + `\n${dividerLine}`;
+      const capLine = renderQuotaCapacityLine(quotaCapacity);
+      if (capLine) quotaLines += `\n${capLine}`;
     } else {
       quotaLines = `\n${renderProviderQuotaTable(quotaData, now)}`;
+      const capLine = renderQuotaCapacityLine(quotaCapacity);
+      if (capLine) quotaLines += `\n${capLine}`;
     }
   } else if (quotaData && quotaData.unavailableReason) {
-    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
+    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 3)}${reset}`;
     const reason = sanitizeTerminalText(text.quotaReasons[quotaData.unavailableReason] || quotaData.unavailableReason);
     quotaLines = `\n${dividerLine}\n  ${yellow}${text.quotaUnavailable}:${reset} ${gray}${reason}${reset}\n${dividerLine}`;
   } else if (quotaData && quotaData.length === 0) {
-    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 1)}${reset}`;
+    const dividerLine = `  ${gray}${glyph.hbar.repeat(columnWidth * 2 + 3)}${reset}`;
     quotaLines = `\n${dividerLine}\n  ${gray}${text.quotaLoading}${glyph.ellipsis}${reset}\n${dividerLine}`;
   }
 

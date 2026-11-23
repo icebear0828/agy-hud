@@ -6,7 +6,7 @@ import os from 'node:os';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { buildAuthDiagnostic } = require('../../scripts/diagnose-auth.js');
+const { buildAuthDiagnostic, resolveAgyInfo } = require('../../scripts/diagnose-auth.js');
 
 function withEnv(overrides, fn) {
   const snapshot = {};
@@ -170,6 +170,73 @@ test('auth diagnostic reports macOS Keychain source and probe without leaking to
       assert.doesNotMatch(serialized, /secret-keychain-token/);
       assert.doesNotMatch(serialized, /secret-user@example.com/);
     });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('resolveAgyInfo continues to subsequent candidates when first candidate --version fails', () => {
+  const calls = [];
+  const info = resolveAgyInfo({
+    candidates: ['/broken/agy', '/working/agy'],
+    pathExists: () => true,
+    execFileSync: (candidate) => {
+      calls.push(candidate);
+      if (candidate === '/broken/agy') {
+        const err = new Error('permission denied');
+        err.code = 'EACCES';
+        throw err;
+      }
+      return 'agy 1.2.3\n';
+    },
+  });
+
+  assert.deepEqual(calls, ['/broken/agy', '/working/agy']);
+  assert.equal(info.found, true);
+  assert.equal(info.path, '/working/agy');
+  assert.equal(info.version, 'agy 1.2.3');
+});
+
+test('resolveAgyInfo records lastError when all existing candidates fail --version', () => {
+  const info = resolveAgyInfo({
+    candidates: ['/broken1/agy', '/broken2/agy'],
+    pathExists: () => true,
+    execFileSync: (candidate) => {
+      const err = new Error(`failed ${candidate}`);
+      err.code = candidate === '/broken1/agy' ? 'EACCES' : 'ETIMEDOUT';
+      throw err;
+    },
+  });
+
+  assert.equal(info.found, false);
+  assert.equal(info.lastError, 'ETIMEDOUT');
+  assert.deepEqual(info.existingCandidates, ['/broken1/agy', '/broken2/agy']);
+});
+
+test('buildAuthDiagnostic passes resolved roots to readToken', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-diagnose-roots-'));
+  try {
+    const customRoot = path.join(tmp, 'custom-antigravity-cli');
+    fs.mkdirSync(customRoot, { recursive: true });
+    fs.writeFileSync(path.join(customRoot, 'antigravity-oauth-token'), JSON.stringify({
+      token: {
+        access_token: 'custom-root-secret',
+        expiry: '2026-05-20T12:10:00Z',
+      },
+    }));
+
+    const diagnostic = buildAuthDiagnostic({
+      roots: [customRoot],
+      resolveAgyInfo: () => ({ found: false, candidates: [] }),
+      platform: 'linux',
+      keyringReader: () => null,
+      keyringProbe: () => null,
+      keychainProbe: () => null,
+    });
+
+    assert.equal(diagnostic.readToken.found, true);
+    assert.equal(diagnostic.readToken.sourcePath, path.join(customRoot, 'antigravity-oauth-token'));
+    assert.doesNotMatch(JSON.stringify(diagnostic), /custom-root-secret/);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

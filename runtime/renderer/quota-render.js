@@ -2,37 +2,169 @@
 
 const {
   PROVIDER_LABELS,
+  LANGUAGE_TEXT,
 } = require('./lang.js');
 const {
   simplifyModelName,
   compactModelName,
   sanitizeTerminalText,
+  formatTokens,
   formatDuration,
   formatQuotaPercent,
 } = require('./format.js');
+const { pickCriticalWindow, classifyQuotaWindow, isObservationExpired } = require('../quota/models.js');
+
+const ANSI_STRIP_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+const MAX_CAPACITY_LINE_COLS = 78;
+
+/**
+ * Estimate visible terminal column width (CJK / wide chars = 2, others = 1).
+ * @param {string} str
+ * @returns {number}
+ */
+function visibleColumnWidth(str) {
+  const clean = String(str || '').replace(ANSI_STRIP_RE, '');
+  let width = 0;
+  for (const ch of clean) {
+    const code = ch.codePointAt(0);
+    if (
+      (code >= 0x1100 && code <= 0x115f) ||
+      (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
+      (code >= 0xac00 && code <= 0xd7a3) ||
+      (code >= 0xf900 && code <= 0xfaff) ||
+      (code >= 0xfe10 && code <= 0xfe19) ||
+      (code >= 0xfe30 && code <= 0xfe6f) ||
+      (code >= 0xff00 && code <= 0xff60) ||
+      (code >= 0xffe0 && code <= 0xffe6)
+    ) {
+      width += 2;
+    } else {
+      width += 1;
+    }
+  }
+  return width;
+}
+
+function formatCalibratingPercent(fraction) {
+  const pct = Math.max(0, (Number(fraction) || 0) * 100);
+  return pct.toFixed(1).replace(/\.0$/, '');
+}
+
+/**
+ * Render the 5h & Weekly Quota Capacity Estimate line for table / models modes.
+ * Returns empty string when idle/uncalibrated so existing layouts add 0 extra lines.
+ *
+ * @param {Object|null} quotaCapacity
+ * @param {Object} ctx
+ * @returns {string}
+ */
+function renderQuotaCapacityLine(quotaCapacity, ctx) {
+  if (!quotaCapacity || typeof quotaCapacity !== 'object') return '';
+
+  const five = quotaCapacity.fiveHour || null;
+  const week = quotaCapacity.weekly || null;
+  const hasReady = five?.status === 'ready' || week?.status === 'ready';
+  const hasCalibrating = five?.status === 'calibrating' || week?.status === 'calibrating';
+
+  if (!hasReady && !hasCalibrating) return '';
+
+  const colors = ctx?.colors || {};
+  const cyan = colors.cyan || '';
+  const reset = colors.reset || '';
+  const gray = colors.gray || '';
+  const red = colors.red || '';
+  const yellow = colors.yellow || '';
+  const dim = colors.dim || '';
+  const glyph = ctx?.glyph || { vbar: '│', ellipsis: '…' };
+  const thresholds = ctx?.thresholds || { warnThresh: 0.7, critThresh: 0.9 };
+  const unicode = ctx?.unicode !== undefined ? Boolean(ctx.unicode) : glyph.vbar === '│';
+  const text = ctx?.text || LANGUAGE_TEXT.en;
+
+  const approx = unicode ? '≈' : '~';
+  const estLabel = text.estLabel || 'Est';
+  const fiveShort = text.fiveHourShort || '5h';
+  const weekShort = text.weekShort || 'week';
+  const tokUnit = text.tokUnit || 'tok';
+  const calibratingLabel = text.estCalibrating || 'calibrating';
+
+  let modelLabel = sanitizeTerminalText(quotaCapacity.modelName || quotaCapacity.bucket || '', 24);
+
+  const buildLine = (label) => {
+    const labelSegment = label ? ` (${cyan}${label}${gray})` : '';
+    const prefix = `  ${gray}${approx} ${estLabel}${labelSegment}:${reset} `;
+
+    if (!hasReady && hasCalibrating) {
+      let target = null;
+      if (five?.status === 'calibrating' && week?.status === 'calibrating') {
+        const fiveRatio = (five.observedDeltaQ || 0) / (five.minDeltaQ || 0.02);
+        const weekRatio = (week.observedDeltaQ || 0) / (week.minDeltaQ || 0.01);
+        target = fiveRatio >= weekRatio ? five : week;
+      } else {
+        target = five?.status === 'calibrating' ? five : week;
+      }
+      const obsPct = formatCalibratingPercent(target.observedDeltaQ);
+      const minPct = formatCalibratingPercent(target.minDeltaQ || 0.02);
+      return `${prefix}${gray}${calibratingLabel} (${obsPct}%/${minPct}%)${reset}`;
+    }
+
+    const formatWindowSegment = (winLabel, win) => {
+      if (!win || win.status !== 'ready') {
+        return `${gray}${winLabel} --${reset}`;
+      }
+      const totalStr = formatTokens(win.totalTokens || 0);
+      const star = win.isPrior ? `${dim}*${reset}` : '';
+      if (win.exhausted || win.remainingTokens === 0) {
+        return `${gray}${winLabel} ${red}0${gray}/${totalStr} ${tokUnit}${star}${reset}`;
+      }
+      const remStr = formatTokens(win.remainingTokens || 0);
+      const pct = Number.isFinite(win.remainingFraction) ? win.remainingFraction * 100 : 100;
+      const valColor = pct <= (1 - thresholds.critThresh) * 100
+        ? red
+        : pct <= (1 - thresholds.warnThresh) * 100
+          ? yellow
+          : gray;
+      return `${gray}${winLabel} ${valColor}~${remStr}${gray}/${totalStr} ${tokUnit}${star}${reset}`;
+    };
+
+    const fivePart = formatWindowSegment(fiveShort, five);
+    const weekPart = formatWindowSegment(weekShort, week);
+    return `${prefix}${fivePart} ${gray}${glyph.vbar}${reset} ${weekPart}`;
+  };
+
+  let line = buildLine(modelLabel);
+  // Enforce <= 78 visible columns by trimming modelLabel if necessary.
+  while (modelLabel.length > 4 && visibleColumnWidth(line) > MAX_CAPACITY_LINE_COLS) {
+    const excess = visibleColumnWidth(line) - MAX_CAPACITY_LINE_COLS;
+    const ellipsis = glyph.ellipsis || '...';
+    const nextLen = Math.max(1, modelLabel.length - Math.max(1, excess) - ellipsis.length);
+    modelLabel = modelLabel.slice(0, nextLen).trimEnd() + ellipsis;
+    line = buildLine(modelLabel);
+    if (modelLabel.endsWith(ellipsis) && visibleColumnWidth(line) > MAX_CAPACITY_LINE_COLS) {
+      modelLabel = modelLabel.slice(0, Math.max(1, nextLen - 1)).trimEnd() + ellipsis;
+      line = buildLine(modelLabel);
+      break;
+    }
+  }
+
+  return line;
+}
 
 /**
  * Build the quota-rendering closures bound to a single renderHUD invocation's
  * configuration. Renders each model as a single line "name [bar] pct ~time"
  * and pairs lines into 2 columns at the call site.
  *
- * Note: per-window data (q.windows.fiveHour / q.windows.weekly) is preserved
- * in the cache layer but intentionally not surfaced by this renderer — the
- * binding-window value already lives in q.remainingFraction / q.resetTime.
- * See runtime/quota/models.js for the windows merging logic and PR #59 for
- * a 3-column variant that displays both windows.
- *
  * @param {Object} ctx
- * @param {Object} ctx.colors  { cyan, reset, gray, red, yellow, green }
+ * @param {Object} ctx.colors  { cyan, reset, gray, red, yellow, green, dim }
  * @param {Object} ctx.glyph   { bar, empty, vbar, hbar, ellipsis }
  * @param {Object} ctx.thresholds  { warnThresh, critThresh }
  * @param {number} ctx.nameWidth
  * @param {string} ctx.divider
  * @param {Function} ctx.createProgressBar  (percent, color, width, isUsage) => string
  * @param {Function} ctx.truncateAndPad     (str, width) => string
+ * @param {Object} [ctx.text]
+ * @param {boolean} [ctx.unicode]
  */
-const { pickCriticalWindow, classifyQuotaWindow, isObservationExpired } = require('../quota/models.js');
-
 function createQuotaRenderers(ctx) {
   const { colors, glyph, thresholds, nameWidth, divider, createProgressBar, truncateAndPad } = ctx;
   const { cyan, reset, gray, red, yellow, green } = colors;
@@ -58,8 +190,11 @@ function createQuotaRenderers(ctx) {
     const resetTime = critical.resetTime || q.resetTime;
     if (resetTime) {
       const resetMs = new Date(resetTime).getTime();
-      const secsLeft = Math.max(0, Math.round((resetMs - now) / 1000));
-      rawTime = `~${formatDuration(secsLeft)}`;
+      if (Number.isFinite(resetMs)) {
+        const secsLeft = Math.max(0, Math.round((resetMs - now) / 1000));
+        const formatted = formatDuration(secsLeft);
+        if (formatted) rawTime = `~${formatted}`;
+      }
     }
     const timePart = rawTime.padEnd(6, ' ');
     const coloredTime = `${gray}${timePart}${reset}`;
@@ -153,8 +288,11 @@ function createQuotaRenderers(ctx) {
       let rawTime = '';
       if (targetWin.resetTime) {
         const resetMs = new Date(targetWin.resetTime).getTime();
-        const secsLeft = Math.max(0, Math.round((resetMs - now) / 1000));
-        rawTime = `~${formatDuration(secsLeft)}`;
+        if (Number.isFinite(resetMs)) {
+          const secsLeft = Math.max(0, Math.round((resetMs - now) / 1000));
+          const formatted = formatDuration(secsLeft);
+          if (formatted) rawTime = `~${formatted}`;
+        }
       }
       const timePart = rawTime.padEnd(6, ' ');
       const coloredTime = `${gray}${timePart}${reset}`;
@@ -179,12 +317,14 @@ function createQuotaRenderers(ctx) {
         const aw = renderWindowItem('Argon week', providerWindows.Argon.weekly);
         rows.push(`  ${a5} ${gray}${glyph.vbar}${reset} ${aw}`);
       } else {
-        const aw = renderWindowItem('Argon week', providerWindows.Argon.weekly || providerWindows.Argon.fiveHour);
+        const argonLabel = providerWindows.Argon.weekly ? 'Argon week' : 'Argon 5h';
+        const aw = renderWindowItem(argonLabel, providerWindows.Argon.weekly || providerWindows.Argon.fiveHour);
         rows.push(`  ${aw}`);
       }
     }
 
-    const dividerLine = `  ${gray}${glyph.hbar.repeat(81)}${reset}`;
+    // 2 columns of 32 chars + 3-char separator (" | ") = 67 chars (fits 80-col terminals)
+    const dividerLine = `  ${gray}${glyph.hbar.repeat(67)}${reset}`;
     return `${dividerLine}\n` + rows.join('\n');
   };
 
@@ -231,9 +371,12 @@ function createQuotaRenderers(ctx) {
     renderQuotaColumn,
     renderProviderQuotaTable,
     renderCompactQuotaLine,
+    renderQuotaCapacityLine: (quotaCapacity) => renderQuotaCapacityLine(quotaCapacity, ctx),
   };
 }
 
 module.exports = {
   createQuotaRenderers,
+  renderQuotaCapacityLine,
+  visibleColumnWidth,
 };

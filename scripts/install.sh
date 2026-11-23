@@ -42,7 +42,10 @@ agy plugin install "$REPO_URL"
 # Step 2: download runtime + configure statusLine
 echo
 echo "==> Bootstrapping runtime + statusLine config..."
-AGY_HUD_REPO_RAW="$REPO_RAW" node <(curl -fsSL "$REPO_RAW/scripts/bootstrap.js")
+TMP_BOOTSTRAP="$(mktemp "${TMPDIR:-/tmp}/agy-hud-bootstrap.XXXXXX")"
+trap 'rm -f "$TMP_BOOTSTRAP"' EXIT
+curl -fsSL "$REPO_RAW/scripts/bootstrap.js" -o "$TMP_BOOTSTRAP"
+AGY_HUD_REPO_RAW="$REPO_RAW" node "$TMP_BOOTSTRAP"
 
 cat <<DONE
 

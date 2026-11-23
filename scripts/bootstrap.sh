@@ -21,4 +21,7 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-AGY_HUD_REPO_RAW="$REPO_RAW" exec node <(curl -fsSL "$REPO_RAW/scripts/bootstrap.js")
+TMP_BOOTSTRAP="$(mktemp "${TMPDIR:-/tmp}/agy-hud-bootstrap.XXXXXX")"
+trap 'rm -f "$TMP_BOOTSTRAP"' EXIT
+curl -fsSL "$REPO_RAW/scripts/bootstrap.js" -o "$TMP_BOOTSTRAP"
+AGY_HUD_REPO_RAW="$REPO_RAW" node "$TMP_BOOTSTRAP"

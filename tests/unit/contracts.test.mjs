@@ -119,23 +119,48 @@ test('Windows uninstaller falls back when plugin uninstall fails', () => {
   assert.match(uninstallScript, /\$LASTEXITCODE\s+-ne\s+0/);
 });
 
-test('release package contract ships agent skills', () => {
+test('release package contract ships agent skills and gemini-extension.json', () => {
   const packageJson = readJson('package.json');
   const releaseScript = readText('release.sh');
+  const workflow = readText('.github/workflows/e2e.yml');
 
   assert.deepEqual(packageJson.files, [
     'runtime',
     'scripts',
     'skills',
     'plugin.json',
+    'gemini-extension.json',
     'README.md',
     'package.json',
   ]);
   assert.match(releaseScript, /skills/);
+  assert.match(workflow, /cp -r skills release_tmp\//);
+  assert.match(workflow, /Copy-Item -Recurse runtime,scripts,skills release_tmp\\/);
   assert.ok(
     fs.existsSync(path.join(projectRoot, 'skills', 'hud-config', 'SKILL.md')),
     'skills/hud-config/SKILL.md must exist so the agent can load the config skill'
   );
+});
+
+test('install.sh and bootstrap.sh use mktemp + trap instead of <(curl ...) process substitution', () => {
+  for (const rel of ['scripts/install.sh', 'scripts/bootstrap.sh']) {
+    const script = readText(rel);
+    const codeLines = script
+      .split(/\r?\n/)
+      .filter(line => !/^\s*#/.test(line))
+      .join('\n');
+    assert.doesNotMatch(codeLines, /<\(curl/, `${rel} must not use <(curl ...) process substitution`);
+    assert.match(codeLines, /mktemp/, `${rel} must stage bootstrap.js in a temp file`);
+    assert.match(codeLines, /trap\s+'rm -f "\$TMP_BOOTSTRAP"'\s+EXIT/, `${rel} must clean up temp file on EXIT`);
+    assert.match(codeLines, /curl -fsSL .* -o "\$TMP_BOOTSTRAP"/, `${rel} must fail on curl error`);
+  }
+});
+
+test('release.sh handles E2E exit codes under set -e and separates stderr from JSON report', () => {
+  const releaseScript = readText('release.sh');
+  assert.match(releaseScript, /set \+e[\s\S]*verify-display\.js[\s\S]*E2E_RC=\$\?[\s\S]*set -e/);
+  assert.doesNotMatch(releaseScript, /> \/tmp\/release-e2e\.json 2>&1/);
+  assert.match(releaseScript, /> \/tmp\/release-e2e\.json 2> \/tmp\/release-e2e\.stderr/);
 });
 
 test('package does not keep obsolete local HTTP server helpers', () => {

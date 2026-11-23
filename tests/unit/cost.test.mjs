@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  MODEL_PRICING,
+  DEFAULT_PRICING,
+  getModelPricing,
   getNativeCostUsd,
   calculateTokenCost,
   getSessionCostUsd,
@@ -73,4 +76,54 @@ test('formatUsd formats currencies across thresholds', () => {
   assert.equal(formatUsd(0.4567), '$0.457');
   assert.equal(formatUsd(0.01234), '$0.0123');
   assert.equal(formatUsd(0), '$0.00');
+});
+
+test('exports MODEL_PRICING, DEFAULT_PRICING, and getModelPricing including argon and gpt', () => {
+  assert.ok(Array.isArray(MODEL_PRICING) && MODEL_PRICING.length > 0);
+  assert.ok(DEFAULT_PRICING && typeof DEFAULT_PRICING.input === 'number');
+
+  const argon = getModelPricing('gemini-4-argon');
+  assert.ok(argon.input > DEFAULT_PRICING.input, 'argon must have dedicated pricing entry');
+
+  const gptOss = getModelPricing('gpt-oss-120b-medium');
+  assert.ok(gptOss.input > DEFAULT_PRICING.input, 'gpt-oss must have gpt pricing entry rather than flash default');
+
+  const gpt4 = getModelPricing('gpt-4o');
+  assert.equal(gpt4.input, 2.5);
+
+  assert.deepEqual(getModelPricing('unknown-model-xyz'), DEFAULT_PRICING);
+});
+
+test('getSessionCostUsd respects allowRoutedCost and does not fall back to token cost when disallowed', () => {
+  const bedrockStdin = {
+    model: { id: 'us.anthropic.claude-sonnet-4-20250514-v1:0', display_name: 'Claude Sonnet 4' },
+    context_window: {
+      total_input_tokens: 100_000,
+      total_output_tokens: 10_000,
+    },
+  };
+  assert.equal(getSessionCostUsd(bedrockStdin), null);
+  assert.equal(getSessionCostUsd(bedrockStdin, null, { allowRoutedCost: false }), null);
+  assert.ok(getSessionCostUsd(bedrockStdin, null, { allowRoutedCost: true }) > 0);
+
+  const vertexStdin = {
+    model: { id: 'claude-sonnet-4@20250514' },
+    context_window: { total_input_tokens: 100_000, total_output_tokens: 10_000 },
+  };
+  assert.equal(getSessionCostUsd(vertexStdin), null);
+});
+
+test('calculateTokenCost separates cached vs uncached input tokens on context_window payloads', () => {
+  // Sonnet: input $3/1M, output $15/1M, cacheRead $0.30/1M
+  // total_input_tokens (1,000,000) includes 900,000 cached read tokens -> 100,000 uncached input.
+  const cost = calculateTokenCost('Claude Sonnet 4.6', {
+    total_input_tokens: 1_000_000,
+    total_output_tokens: 100_000,
+    current_usage: {
+      input_tokens: 100_000,
+      cache_read_input_tokens: 900_000,
+    },
+  });
+  // (100k * $3 + 900k * $0.30 + 100k * $15) / 1M = 0.30 + 0.27 + 1.50 = 2.07
+  assert.equal(cost?.toFixed(4), '2.0700');
 });
