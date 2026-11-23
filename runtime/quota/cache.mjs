@@ -105,7 +105,21 @@ function mergeProviderQuotaCache(previousPq, incomingPq, now) {
     for (const winKey of ['fiveHour', 'weekly']) {
       const incWin = isFutureOrUnboundedWindow(incGroup?.[winKey], now) ? incGroup[winKey] : null;
       const prevWin = isFutureOrUnboundedWindow(prevGroup?.[winKey], now) ? prevGroup[winKey] : null;
-      const chosen = incWin || prevWin;
+      let chosen = incWin || prevWin;
+      if (
+        prevWin &&
+        incWin &&
+        prevWin.remainingFraction >= 1 &&
+        incWin.remainingFraction >= 1 &&
+        prevWin.resetTime &&
+        incWin.resetTime
+      ) {
+        const prevTs = Date.parse(prevWin.resetTime);
+        const incTs = Date.parse(incWin.resetTime);
+        if (Number.isFinite(prevTs) && Number.isFinite(incTs) && prevTs > now && prevTs < incTs) {
+          chosen = { ...incWin, resetTime: prevWin.resetTime };
+        }
+      }
       if (chosen) nextGroup[winKey] = chosen;
     }
     if (nextGroup.fiveHour || nextGroup.weekly) {
@@ -127,7 +141,7 @@ function sanitizeModelTopLevelReset(model, now) {
   return {
     ...model,
     resetTime: fallback?.resetTime ?? null,
-    ...(fallback ? { remainingFraction: fallback.remainingFraction } : {}),
+    remainingFraction: fallback ? fallback.remainingFraction : 1,
   };
 }
 

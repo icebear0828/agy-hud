@@ -103,6 +103,19 @@ export function normalizeQuotaModels(models, interestingModelIds = FALLBACK_AGEN
   return results;
 }
 
+function pickAnchoredWindow(oldWin, freshWin, now) {
+  if (!oldWin) return freshWin;
+  if (!freshWin) return oldWin;
+  if (oldWin.remainingFraction >= 1 && freshWin.remainingFraction >= 1 && oldWin.resetTime && freshWin.resetTime) {
+    const oldTs = Date.parse(oldWin.resetTime);
+    const freshTs = Date.parse(freshWin.resetTime);
+    if (Number.isFinite(oldTs) && Number.isFinite(freshTs) && oldTs > now && oldTs < freshTs) {
+      return { ...freshWin, resetTime: oldWin.resetTime };
+    }
+  }
+  return freshWin;
+}
+
 export function mergeQuotaWindows(fresh, previous, now = Date.now()) {
   const prevById = new Map();
   for (const q of previous || []) {
@@ -115,8 +128,31 @@ export function mergeQuotaWindows(fresh, previous, now = Date.now()) {
     freshIds.add(q.id);
     const prev = prevById.get(q.id);
     const prevWindows = prev ? pruneExpiredWindows(prev.windows, now) : {};
-    const merged = { ...prevWindows, ...(q.windows || {}) };
-    results.push({ ...q, windows: merged });
+    const freshWindows = q.windows || {};
+    const merged = { ...prevWindows, ...freshWindows };
+    for (const winKey of ['fiveHour', 'weekly']) {
+      if (prevWindows[winKey] && freshWindows[winKey]) {
+        merged[winKey] = pickAnchoredWindow(prevWindows[winKey], freshWindows[winKey], now);
+      }
+    }
+    let topResetTime = q.resetTime;
+    if (q.remainingFraction >= 1 && q.window && merged[q.window]?.resetTime) {
+      topResetTime = merged[q.window].resetTime;
+    } else if (
+      prev &&
+      prev.remainingFraction >= 1 &&
+      q.remainingFraction >= 1 &&
+      prev.resetTime &&
+      q.resetTime &&
+      (!prev.window || !q.window || prev.window === q.window)
+    ) {
+      const oldTs = Date.parse(prev.resetTime);
+      const freshTs = Date.parse(q.resetTime);
+      if (Number.isFinite(oldTs) && Number.isFinite(freshTs) && oldTs > now && oldTs < freshTs) {
+        topResetTime = prev.resetTime;
+      }
+    }
+    results.push({ ...q, resetTime: topResetTime, windows: merged });
   }
   for (const q of previous || []) {
     if (!q || !q.id || freshIds.has(q.id)) continue;

@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { createHash } from 'node:crypto';
@@ -121,7 +122,10 @@ function toolTarget(toolName: string, input: Record<string, unknown> | undefined
       return text(input.file_path ?? input.path);
     case 'read_file':
     case 'write_file':
+    case 'write_to_file':
     case 'edit_file':
+    case 'replace_file_content':
+    case 'multi_replace_file_content':
       return unquoteAgyArg(input.Path ?? input.TargetFile ?? input.path ?? input.file_path);
     case 'Glob':
     case 'Grep':
@@ -166,19 +170,150 @@ function toTodo(value: unknown): TodoItem[] {
   return content && status ? [{ content, status }] : [];
 }
 
+const MAX_TODO_FILE_BYTES = 256 * 1024;
+const TODO_FILE_PATH_RE = /(?:^|[\\/])(?:todo|task)\.md$/i;
+const FENCE_OPEN_RE = /^\s*(`{3,}|~{3,})/;
+const SECTION_DIVIDER_RE = /^\s*(?:(?:-\s*){3,}|(?:\*\s*){3,})\s*$/;
+const TOP_HEADING_RE = /^\s*#{1,2}\s+(.+)$/;
+const SUB_HEADING_RE = /^\s*#{3,6}\s+(.+)$/;
+const TODO_LINE_RE = /^\s*[-*]\s+\[([ xX/])\]\s+(.+)$/;
+
+interface MarkdownTodoSection {
+  headings: string[];
+  todos: TodoItem[];
+}
+
+function parseTodoMarkerStatus(marker: string): TodoItem['status'] {
+  if (marker === 'x' || marker === 'X') return 'completed';
+  if (marker === '/') return 'in_progress';
+  return 'pending';
+}
+
+function parseMarkdownSections(markdown: string): MarkdownTodoSection[] {
+  let current: MarkdownTodoSection = { headings: [], todos: [] };
+  const sections: MarkdownTodoSection[] = [current];
+  let fenceChar: string | null = null;
+  let fenceLen = 0;
+
+  for (const line of markdown.split(/\r?\n/)) {
+    const fenceMatch = FENCE_OPEN_RE.exec(line);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      if (fenceChar === null) {
+        fenceChar = marker[0];
+        fenceLen = marker.length;
+        continue;
+      }
+      if (marker[0] === fenceChar && marker.length >= fenceLen && /^\s*(?:`{3,}|~{3,})\s*$/.test(line)) {
+        fenceChar = null;
+        fenceLen = 0;
+      }
+      continue;
+    }
+    if (fenceChar !== null) continue;
+
+    if (SECTION_DIVIDER_RE.test(line)) {
+      current = { headings: [], todos: [] };
+      sections.push(current);
+      continue;
+    }
+
+    const topHeading = TOP_HEADING_RE.exec(line);
+    if (topHeading) {
+      const h = sanitizeDisplayText(topHeading[1]).trim();
+      current = { headings: h ? [h] : [], todos: [] };
+      sections.push(current);
+      continue;
+    }
+
+    const subHeading = SUB_HEADING_RE.exec(line);
+    if (subHeading) {
+      const h = sanitizeDisplayText(subHeading[1]).trim();
+      if (h) current.headings.push(h);
+      continue;
+    }
+
+    const todoMatch = TODO_LINE_RE.exec(line);
+    if (todoMatch) {
+      const content = sanitizeDisplayText(todoMatch[2]);
+      if (content) {
+        current.todos.push({ content, status: parseTodoMarkerStatus(todoMatch[1]) });
+      }
+    }
+  }
+  return sections;
+}
+
+function parseRawTodoLines(fragment: string): TodoItem[] {
+  return parseMarkdownSections(fragment).flatMap((sec) => sec.todos);
+}
+
+export function extractMarkdownTodos(markdown: string, hint?: string): TodoItem[] {
+  if (typeof markdown !== 'string' || !markdown.trim()) return [];
+  const nonEmpty = parseMarkdownSections(markdown).filter((sec) => sec.todos.length > 0);
+  if (nonEmpty.length === 0) return [];
+  if (nonEmpty.length === 1) return [...nonEmpty[0].todos];
+
+  if (typeof hint === 'string' && hint.trim()) {
+    const hintSections = parseMarkdownSections(hint);
+    const hintTodoSections = hintSections.filter((sec) => sec.todos.length > 0);
+    // Only apply hint matching when hint targets a specific snippet/section rather than the entire multi-section document
+    if (hintTodoSections.length <= 1) {
+      const hintTodoContents = hintSections.flatMap((sec) => sec.todos.map((t) => t.content));
+      const hintHeadings = hintSections.flatMap((sec) => sec.headings);
+      const todoMatched =
+        hintTodoContents.length > 0
+          ? nonEmpty.filter((sec) => sec.todos.some((t) => hintTodoContents.includes(t.content)))
+          : [];
+      const headingMatched =
+        hintHeadings.length > 0
+          ? nonEmpty.filter((sec) => sec.headings.some((h) => hintHeadings.includes(h)))
+          : [];
+      let matched: MarkdownTodoSection[] = [];
+      if (todoMatched.length > 0 && headingMatched.length > 0) {
+        const both = todoMatched.filter((sec) => headingMatched.includes(sec));
+        matched = both.length > 0 ? both : todoMatched;
+      } else if (todoMatched.length > 0) {
+        matched = todoMatched;
+      } else if (headingMatched.length > 0) {
+        matched = headingMatched;
+      } else {
+        const cleanHint = sanitizeDisplayText(hint).trim();
+        if (cleanHint) {
+          matched = nonEmpty.filter(
+            (sec) => sec.todos.some((t) => t.content.includes(cleanHint)) || sec.headings.some((h) => h.includes(cleanHint)),
+          );
+        }
+      }
+      if (matched.length > 0) {
+        return [...matched[matched.length - 1].todos];
+      }
+    }
+  }
+
+  for (let i = nonEmpty.length - 1; i >= 0; i--) {
+    if (nonEmpty[i].todos.some((t) => t.status !== 'completed')) {
+      return [...nonEmpty[i].todos];
+    }
+  }
+  return [...nonEmpty[nonEmpty.length - 1].todos];
+}
+
 function parseDurationToMs(durationStr: string): number {
   let ms = 0;
-  const segments = [...durationStr.matchAll(/(\d+)([hms])/g)];
+  const segments = [...durationStr.matchAll(/(\d+(?:\.\d+)?)([dhms])/gi)];
   if (segments.length > 0) {
-    for (const [, val, unit] of segments) {
-      const n = parseInt(val, 10);
-      if (unit === 'h') ms += n * 3_600_000;
-      else if (unit === 'm') ms += n * 60_000;
-      else if (unit === 's') ms += n * 1000;
+    for (const [, val, rawUnit] of segments) {
+      const n = parseFloat(val);
+      const unit = rawUnit.toLowerCase();
+      if (unit === 'd') ms += Math.round(n * 86_400_000);
+      else if (unit === 'h') ms += Math.round(n * 3_600_000);
+      else if (unit === 'm') ms += Math.round(n * 60_000);
+      else if (unit === 's') ms += Math.round(n * 1000);
     }
   } else {
-    const val = parseInt(durationStr, 10);
-    if (Number.isFinite(val)) ms = val * 1000;
+    const val = parseFloat(durationStr);
+    if (Number.isFinite(val)) ms = Math.round(val * 1000);
   }
   return ms;
 }
@@ -260,14 +395,31 @@ class Parser {
   private lastStepTimeMs: number | null = null;
   private pendingAgyToolIds: string[] = [];
   private agyToolSeq = 0;
+  private lastTodoFilePath: string | undefined;
+  private lastTodoSource: 'markdown' | 'tool' | undefined;
+  private lastTodoHint: string | undefined;
   private data: TranscriptData = { ...emptyTranscript(), compactionCount: 0, steps: 0, totalApiDurationMs: 0 };
 
   private addAgent(id: string, entry: AgentEntry): void {
     this.agents.set(id, entry);
-    if (cap(this.agents, AGENTS_KEPT)) {
-      for (const key of this.agentCompletions.keys()) if (!this.agents.has(key)) this.agentCompletions.delete(key);
-      for (const [agentId, key] of this.agentIdToToolUseId) if (!this.agents.has(key)) this.agentIdToToolUseId.delete(agentId);
-      for (const [toolId, rec] of this.reopenedByTool) if (!this.agents.has(rec.agentCallId)) this.reopenedByTool.delete(toolId);
+    if (this.agents.size > AGENTS_KEPT) {
+      const evictedIds = new Set<string>();
+      for (const [key, agent] of this.agents) {
+        if (this.agents.size <= AGENTS_KEPT) break;
+        if (agent.status !== 'running') {
+          this.agents.delete(key);
+          evictedIds.add(key);
+        }
+      }
+      if (evictedIds.size > 0) {
+        for (const key of evictedIds) this.agentCompletions.delete(key);
+        for (const [agentId, key] of this.agentIdToToolUseId) {
+          if (evictedIds.has(key)) this.agentIdToToolUseId.delete(agentId);
+        }
+        for (const [toolId, rec] of this.reopenedByTool) {
+          if (evictedIds.has(rec.agentCallId)) this.reopenedByTool.delete(toolId);
+        }
+      }
     }
   }
 
@@ -421,7 +573,7 @@ class Parser {
         const callId = `agy-tc-${++this.agyToolSeq}`;
         const args = tc.args ?? {};
         if (tc.name === 'read_file') {
-          const p = unquoteAgyArg(args.Path);
+          const p = unquoteAgyArg(args.Path ?? args.TargetFile ?? args.path ?? args.file_path);
           const pluginSkill = p?.match(/\/plugins\/([^/]+)\/skills\/([^/]+)\/SKILL\.md$/i);
           if (pluginSkill?.[1] && pluginSkill?.[2]) {
             const s = name(`${pluginSkill[1]}:${pluginSkill[2]}`);
@@ -434,21 +586,7 @@ class Parser {
             }
           }
         }
-        if ((tc.name === 'write_file' || tc.name === 'write_to_file') && typeof args.Path === 'string') {
-          const targetPath = unquoteAgyArg(args.Path) ?? '';
-          const body = unquoteRaw(args.Content ?? args.CodeContent) ?? '';
-          if (/(?:todo|task)\.md$/i.test(targetPath) && body) {
-            const parsedTodos: TodoItem[] = [];
-            for (const line of body.split(/\r?\n/)) {
-              const m = /^\s*[-*]\s+\[([ xX/])\]\s+(.+)$/.exec(line);
-              if (!m) continue;
-              const status: TodoItem['status'] = m[1] === 'x' || m[1] === 'X' ? 'completed' : m[1] === '/' ? 'in_progress' : 'pending';
-              const content = sanitizeDisplayText(m[2]);
-              if (content) parsedTodos.push({ content, status });
-            }
-            if (parsedTodos.length > 0) this.replaceTodos(parsedTodos);
-          }
-        }
+        this.handleTodoFileTool(tc.name, args, true);
         if (tc.name === 'call_mcp_tool') {
           const srv = name(unquoteAgyArg(args.ServerName));
           if (srv) this.mcpServers.add(srv);
@@ -590,7 +728,9 @@ class Parser {
       deepFind(entry, 'quotaResetDelay') !== undefined ||
       deepFind(entry, 'quotaResetTimeStamp') !== undefined ||
       entryContent.includes('HTTP 429') ||
-      entryContent.includes('RESOURCE_EXHAUSTED');
+      entryContent.includes('RESOURCE_EXHAUSTED') ||
+      entryContent.includes('quotaResetTimeStamp') ||
+      entryContent.includes('quotaResetDelay');
     if (!isRateLimit) return;
 
     let delayMs = 0;
@@ -603,17 +743,37 @@ class Parser {
       if (Number.isFinite(parsedTs)) timestampMs = parsedTs;
     }
 
+    if (entryContent) {
+      if (!timestampMs) {
+        const tsMatch = /\\?"quotaResetTimeStamp\\?"\s*:\s*\\?"([^"\\]+)\\?"/.exec(entryContent);
+        if (tsMatch?.[1]) {
+          const parsedTs = Date.parse(tsMatch[1]);
+          if (Number.isFinite(parsedTs)) timestampMs = parsedTs;
+        }
+      }
+      if (!delayMs) {
+        const delayMatch =
+          /\\?"(?:quotaResetDelay|retryDelay)\\?"\s*:\s*\\?"([^"\\]+)\\?"/.exec(entryContent) ??
+          /(?:\bResets in|\btry again in)\s+((?:\d+(?:\.\d+)?[dhms]\s*)+)/i.exec(entryContent);
+        if (delayMatch?.[1]) {
+          delayMs = parseDurationToMs(delayMatch[1]);
+        }
+      }
+    }
+
+    const timeStr = entry.created_at ?? entry.timestamp;
+    const parsedEntryTime = timeStr ? Date.parse(timeStr) : Number.NaN;
+    const baseTime = Number.isFinite(parsedEntryTime) ? parsedEntryTime : Date.now();
+
     let resetTimeMs = 0;
     if (timestampMs > 0) resetTimeMs = timestampMs;
     else if (delayMs > 0) {
-      const timeStr = entry.created_at ?? entry.timestamp;
-      const entryTime = timeStr ? new Date(timeStr).getTime() : Date.now();
-      resetTimeMs = entryTime + delayMs;
+      resetTimeMs = baseTime + delayMs;
     }
 
-    if (resetTimeMs > Date.now()) {
+    if (resetTimeMs > 0 && resetTimeMs > (Number.isFinite(parsedEntryTime) ? parsedEntryTime : Date.now())) {
       const prev = this.data.imageExhausted ? Date.parse(this.data.imageExhausted.resetTime) : 0;
-      if (resetTimeMs > prev) {
+      if (!Number.isFinite(prev) || resetTimeMs > prev) {
         this.data.imageExhausted = { exhausted: true, resetTime: new Date(resetTimeMs).toISOString() };
       }
     }
@@ -679,14 +839,17 @@ class Parser {
         background: input?.run_in_background === true,
       });
     } else if (toolName === 'TodoWrite') {
+      this.lastTodoSource = 'tool';
       if (Array.isArray(input?.todos)) this.replaceTodos(input.todos.flatMap(toTodo));
     } else if (toolName === 'TaskCreate') {
+      this.lastTodoSource = 'tool';
       const content = text(input?.subject) ?? text(input?.description);
       this.todos.push({ content: content ?? 'Untitled task', status: taskStatus(input?.status) ?? 'pending' });
       const numbered = String(this.nextTaskId++);
       const explicit = typeof input?.taskId === 'string' || typeof input?.taskId === 'number' ? String(input.taskId) : null;
       for (const id of explicit ? [explicit] : [numbered, block.id]) if (id) this.taskIndex.set(id, this.todos.length - 1);
     } else if (toolName === 'TaskUpdate') {
+      this.lastTodoSource = 'tool';
       const index = this.findTask(input?.taskId);
       if (index === null) return;
       const todo = this.todos[index];
@@ -700,6 +863,7 @@ class Parser {
       const content = text(input?.subject) ?? text(input?.description);
       if (content) todo.content = content;
     } else {
+      this.handleTodoFileTool(toolName, input, false);
       this.tools.set(block.id as string, {
         id: block.id as string,
         name: toolName,
@@ -708,6 +872,64 @@ class Parser {
         startTime: at,
       });
       cap(this.tools, TOOLS_TRACKED);
+    }
+  }
+
+  private handleTodoFileTool(toolName: string, args: Record<string, unknown> | undefined, isAgyQuoted: boolean): void {
+    if (!args) return;
+    const isTodoWriteTool = toolName === 'write_file' || toolName === 'write_to_file';
+    const isTodoEditTool =
+      toolName === 'edit_file' || toolName === 'replace_file_content' || toolName === 'multi_replace_file_content';
+    if (!isTodoWriteTool && !isTodoEditTool) return;
+
+    const readArg = (v: unknown): string => (isAgyQuoted ? unquoteRaw(v) : typeof v === 'string' ? v : unquoteRaw(v)) ?? '';
+    const targetPath =
+      (isAgyQuoted
+        ? unquoteAgyArg(args.Path ?? args.TargetFile ?? args.path ?? args.file_path)
+        : text(args.Path ?? args.TargetFile ?? args.path ?? args.file_path)) ?? '';
+    if (!TODO_FILE_PATH_RE.test(targetPath)) return;
+
+    this.lastTodoFilePath = targetPath;
+    this.lastTodoSource = 'markdown';
+    if (isTodoWriteTool) {
+      const body = readArg(args.Content ?? args.CodeContent ?? args.content);
+      const isAppend = args.Append === true || readArg(args.Append) === 'true';
+      if (body) this.lastTodoHint = body;
+      if (!isAppend) {
+        const parsedTodos = body ? extractMarkdownTodos(body) : [];
+        if (parsedTodos.length > 0) this.replaceTodos(parsedTodos);
+      } else if (body) {
+        this.applyTodoPatchesInMemory([{ target: '', replacement: body }]);
+      }
+    } else if (toolName === 'multi_replace_file_content') {
+      let rawChunks: unknown = args.ReplacementChunks ?? args.chunks;
+      if (typeof rawChunks === 'string') {
+        const unquoted = readArg(rawChunks);
+        if (unquoted) {
+          try {
+            rawChunks = JSON.parse(unquoted);
+          } catch {}
+        }
+      }
+      const patches: Array<{ target: string; replacement: string }> = [];
+      if (Array.isArray(rawChunks)) {
+        for (const chunk of rawChunks) {
+          if (!chunk || typeof chunk !== 'object') continue;
+          const c = chunk as Record<string, unknown>;
+          const target = readArg(c.TargetContent ?? c.Target ?? c.target ?? c.old_string);
+          const replacement = readArg(c.ReplacementContent ?? c.Replacement ?? c.replacement ?? c.new_string);
+          if (target || replacement) patches.push({ target, replacement });
+        }
+      }
+      const hintText = patches.map((p) => p.replacement || p.target).filter(Boolean).join('\n');
+      if (hintText) this.lastTodoHint = hintText;
+      if (patches.length > 0) this.applyTodoPatchesInMemory(patches);
+    } else {
+      const target = readArg(args.Target ?? args.TargetContent ?? args.target ?? args.old_string);
+      const replacement = readArg(args.Replacement ?? args.ReplacementContent ?? args.replacement ?? args.new_string);
+      const hintText = replacement || target;
+      if (hintText) this.lastTodoHint = hintText;
+      if (target || replacement) this.applyTodoPatchesInMemory([{ target, replacement }]);
     }
   }
 
@@ -738,6 +960,140 @@ class Parser {
         agent.background = true;
       }
       if (!agent.background) agent.endTime = at;
+    }
+  }
+
+  private applyTodoPatchesInMemory(patches: Array<{ target: string; replacement: string }>): void {
+    const next = this.todos.map((t) => ({ ...t }));
+    for (const { target, replacement } of patches) {
+      const targetTodos = target ? parseRawTodoLines(target) : [];
+      const repSections = replacement ? parseMarkdownSections(replacement).filter((sec) => sec.todos.length > 0) : [];
+      const hasSectionBreakInRep =
+        replacement &&
+        (repSections.length > 1 ||
+          /^\s*(?:(?:-\s*){3,}|(?:\*\s*){3,})\s*$/m.test(replacement) ||
+          /^\s*#{1,2}\s+/m.test(replacement));
+
+      if (targetTodos.length === 0 && hasSectionBreakInRep) {
+        const extracted = extractMarkdownTodos(replacement);
+        if (extracted.length > 0) {
+          const hasIncomplete = extracted.some((t) => t.status !== 'completed');
+          const allCurrentDone = next.length === 0 || next.every((t) => t.status === 'completed');
+          if (hasIncomplete || allCurrentDone) {
+            next.splice(0, next.length, ...extracted);
+            continue;
+          }
+        }
+      }
+
+      const repTodos = replacement ? parseRawTodoLines(replacement) : [];
+      if (targetTodos.length === 0 && repTodos.length === 0) continue;
+
+      if (targetTodos.length > 0 && targetTodos.length === repTodos.length) {
+        for (let i = 0; i < targetTodos.length; i++) {
+          const tItem = targetTodos[i];
+          const rItem = repTodos[i];
+          let idx = next.findIndex((item) => item.content === tItem.content && item.status === tItem.status);
+          if (idx === -1) idx = next.findIndex((item) => item.content === tItem.content);
+          if (idx !== -1) {
+            next[idx] = { content: rItem.content, status: rItem.status };
+          } else {
+            const rIdx = next.findIndex((item) => item.content === rItem.content);
+            if (rIdx !== -1) next[rIdx] = { content: rItem.content, status: rItem.status };
+            else next.push({ content: rItem.content, status: rItem.status });
+          }
+        }
+        continue;
+      }
+
+      if (targetTodos.length > 0) {
+        const startIdx = next.findIndex((item) => item.content === targetTodos[0].content);
+        if (
+          startIdx !== -1 &&
+          startIdx + targetTodos.length <= next.length &&
+          targetTodos.every((tItem, offset) => next[startIdx + offset].content === tItem.content)
+        ) {
+          next.splice(startIdx, targetTodos.length, ...repTodos);
+          continue;
+        }
+      }
+
+      const repContentSet = new Set(repTodos.map((t) => t.content));
+      for (const tItem of targetTodos) {
+        if (!repContentSet.has(tItem.content)) {
+          const idx = next.findIndex((item) => item.content === tItem.content);
+          if (idx !== -1) next.splice(idx, 1);
+        }
+      }
+      for (const rItem of repTodos) {
+        const idx = next.findIndex((item) => item.content === rItem.content);
+        if (idx !== -1) {
+          next[idx] = { content: rItem.content, status: rItem.status };
+        } else {
+          next.push({ content: rItem.content, status: rItem.status });
+        }
+      }
+    }
+    this.replaceTodos(next);
+  }
+
+  private refreshTodosFromDisk(todoFiles?: string[]): void {
+    if (this.lastTodoSource !== 'markdown' || !this.lastTodoFilePath) return;
+    const rawTarget = this.lastTodoFilePath;
+    const home = (process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME) || os.homedir();
+    const expandedTarget =
+      rawTarget === '~'
+        ? home
+        : rawTarget.startsWith('~/') || rawTarget.startsWith('~\\')
+          ? path.join(home, rawTarget.slice(2))
+          : rawTarget;
+    const normTarget = expandedTarget.replace(/\\/g, '/').replace(/^(?:\.\/)+/, '');
+    const lowerNormTarget = normTarget.toLowerCase();
+    const baseTarget = path.posix.basename(lowerNormTarget);
+
+    const candidates: string[] = [];
+    const addCandidate = (p: string | undefined): void => {
+      if (typeof p === 'string' && p && !candidates.includes(p)) {
+        candidates.push(p);
+      }
+    };
+
+    if (Array.isArray(todoFiles) && todoFiles.length > 0) {
+      for (let i = todoFiles.length - 1; i >= 0; i--) {
+        const f = todoFiles[i];
+        if (f === rawTarget || f === expandedTarget) addCandidate(f);
+      }
+      for (let i = todoFiles.length - 1; i >= 0; i--) {
+        const f = todoFiles[i];
+        const normF = typeof f === 'string' ? f.replace(/\\/g, '/').toLowerCase() : '';
+        if (normF && (normF === lowerNormTarget || normF.endsWith(`/${lowerNormTarget}`))) {
+          addCandidate(f);
+        }
+      }
+      for (let i = todoFiles.length - 1; i >= 0; i--) {
+        const f = todoFiles[i];
+        if (typeof f === 'string' && path.basename(f).toLowerCase() === baseTarget) {
+          addCandidate(f);
+        }
+      }
+      addCandidate(todoFiles[todoFiles.length - 1]);
+    }
+    addCandidate(expandedTarget);
+    addCandidate(rawTarget);
+
+    for (const candidatePath of candidates) {
+      try {
+        const st = fs.statSync(candidatePath);
+        if (!st.isFile() || st.size > MAX_TODO_FILE_BYTES) continue;
+        const diskContent = fs.readFileSync(candidatePath, 'utf8');
+        const diskTodos = extractMarkdownTodos(diskContent, this.lastTodoHint);
+        if (diskTodos.length > 0) {
+          this.replaceTodos(diskTodos);
+        }
+        return;
+      } catch {
+        // EACCES / ERR_ACCESS_DENIED / ENOENT: try next candidate or retain in-memory todos
+      }
     }
   }
 
@@ -785,6 +1141,9 @@ class Parser {
       lastStepTimeMs: this.lastStepTimeMs,
       pendingAgyToolIds: this.pendingAgyToolIds,
       agyToolSeq: this.agyToolSeq,
+      lastTodoFilePath: this.lastTodoFilePath,
+      lastTodoSource: this.lastTodoSource,
+      lastTodoHint: this.lastTodoHint,
       data: this.data,
     };
   }
@@ -818,11 +1177,15 @@ class Parser {
     parser.lastStepTimeMs = s.lastStepTimeMs ?? null;
     parser.pendingAgyToolIds = s.pendingAgyToolIds ?? [];
     parser.agyToolSeq = s.agyToolSeq ?? 0;
+    parser.lastTodoFilePath = s.lastTodoFilePath;
+    parser.lastTodoSource = s.lastTodoSource;
+    parser.lastTodoHint = s.lastTodoHint;
     parser.data = s.data;
     return parser;
   }
 
-  finish(): TranscriptData {
+  finish(todoFiles?: string[]): TranscriptData {
+    this.refreshTodosFromDisk(todoFiles);
     for (const [id, endTime] of this.agentCompletions) {
       const agent = this.agents.get(id);
       if (agent?.background) agent.endTime = endTime;
@@ -1025,6 +1388,7 @@ async function parseFrom(
   parser: Parser,
   offset: number,
   save: (parser: Parser, offset: number) => void,
+  todoFiles?: string[],
 ): Promise<TranscriptData> {
   let saved = offset;
   const { end, rest } = await readLines(file, offset, (line, lineEnd) => {
@@ -1036,10 +1400,14 @@ async function parseFrom(
   });
   if (end > saved) save(parser, end);
   if (rest) parser.line(rest);
-  return parser.finish();
+  return parser.finish(todoFiles);
 }
 
-export async function parseTranscript(transcriptPath: string, dataDir: string): Promise<TranscriptData> {
+export async function parseTranscript(
+  transcriptPath: string,
+  dataDir: string,
+  todoFiles?: string[],
+): Promise<TranscriptData> {
   let file: fs.promises.FileHandle;
   try {
     if (!transcriptPath || !(await fs.promises.stat(transcriptPath)).isFile()) return emptyTranscript();
@@ -1055,12 +1423,12 @@ export async function parseTranscript(transcriptPath: string, dataDir: string): 
     const cursor = readCursor(cursorFile);
     if (cursor && (await resumes(file, stat, cursor))) {
       try {
-        return await parseFrom(file, Parser.load(cursor.state), cursor.offset, save);
+        return await parseFrom(file, Parser.load(cursor.state), cursor.offset, save, todoFiles);
       } catch (err) {
         debug('Saved transcript state unusable, rereading:', err instanceof Error ? err.message : err);
       }
     }
-    return await parseFrom(file, new Parser(), 0, save);
+    return await parseFrom(file, new Parser(), 0, save, todoFiles);
   } catch (err) {
     debug('Transcript read failed:', err instanceof Error ? err.message : err);
     return emptyTranscript();

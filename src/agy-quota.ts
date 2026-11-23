@@ -27,22 +27,37 @@ export function classifyQuotaProvider(
   return null;
 }
 
-function toStdinQuotaWindow(bucket: AgyStdinQuotaBucket | undefined): AgyQuotaWindow | undefined {
+function toStdinQuotaWindow(bucket: AgyStdinQuotaBucket | undefined, now = Date.now()): AgyQuotaWindow | undefined {
   if (!bucket || typeof bucket.remaining_fraction !== 'number' || !Number.isFinite(bucket.remaining_fraction)) {
     return undefined;
   }
+  let resetTime: string | null = typeof bucket.reset_time === 'string' && bucket.reset_time ? bucket.reset_time : null;
+  if (!resetTime && typeof bucket.reset_in_seconds === 'number' && Number.isFinite(bucket.reset_in_seconds)) {
+    if (bucket.reset_in_seconds > 0) {
+      resetTime = new Date(now + bucket.reset_in_seconds * 1000).toISOString();
+    } else {
+      return undefined;
+    }
+  }
+  if (resetTime) {
+    const ts = Date.parse(resetTime);
+    if (Number.isFinite(ts) && ts <= now) {
+      return undefined;
+    }
+  }
   return {
     remainingFraction: Math.min(1, Math.max(0, bucket.remaining_fraction)),
-    resetTime: typeof bucket.reset_time === 'string' && bucket.reset_time ? bucket.reset_time : null,
+    resetTime,
   };
 }
 
 function parseProviderStdinWindows(
   fiveBucket: AgyStdinQuotaBucket | undefined,
   weekBucket: AgyStdinQuotaBucket | undefined,
+  now = Date.now(),
 ): AgyProviderWindows | undefined {
-  const fiveHour = toStdinQuotaWindow(fiveBucket);
-  const weekly = toStdinQuotaWindow(weekBucket);
+  const fiveHour = toStdinQuotaWindow(fiveBucket, now);
+  const weekly = toStdinQuotaWindow(weekBucket, now);
   if (!fiveHour && !weekly) return undefined;
   return {
     ...(fiveHour ? { fiveHour } : {}),
@@ -50,19 +65,20 @@ function parseProviderStdinWindows(
   };
 }
 
-export function parseAgyStdinQuota(quotaObj: StdinData['quota']): AgyProviderQuotaSummary | null {
+export function parseAgyStdinQuota(quotaObj: StdinData['quota'], now = Date.now()): AgyProviderQuotaSummary | null {
   if (!quotaObj || typeof quotaObj !== 'object') return null;
   const result: AgyProviderQuotaSummary = {};
 
-  const google = parseProviderStdinWindows(quotaObj['gemini-5h'], quotaObj['gemini-weekly']);
+  const google = parseProviderStdinWindows(quotaObj['gemini-5h'], quotaObj['gemini-weekly'], now);
   if (google) result.google = google;
 
-  const claude = parseProviderStdinWindows(quotaObj['3p-5h'], quotaObj['3p-weekly']);
+  const claude = parseProviderStdinWindows(quotaObj['3p-5h'], quotaObj['3p-weekly'], now);
   if (claude) result.claude = claude;
 
   const argon = parseProviderStdinWindows(
     quotaObj['argon-5h'],
     quotaObj['argon-weekly'] ?? quotaObj['gemini-argon-wtu-weekly'],
+    now,
   );
   if (argon) result.argon = argon;
 
@@ -92,13 +108,27 @@ export function pickFresherQuotaWindow(
   if (!current) return incoming;
   if (!incoming) return current;
 
+  const curTs = parseResetMs(current.resetTime);
+  const incTs = parseResetMs(incoming.resetTime);
+  if (curTs !== null && curTs <= now && incTs !== null && incTs > now) return incoming;
+  if (incTs !== null && incTs <= now && curTs !== null && curTs > now) return current;
+
   const curLive = isNonExpiredWindow(current, now);
   const incLive = isNonExpiredWindow(incoming, now);
   if (!curLive && incLive) return incoming;
   if (curLive && !incLive) return current;
 
-  const curTs = parseResetMs(current.resetTime);
-  const incTs = parseResetMs(incoming.resetTime);
+  if (
+    current.remainingFraction >= 1 &&
+    incoming.remainingFraction >= 1 &&
+    curTs !== null &&
+    incTs !== null &&
+    curTs > now &&
+    incTs > now
+  ) {
+    return curTs <= incTs ? current : incoming;
+  }
+
   if (curTs !== null && incTs !== null) {
     if (incTs - curTs > RESET_TIME_SKEW_MS) return incoming;
     if (curTs - incTs > RESET_TIME_SKEW_MS) return current;
@@ -127,7 +157,7 @@ function pickModelTopLevelWindow(
 }
 
 export function mergeAgyQuotaProbe(probe: AgyQuotaProbe | null | undefined, stdin: StdinData, now = Date.now()): AgyQuotaProbe | null {
-  const stdinPq = parseAgyStdinQuota(stdin.quota);
+  const stdinPq = parseAgyStdinQuota(stdin.quota, now);
   if (!probe && !stdinPq) return null;
   const base: AgyQuotaProbe = probe
     ? { ...probe, models: [...(probe.models ?? [])] }
@@ -257,11 +287,26 @@ export function agyQuotaToUsageData(
 
   if (!fiveWin && !weekWin) {
     if (matchedModel) {
+      const topTs = parseResetMs(matchedModel.resetTime);
+      const topExpired = topTs !== null && topTs <= now;
+      const hadModelWindows = Boolean(matchedModel.windows?.fiveHour || matchedModel.windows?.weekly);
+      if (topExpired || hadModelWindows) {
+        return {
+          fiveHour: 0,
+          sevenDay: null,
+          fiveHourResetAt: null,
+          sevenDayResetAt: null,
+          ...(sevenDayLabel ? { sevenDayLabel } : {}),
+          fiveHourRemainingExact: 100,
+          sevenDayRemainingExact: null,
+        };
+      }
       return {
         fiveHour: toUsedPercent(matchedModel.remainingFraction),
         sevenDay: null,
         fiveHourResetAt: toResetDate(matchedModel.resetTime),
         sevenDayResetAt: null,
+        ...(sevenDayLabel ? { sevenDayLabel } : {}),
         fiveHourRemainingExact: matchedModel.remainingFraction * 100,
         sevenDayRemainingExact: null,
       };

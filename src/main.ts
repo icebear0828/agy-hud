@@ -86,13 +86,14 @@ export async function renderStdin(
 
   const [probeAnswers, transcript] = await Promise.all([
     ask(needed),
-    paths.transcript ? parseTranscript(paths.transcript, paths.data) : Promise.resolve(emptyTranscript()),
+    paths.transcript ? parseTranscript(paths.transcript, paths.data, paths.todoFiles) : Promise.resolve(emptyTranscript()),
   ]);
 
   reconcileAgentsWithStdin(transcript.agents, stdin.subagents, now);
 
-  if (config.display.showAgents && transcript.agents.length > 0 && (paths.subagents || paths.agySubagentTranscripts)) {
-    await addSubagentEfforts(paths.subagents ?? '', transcript.agents, paths.agySubagentTranscripts);
+  const runningAgents = transcript.agents.filter((agent) => agent.status === 'running');
+  if (config.display.showAgents && runningAgents.length > 0 && (paths.subagents || paths.agySubagentTranscripts)) {
+    await addSubagentEfforts(paths.subagents ?? '', runningAgents, paths.agySubagentTranscripts);
   }
 
   const jjStatus = config.jjStatus.enabled ? await getJjStatus(async () => ({ jj: probeAnswers.jj } as Record<Probe, unknown>)) : null;

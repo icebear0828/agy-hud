@@ -59,6 +59,12 @@ function pickCriticalWindow(q: AgyModelQuota, now: number): { remainingFraction:
   if (five && week) return five.remainingFraction <= week.remainingFraction ? five : week;
   if (five) return five;
   if (week) return week;
+  const topTs = q.resetTime ? Date.parse(q.resetTime) : Number.NaN;
+  const topExpired = Number.isFinite(topTs) && topTs <= now;
+  const hadWindows = Boolean(q.windows?.fiveHour || q.windows?.weekly);
+  if (topExpired || hadWindows) {
+    return { remainingFraction: 1, resetTime: null };
+  }
   return { remainingFraction: q.remainingFraction, resetTime: q.resetTime ?? null };
 }
 

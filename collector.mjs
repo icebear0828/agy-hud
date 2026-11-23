@@ -98,6 +98,84 @@ const SUBAGENT_ID_PATTERNS = [
 ];
 
 const VALID_SUBAGENT_ID = /^[\w-]{1,128}$/;
+const TODO_MUTATION_TOOLS = new Set([
+  'write_file',
+  'write_to_file',
+  'edit_file',
+  'replace_file_content',
+  'multi_replace_file_content',
+]);
+const TODO_MD_PATH_RE = /(?:^|[\\/])(?:todo|task)\.md$/i;
+const FALLBACK_TODO_TOOL_CALL_RE =
+  /\\?"name\\?"\s*:\s*\\?"(write_file|write_to_file|edit_file|replace_file_content|multi_replace_file_content)\\?"[\s\S]*?\\?"(?:Path|TargetFile|path|file_path)\\?"\s*:\s*\\?"((?:\\.|[^"\\])+)\\?"/g;
+
+function unquoteTranscriptArg(value) {
+  if (typeof value !== 'string') return null;
+  let s = value.trim();
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(s);
+      if (typeof parsed === 'string') s = parsed.trim();
+    } catch {
+      s = s.slice(1, -1).trim();
+    }
+  }
+  return s || null;
+}
+
+function extractTodoFilePaths(content, seed = []) {
+  const ordered = [];
+  const moveOrAppend = (p) => {
+    if (typeof p !== 'string' || !TODO_MD_PATH_RE.test(p)) return;
+    const idx = ordered.indexOf(p);
+    if (idx !== -1) ordered.splice(idx, 1);
+    ordered.push(p);
+  };
+
+  for (const p of seed) {
+    moveOrAppend(p);
+  }
+
+  if (!/(?:todo|task)\.md/i.test(content)) {
+    return ordered;
+  }
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    if (!/(?:todo|task)\.md/i.test(rawLine)) continue;
+    let entry = null;
+    try {
+      entry = JSON.parse(rawLine);
+    } catch {}
+    if (entry && typeof entry === 'object') {
+      if (Array.isArray(entry.tool_calls)) {
+        for (const tc of entry.tool_calls) {
+          if (!tc || typeof tc.name !== 'string' || !TODO_MUTATION_TOOLS.has(tc.name)) continue;
+          const args = tc.args ?? {};
+          const p = unquoteTranscriptArg(args.Path ?? args.TargetFile ?? args.path ?? args.file_path);
+          if (p && TODO_MD_PATH_RE.test(p)) moveOrAppend(p);
+        }
+      }
+      if (Array.isArray(entry.message?.content)) {
+        for (const block of entry.message.content) {
+          if (block?.type !== 'tool_use' || typeof block.name !== 'string' || !TODO_MUTATION_TOOLS.has(block.name)) continue;
+          const input = block.input ?? {};
+          const p = unquoteTranscriptArg(input.Path ?? input.TargetFile ?? input.path ?? input.file_path);
+          if (p && TODO_MD_PATH_RE.test(p)) moveOrAppend(p);
+        }
+      }
+    } else {
+      for (const m of rawLine.matchAll(FALLBACK_TODO_TOOL_CALL_RE)) {
+        let rawVal = m[2];
+        try {
+          rawVal = JSON.parse(`"${rawVal}"`);
+        } catch {}
+        const p = unquoteTranscriptArg(rawVal);
+        if (p && TODO_MD_PATH_RE.test(p)) moveOrAppend(p);
+      }
+    }
+  }
+  return ordered;
+}
 
 function extractSubagentIds(content, seed = []) {
   const ordered = [];
@@ -182,13 +260,13 @@ function writeSubagentMapCache(dataDir, cacheFile, entry) {
   }
 }
 
-export function discoverAgySubagentTranscripts(configDir, transcriptPath, dataDir) {
-  const result = {};
-  if (!transcriptPath) return result;
+function scanTranscriptIncremental(transcriptPath, dataDir) {
+  const empty = { ids: [], todoFiles: [] };
+  if (!transcriptPath) return empty;
   try {
     const realTranscript = fs.realpathSync(transcriptPath);
     const st = fs.statSync(realTranscript);
-    if (!st.isFile()) return result;
+    if (!st.isFile()) return empty;
 
     const cacheFile = dataDir ? path.join(dataDir, 'agy-subagent-map.json') : null;
     const cached = readSubagentMapCache(cacheFile);
@@ -196,41 +274,57 @@ export function discoverAgySubagentTranscripts(configDir, transcriptPath, dataDi
       if (cacheFile && cached && cached.realpath === realTranscript) {
         try { fs.rmSync(cacheFile, { force: true }); } catch {}
       }
-      return result;
+      return empty;
     }
 
     const maxBytes = 16 * 1024 * 1024;
     const sameFile = Boolean(cached && cached.realpath === realTranscript && cached.ino === st.ino);
 
     let ids;
+    let todoFiles;
     if (sameFile && cached.size === st.size) {
       ids = cached.ids.filter((id) => typeof id === 'string' && VALID_SUBAGENT_ID.test(id));
+      todoFiles = Array.isArray(cached.todoFiles)
+        ? cached.todoFiles.filter((p) => typeof p === 'string' && TODO_MD_PATH_RE.test(p))
+        : [];
     } else if (sameFile && st.size > cached.size) {
       const overlapStart = Math.max(0, cached.size - 512);
       const start = Math.max(overlapStart, st.size - maxBytes);
-      const seed = start === overlapStart ? cached.ids : [];
+      const seedIds = start === overlapStart ? cached.ids : [];
+      const seedTodos = start === overlapStart && Array.isArray(cached.todoFiles) ? cached.todoFiles : [];
       const content = readTranscriptSlice(realTranscript, start, st.size);
-      ids = extractSubagentIds(content, seed);
+      ids = extractSubagentIds(content, seedIds);
+      todoFiles = extractTodoFilePaths(content, seedTodos);
       writeSubagentMapCache(dataDir, cacheFile, {
         realpath: realTranscript,
         ino: st.ino,
         size: st.size,
-        ids: ids.slice(-64),
+        ids: ids.slice(-128),
+        todoFiles: todoFiles.slice(-32),
       });
     } else {
       const start = Math.max(0, st.size - maxBytes);
       const content = readTranscriptSlice(realTranscript, start, st.size);
       ids = extractSubagentIds(content);
+      todoFiles = extractTodoFilePaths(content);
       writeSubagentMapCache(dataDir, cacheFile, {
         realpath: realTranscript,
         ino: st.ino,
         size: st.size,
-        ids: ids.slice(-64),
+        ids: ids.slice(-128),
+        todoFiles: todoFiles.slice(-32),
       });
     }
+    return { ids, todoFiles };
+  } catch {
+    return empty;
+  }
+}
 
-    if (ids.length === 0) return result;
-
+function resolveSubagentTranscriptsFromIds(configDir, ids) {
+  const result = {};
+  if (!configDir || !Array.isArray(ids) || ids.length === 0) return result;
+  try {
     const brainRoot = fs.realpathSync(path.join(configDir, 'brain'));
     const validEntries = [];
     for (const id of ids) {
@@ -242,11 +336,55 @@ export function discoverAgySubagentTranscripts(configDir, transcriptPath, dataDi
         }
       } catch {}
     }
-    for (const [id, real] of validEntries.slice(-20)) {
+    for (const [id, real] of validEntries.slice(-64)) {
       result[id] = real;
     }
   } catch {}
   return result;
+}
+
+export function discoverAgySubagentTranscripts(configDir, transcriptPath, dataDir) {
+  const { ids } = scanTranscriptIncremental(transcriptPath, dataDir);
+  return resolveSubagentTranscriptsFromIds(configDir, ids);
+}
+
+function isInsideRoot(filePath, rootDir) {
+  if (!filePath || !rootDir) return false;
+  const rel = path.relative(rootDir, filePath);
+  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+function resolveSafeTodoFiles({ rawTodoPaths, cwd, projectDir, convBrainDirs, home }) {
+  if (!Array.isArray(rawTodoPaths) || rawTodoPaths.length === 0) return [];
+  const safeRoots = new Set();
+  const addRoot = (dir) => {
+    if (typeof dir !== 'string' || !dir) return;
+    safeRoots.add(path.resolve(dir));
+    try {
+      safeRoots.add(fs.realpathSync(dir));
+    } catch {}
+  };
+  addRoot(cwd);
+  addRoot(projectDir);
+  for (const dir of convBrainDirs) addRoot(dir);
+  if (home) addRoot(path.join(home, 'ai-tasks'));
+
+  const roots = [...safeRoots];
+  const granted = [];
+  for (const rawPath of rawTodoPaths) {
+    if (typeof rawPath !== 'string' || !rawPath) continue;
+    const expanded = home ? expandHome(rawPath, home) : rawPath;
+    const candidate = path.isAbsolute(expanded) ? expanded : cwd ? path.resolve(cwd, expanded) : null;
+    if (!candidate) continue;
+    try {
+      const real = fs.realpathSync(candidate);
+      if (!TODO_MD_PATH_RE.test(real)) continue;
+      if (!fs.statSync(real).isFile()) continue;
+      if (!roots.some((rootDir) => isInsideRoot(real, rootDir))) continue;
+      if (!granted.includes(real)) granted.push(real);
+    } catch {}
+  }
+  return granted;
 }
 
 export function logicPaths(paths, input) {
@@ -307,7 +445,26 @@ export function logicPaths(paths, input) {
   const normalizedCwd = cwd ? cwd.replace(/\\/g, '/') : '';
   const projectKey = normalizedCwd ? normalizedCwd.replace(/:/g, '').replace(/\//g, '-') : '';
   const projectMemory = projectKey ? path.join(paths.claudeConfigDir, 'projects', projectKey, 'memory', 'MEMORY.md') : null;
-  const agySubagentTranscripts = discoverAgySubagentTranscripts(paths.configDir, transcript, paths.dataDir);
+  const projectDir = absolute(input?.workspace?.project_dir);
+  const convBrainDirs = [];
+  if (typeof input?.conversation_id === 'string' && /^[\w-]{1,128}$/.test(input.conversation_id)) {
+    convBrainDirs.push(path.join(paths.configDir, 'brain', input.conversation_id));
+  }
+  if (transcript) {
+    const candidateConvDir = path.resolve(transcript, '..', '..', '..');
+    if (samePath(path.dirname(candidateConvDir), path.join(paths.configDir, 'brain'))) {
+      convBrainDirs.push(candidateConvDir);
+    }
+  }
+  const scanned = scanTranscriptIncremental(transcript, paths.dataDir);
+  const agySubagentTranscripts = resolveSubagentTranscriptsFromIds(paths.configDir, scanned.ids);
+  const todoFiles = resolveSafeTodoFiles({
+    rawTodoPaths: scanned.todoFiles,
+    cwd,
+    projectDir,
+    convBrainDirs,
+    home: paths.home,
+  });
 
   return {
     data: paths.dataDir,
@@ -322,6 +479,7 @@ export function logicPaths(paths, input) {
     transcript,
     subagents: transcript ? path.join(path.dirname(transcript), path.basename(transcript, '.jsonl'), 'subagents') : null,
     agySubagentTranscripts,
+    todoFiles,
   };
 }
 

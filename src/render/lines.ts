@@ -152,8 +152,19 @@ export function imageQuotaLine(f: Frame): string | null {
   const colors = f.config?.colors;
   const exhausted = f.transcript?.imageExhausted;
   if (exhausted?.exhausted) {
-    const resetPart = exhausted.resetTime ? ` (${sanitizeDisplayText(exhausted.resetTime)})` : '';
-    return `${label(`${t('label.imageQuota')}:`, colors)} ${critical(t('status.imageExhausted') + resetPart, colors)}`;
+    const rawReset = exhausted.resetTime;
+    const resetMs = rawReset ? Date.parse(rawReset) : Number.NaN;
+    if (!Number.isFinite(resetMs) || resetMs > f.now) {
+      let resetPart = '';
+      if (Number.isFinite(resetMs)) {
+        const countdown = formatResetTime(new Date(resetMs), 'relative', wallClock(f.config.display), f.now);
+        if (countdown) resetPart = ` (${countdown})`;
+      } else if (rawReset) {
+        const clean = sanitizeDisplayText(rawReset);
+        if (clean) resetPart = ` (${clean})`;
+      }
+      return `${label(`${t('label.imageQuota')}:`, colors)} ${critical(t('status.imageExhausted') + resetPart, colors)}`;
+    }
   }
   const imgModel = f.agyQuota?.models?.find(isImageModel);
   if (!imgModel) return null;

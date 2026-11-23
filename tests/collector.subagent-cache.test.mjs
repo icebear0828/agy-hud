@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { discoverAgySubagentTranscripts, logicPaths, stripLogic } from '../collector.mjs';
+import { discoverAgySubagentTranscripts, logicPaths, readGrants, stripLogic } from '../collector.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -126,10 +126,10 @@ describe('collector / subagent map cache, stripLogic tmp guard & version sync', 
       const dataDir = path.join(tmp, 'data');
       const transcriptPath = path.join(tmp, 'main.jsonl');
 
-      const realIds = Array.from({ length: 21 }, (_, i) => `subagent-real-${String(i).padStart(2, '0')}`);
+      const realIds = Array.from({ length: 65 }, (_, i) => `subagent-real-${String(i).padStart(2, '0')}`);
       const subFiles = Object.fromEntries(realIds.map((id) => [id, createSubagentFile(configDir, id)]));
 
-      // Mention all 21 real IDs, mention real-00 again later (moves to tail so real-01 is evicted instead of real-00),
+      // Mention all 65 real IDs, mention real-00 again later (moves to tail so real-01 is evicted instead of real-00),
       // then append 25 bogus conversation:// IDs that do NOT exist on disk.
       const lines = [
         ...realIds.map((id) => JSON.stringify({ type: 'GENERIC', content: `conversation://${id}` })),
@@ -139,10 +139,10 @@ describe('collector / subagent map cache, stripLogic tmp guard & version sync', 
       fs.writeFileSync(transcriptPath, `${lines.join('\n')}\n`);
 
       const mapped = discoverAgySubagentTranscripts(configDir, transcriptPath, dataDir);
-      assert.equal(Object.keys(mapped).length, 20, 'should keep 20 real existing subagents despite 25 trailing bogus IDs');
+      assert.equal(Object.keys(mapped).length, 64, 'should keep 64 real existing subagents despite 25 trailing bogus IDs');
       assert.equal(mapped[realIds[0]], subFiles[realIds[0]], 'repeated real-00 moved to tail and must not be evicted');
       assert.equal(mapped[realIds[1]], undefined, 'real-01 is now oldest after real-00 moved to tail and gets evicted');
-      assert.equal(mapped[realIds[20]], subFiles[realIds[20]]);
+      assert.equal(mapped[realIds[64]], subFiles[realIds[64]]);
 
       // Truncate transcript to 0 bytes -> clears stale cache file and returns {}
       fs.truncateSync(transcriptPath, 0);
@@ -182,12 +182,106 @@ describe('collector / subagent map cache, stripLogic tmp guard & version sync', 
     }
   });
 
-  test('manifest versions are synchronized at 0.4.9', () => {
+  test('logicPaths discovers and grants only verified single todo/task.md files from write/edit tools', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hud-todo-grants-'));
+    try {
+      const home = path.join(tmp, 'home');
+      const configDir = path.join(home, '.gemini', 'antigravity-cli');
+      const dataDir = path.join(configDir, 'agy-hud', 'data');
+      const cwd = path.join(home, 'workspace', 'repo');
+      const convId = 'conv-todo-12345678';
+      const convBrainDir = path.join(configDir, 'brain', convId);
+      const homeAiTasksDir = path.join(home, 'ai-tasks');
+      const forbiddenDir = path.join(home, 'secret-vault');
+
+      fs.mkdirSync(cwd, { recursive: true });
+      fs.mkdirSync(path.join(convBrainDir, '.system_generated', 'logs'), { recursive: true });
+      fs.mkdirSync(homeAiTasksDir, { recursive: true });
+      fs.mkdirSync(forbiddenDir, { recursive: true });
+
+      const cwdTodo = path.join(cwd, 'ai-tasks', 'todo.md');
+      fs.mkdirSync(path.dirname(cwdTodo), { recursive: true });
+      fs.writeFileSync(cwdTodo, '- [ ] task 1\n');
+
+      const brainTask = path.join(convBrainDir, 'task.md');
+      fs.writeFileSync(brainTask, '- [x] task 2\n');
+
+      const homeTodo = path.join(homeAiTasksDir, 'todo.md');
+      fs.writeFileSync(homeTodo, '- [/] task 3\n');
+
+      const readOnlyTodo = path.join(cwd, 'readonly-todo.md');
+      fs.writeFileSync(readOnlyTodo, '- [ ] should not be granted via read_file\n');
+
+      const outsideTodo = path.join(forbiddenDir, 'todo.md');
+      fs.writeFileSync(outsideTodo, '- [ ] outside safe roots\n');
+
+      const secretToken = path.join(configDir, 'antigravity-oauth-token');
+      fs.writeFileSync(secretToken, 'SECRET');
+      const symlinkTodo = path.join(cwd, 'evil-todo.md');
+      try {
+        fs.symlinkSync(secretToken, symlinkTodo);
+      } catch {}
+
+      const transcriptPath = path.join(convBrainDir, '.system_generated', 'logs', 'transcript.jsonl');
+      const lines = [
+        JSON.stringify({
+          type: 'PLANNER_RESPONSE',
+          tool_calls: [
+            { name: 'write_file', args: { Path: JSON.stringify(cwdTodo), Content: '"- [ ] task 1"' } },
+            { name: 'replace_file_content', args: { TargetFile: brainTask, TargetContent: 'a', ReplacementContent: 'b' } },
+            { name: 'edit_file', args: { path: homeTodo, Target: 'a', Replacement: 'b' } },
+            { name: 'read_file', args: { Path: readOnlyTodo } },
+            { name: 'write_file', args: { Path: outsideTodo, Content: '"- [ ] no"' } },
+            { name: 'edit_file', args: { file_path: symlinkTodo, Target: 'a', Replacement: 'b' } },
+          ],
+        }),
+      ];
+      fs.writeFileSync(transcriptPath, `${lines.join('\n')}\n`);
+
+      const named = logicPaths(
+        {
+          home,
+          configDir,
+          claudeConfigDir: path.join(home, '.claude'),
+          hudDir: path.join(configDir, 'agy-hud'),
+          claudeJson: path.join(home, '.claude.json'),
+          dataDir,
+          strippedDir: path.join(configDir, 'agy-hud', 'stripped'),
+          configPath: path.join(configDir, 'agy-hud', 'config.json'),
+          overridePath: path.join(configDir, 'agy-hud.json'),
+          legacyConfigPath: path.join(configDir, 'legacy.json'),
+          heartbeat: path.join(configDir, 'agy-hud', 'heartbeat.json'),
+        },
+        { cwd, conversation_id: convId, transcript_path: transcriptPath },
+      );
+
+      assert.deepEqual(named.todoFiles, [
+        fs.realpathSync(cwdTodo),
+        fs.realpathSync(brainTask),
+        fs.realpathSync(homeTodo),
+      ]);
+      const grants = readGrants(ROOT, named);
+      assert.equal(grants.includes(fs.realpathSync(cwdTodo)), true);
+      assert.equal(grants.includes(fs.realpathSync(brainTask)), true);
+      assert.equal(grants.includes(fs.realpathSync(homeTodo)), true);
+      assert.equal(grants.includes(path.dirname(fs.realpathSync(cwdTodo))), false, 'must never grant parent directory');
+      assert.equal(grants.includes(fs.realpathSync(readOnlyTodo)), false, 'must never grant read_file todo.md');
+      assert.equal(grants.includes(fs.realpathSync(outsideTodo)), false, 'must reject todo.md outside safe roots');
+      assert.equal(grants.includes(fs.realpathSync(secretToken)), false, 'must reject symlink resolving to non-todo file');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('manifest versions are synchronized at 0.4.10', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
     const plugin = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugin.json'), 'utf8'));
     const ext = JSON.parse(fs.readFileSync(path.join(ROOT, 'gemini-extension.json'), 'utf8'));
 
-    assert.equal(pkg.version, '0.4.9');
+    assert.equal(pkg.version, '0.4.10');
+    assert.equal(lock.version, '0.4.10');
+    assert.equal(lock.packages?.['']?.version, '0.4.10');
     assert.equal(plugin.version, pkg.version);
     assert.equal(ext.version, pkg.version);
   });

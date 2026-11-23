@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { parseTranscript, addSubagentEfforts } from '../src/transcript.ts';
+import { parseTranscript, addSubagentEfforts, extractMarkdownTodos } from '../src/transcript.ts';
 import { calculateTokenCost, getSessionCostUsd } from '../src/cost.ts';
 import { getCostTotals } from '../src/daily-cost.ts';
 import { getOutputSpeed } from '../src/speed.ts';
@@ -200,6 +200,304 @@ describe('transcript / Claude + Antigravity JSONL & incremental cursor resume', 
       await addSubagentEfforts('', res.agents, { 'sub-worker-11111111': workerTx });
       assert.equal(res.agents[0]?.model, 'gemini-4-hydrogen');
       assert.equal(res.agents[0]?.effort, 'high');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('extractMarkdownTodos ignores fenced code blocks, splits top-level sections, aggregates ### subheadings, and selects active section', () => {
+    const md = [
+      '# 历史任务：版本 0.4.9',
+      '### 执行清单',
+      '- [x] 旧任务 A',
+      '- [x] 旧任务 B',
+      '```markdown',
+      '# 伪造章节',
+      '- [ ] 代码块里的假未完成项',
+      '```',
+      '---',
+      '## 当前任务：版本 0.4.10',
+      '### 阶段一',
+      '- [x] 修复 collector 授权',
+      '- [/] 修复 transcript 解析',
+      '### 阶段二',
+      '* [ ] 补充单元测试',
+      '* [ ] 运行回归校验',
+    ].join('\n');
+
+    const active = extractMarkdownTodos(md);
+    assert.deepEqual(active, [
+      { content: '修复 collector 授权', status: 'completed' },
+      { content: '修复 transcript 解析', status: 'in_progress' },
+      { content: '补充单元测试', status: 'pending' },
+      { content: '运行回归校验', status: 'pending' },
+    ]);
+
+    // When all sections are completed, picks the last section containing todos (never mixes historical [x])
+    const allDoneMd = md.replace('- [/]', '- [x]').replaceAll('* [ ]', '* [x]');
+    const allDone = extractMarkdownTodos(allDoneMd);
+    assert.equal(allDone.length, 4);
+    assert.equal(allDone.every((t) => t.status === 'completed'), true);
+    assert.equal(allDone[0].content, '修复 collector 授权');
+
+    // When a hint matches an earlier section, selects the last matching section
+    const hinted = extractMarkdownTodos(md, '- [x] 旧任务 B');
+    assert.deepEqual(hinted, [
+      { content: '旧任务 A', status: 'completed' },
+      { content: '旧任务 B', status: 'completed' },
+    ]);
+  });
+
+  test('parseTranscript updates todos from edit_file/replace_file_content/multi_replace_file_content, disk fallback on truncated_fields, and respects TodoWrite tool source', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tx-todo-e2e-'));
+    try {
+      const dataDir = path.join(tmp, 'data');
+      const txPath = path.join(tmp, 'transcript.jsonl');
+      const diskTodoPath = path.join(tmp, 'todo.md');
+
+      // 1. write_file with truncated_fields in transcript, while real todo.md exists on disk
+      fs.writeFileSync(
+        diskTodoPath,
+        [
+          '# 历史章节',
+          '- [x] 历史 1',
+          '---',
+          '## 本轮任务',
+          '- [ ] 任务 1',
+          '- [ ] 任务 2',
+          '- [ ] 任务 3',
+          '- [ ] 任务 4',
+        ].join('\n') + '\n',
+      );
+
+      fs.writeFileSync(
+        txPath,
+        `${JSON.stringify({
+          type: 'PLANNER_RESPONSE',
+          step_index: 1,
+          created_at: '2026-11-18T10:00:00Z',
+          tool_calls: [{ name: 'write_file', args: { Path: JSON.stringify(diskTodoPath), Content: '"... [truncated]"' } }],
+        })}\n`,
+      );
+
+      const r1 = await parseTranscript(txPath, dataDir);
+      assert.equal(r1.todos.length, 4);
+      assert.equal(r1.todos.filter((t) => t.status === 'completed').length, 0);
+
+      // 2. edit_file updates disk todo.md to (2/4) and transcript logs edit_file
+      fs.writeFileSync(
+        diskTodoPath,
+        [
+          '# 历史章节',
+          '- [x] 历史 1',
+          '---',
+          '## 本轮任务',
+          '- [x] 任务 1',
+          '- [x] 任务 2',
+          '- [/] 任务 3',
+          '- [ ] 任务 4',
+        ].join('\n') + '\n',
+      );
+      fs.appendFileSync(
+        txPath,
+        `${JSON.stringify({
+          type: 'PLANNER_RESPONSE',
+          step_index: 2,
+          created_at: '2026-11-18T10:00:10Z',
+          tool_calls: [
+            {
+              name: 'edit_file',
+              args: {
+                Path: JSON.stringify(diskTodoPath),
+                Target: '"- [ ] 任务 1\\n- [ ] 任务 2\\n- [ ] 任务 3"',
+                Replacement: '"- [x] 任务 1\\n- [x] 任务 2\\n- [/] 任务 3"',
+              },
+            },
+          ],
+        })}\n`,
+      );
+
+      const r2 = await parseTranscript(txPath, dataDir);
+      assert.equal(r2.todos.length, 4);
+      assert.equal(r2.todos.filter((t) => t.status === 'completed').length, 2);
+      assert.equal(r2.todos[2].status, 'in_progress');
+
+      // 3. Even when transcript.jsonl has 0 new bytes (cursor hit), disk change to (4/4) is picked up before return
+      fs.writeFileSync(
+        diskTodoPath,
+        [
+          '# 历史章节',
+          '- [x] 历史 1',
+          '---',
+          '## 本轮任务',
+          '- [x] 任务 1',
+          '- [x] 任务 2',
+          '- [x] 任务 3',
+          '- [x] 任务 4',
+        ].join('\n') + '\n',
+      );
+      const r3 = await parseTranscript(txPath, dataDir);
+      assert.equal(r3.todos.length, 4);
+      assert.equal(r3.todos.every((t) => t.status === 'completed'), true);
+
+      // 4. Pure in-memory fallback when disk file does not exist (ENOENT) across edit_file, replace_file_content, multi_replace_file_content
+      const ghostTodoPath = path.join(tmp, 'nonexistent-dir', 'task.md');
+      fs.appendFileSync(
+        txPath,
+        [
+          JSON.stringify({
+            type: 'PLANNER_RESPONSE',
+            step_index: 3,
+            tool_calls: [
+              {
+                name: 'write_to_file',
+                args: { TargetFile: ghostTodoPath, CodeContent: '"- [ ] Mem 1\\n- [ ] Mem 2\\n- [ ] Mem 3"' },
+              },
+              {
+                name: 'replace_file_content',
+                args: { TargetFile: ghostTodoPath, TargetContent: '"- [ ] Mem 1"', ReplacementContent: '"- [x] Mem 1"' },
+              },
+              {
+                name: 'multi_replace_file_content',
+                args: {
+                  TargetFile: ghostTodoPath,
+                  ReplacementChunks: JSON.stringify([
+                    { TargetContent: '- [ ] Mem 2', ReplacementContent: '- [/] Mem 2' },
+                    { TargetContent: '- [ ] Mem 3', ReplacementContent: '- [x] Mem 3' },
+                  ]),
+                },
+              },
+            ],
+          }),
+        ].join('\n') + '\n',
+      );
+
+      const r4 = await parseTranscript(txPath, dataDir);
+      assert.deepEqual(r4.todos, [
+        { content: 'Mem 1', status: 'completed' },
+        { content: 'Mem 2', status: 'in_progress' },
+        { content: 'Mem 3', status: 'completed' },
+      ]);
+
+      // 5. Claude TodoWrite sets lastTodoSource = 'tool' and persists across cursor resume so old disk .md does not overwrite it
+      fs.appendFileSync(
+        txPath,
+        `${JSON.stringify({
+          type: 'assistant',
+          message: {
+            id: 'm-todo-tool',
+            content: [{ type: 'tool_use', id: 'tu-1', name: 'TodoWrite', input: { todos: [{ content: 'Tool task', status: 'in_progress' }] } }],
+          },
+        })}\n`,
+      );
+      const r5 = await parseTranscript(txPath, dataDir);
+      assert.deepEqual(r5.todos, [{ content: 'Tool task', status: 'in_progress' }]);
+
+      // 6. Claude tool_use block invoking write_file/edit_file with relative path 'ai-tasks/todo.md' or '~/ai-tasks/todo.md' resolves via todoFiles parameter
+      const resolvedWorkspaceTodo = path.join(tmp, 'workspace', 'ai-tasks', 'todo.md');
+      fs.mkdirSync(path.dirname(resolvedWorkspaceTodo), { recursive: true });
+      fs.writeFileSync(resolvedWorkspaceTodo, '- [x] Resolved 1\n- [/] Resolved 2\n');
+
+      fs.appendFileSync(
+        txPath,
+        `${JSON.stringify({
+          type: 'assistant',
+          message: {
+            id: 'm-claude-write-file',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-2',
+                name: 'write_file',
+                input: { Path: 'ai-tasks/todo.md', Content: '...truncated...' },
+              },
+            ],
+          },
+        })}\n`,
+      );
+      const r6 = await parseTranscript(txPath, dataDir, [fs.realpathSync(resolvedWorkspaceTodo)]);
+      assert.deepEqual(r6.todos, [
+        { content: 'Resolved 1', status: 'completed' },
+        { content: 'Resolved 2', status: 'in_progress' },
+      ]);
+
+      // Claude tool_use edit_file with '~/ai-tasks/todo.md' also resolves via todoFiles
+      fs.writeFileSync(resolvedWorkspaceTodo, '- [x] Resolved 1\n- [x] Resolved 2\n');
+      fs.appendFileSync(
+        txPath,
+        `${JSON.stringify({
+          type: 'assistant',
+          message: {
+            id: 'm-claude-edit-file',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-3',
+                name: 'edit_file',
+                input: { Path: '~/ai-tasks/todo.md', Target: '- [/] Resolved 2', Replacement: '- [x] Resolved 2' },
+              },
+            ],
+          },
+        })}\n`,
+      );
+      const r7 = await parseTranscript(txPath, dataDir, [fs.realpathSync(resolvedWorkspaceTodo)]);
+      assert.deepEqual(r7.todos, [
+        { content: 'Resolved 1', status: 'completed' },
+        { content: 'Resolved 2', status: 'completed' },
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('detectRateLimits extracts resetTime from string entry.content (quotaResetTimeStamp, quotaResetDelay/retryDelay, Resets in / try again in)', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tx-ratelimit-str-'));
+    try {
+      const dataDir = path.join(tmp, 'data');
+      const txPath = path.join(tmp, 'transcript.jsonl');
+      const baseIso = '2026-11-18T09:00:00.000Z';
+      const baseMs = Date.parse(baseIso);
+
+      // 1. String content with quotaResetDelay
+      fs.writeFileSync(
+        txPath,
+        `${JSON.stringify({
+          type: 'GENERIC',
+          status: 'ERROR',
+          created_at: baseIso,
+          content: 'Error: HTTP 429 RESOURCE_EXHAUSTED {"quotaResetDelay":"2m30s"}',
+        })}\n`,
+      );
+      const r1 = await parseTranscript(txPath, dataDir);
+      assert.equal(r1.imageExhausted?.exhausted, true);
+      assert.equal(r1.imageExhausted?.resetTime, new Date(baseMs + 150_000).toISOString());
+
+      // 2. String content with "Resets in 1h 5m" advances resetTime
+      fs.appendFileSync(
+        txPath,
+        `${JSON.stringify({
+          type: 'GENERIC',
+          status: 'ERROR',
+          created_at: baseIso,
+          content: 'HTTP 429 Too Many Requests. Resets in 1h 5m.',
+        })}\n`,
+      );
+      const r2 = await parseTranscript(txPath, dataDir);
+      assert.equal(r2.imageExhausted?.resetTime, new Date(baseMs + (60 + 5) * 60_000).toISOString());
+
+      // 3. String content with explicit quotaResetTimeStamp advances resetTime
+      const explicitIso = new Date(baseMs + 2 * 3600_000).toISOString();
+      fs.appendFileSync(
+        txPath,
+        `${JSON.stringify({
+          type: 'GENERIC',
+          status: 'ERROR',
+          created_at: baseIso,
+          content: `RESOURCE_EXHAUSTED: {"quotaResetTimeStamp": "${explicitIso}"}`,
+        })}\n`,
+      );
+      const r3 = await parseTranscript(txPath, dataDir);
+      assert.equal(r3.imageExhausted?.resetTime, explicitIso);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -6,6 +6,7 @@ import type { CostTotals } from './daily-cost.ts';
 export interface AgyStdinQuotaBucket {
   remaining_fraction?: number | null;
   reset_time?: string | null;
+  reset_in_seconds?: number | null;
 }
 
 export interface StdinData {

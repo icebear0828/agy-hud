@@ -119,14 +119,12 @@ export function mcpLine(f: Frame): string | null {
 export function agentLines(f: Frame): string[] {
   const display = f.config?.display;
   if (display?.showAgents !== true) return [];
-  const agents = f.transcript?.agents ?? [];
-  if (agents.length === 0) return [];
+  const running = (f.transcript?.agents ?? []).filter((a: AgentEntry) => a.status === 'running');
+  if (running.length === 0) return [];
 
   const sym = symbols(f.unicode);
-  const running = agents.filter((a: AgentEntry) => a.status === 'running');
-  const list = running.length > 0 ? running.slice(-3) : agents.slice(-2);
-  const items = list.map((agent) => {
-    const icon = agent.status === 'running' ? yellow(sym.running) : green(sym.done);
+  const icon = yellow(sym.running);
+  return running.map((agent) => {
     const kind = cyan(sanitizeDisplayText(agent.type || 'agent'));
     const rawModel = agent.model && agent.model.toLowerCase() !== 'inherit' ? sanitizeDisplayText(agent.model) : '';
     const prettyModel = rawModel
@@ -143,12 +141,9 @@ export function agentLines(f: Frame): string[] {
     const desc = agent.description
       ? dim(` (${truncateString(sanitizeDisplayText(agent.description), 24, sym.ellipsis)})`)
       : '';
-    const endMs = agent.endTime ? agent.endTime.getTime() : f.now;
-    const elapsed = agent.startTime ? dim(` ${formatElapsedDuration(endMs - agent.startTime.getTime())}`) : '';
+    const elapsed = agent.startTime ? dim(` ${formatElapsedDuration(f.now - agent.startTime.getTime())}`) : '';
     return `${icon} ${kind}${meta}${desc}${elapsed}`;
   });
-  if (running.length > 3) items.push(dim(`+${running.length - 3} running`));
-  return items;
 }
 
 export function todosLine(f: Frame): string | null {

@@ -67,6 +67,7 @@ export interface Paths {
   transcript: string | null;
   subagents: string | null;
   agySubagentTranscripts?: Record<string, string>;
+  todoFiles?: string[];
 }
 
 export interface Facts {

@@ -175,7 +175,7 @@ describe('transcript / subagents & cursors', () => {
     assert.equal(unsafeStatusAgents[3].status, 'running');
   });
 
-  test('renderStdin invokes reconcileAgentsWithStdin so completed subagents render as done', async () => {
+  test('renderStdin invokes reconcileAgentsWithStdin so reconciled completed subagents are hidden', async () => {
     const tmp = makeTmpDir('agy-hud-main-reconcile-');
     try {
       const dataDir = path.join(tmp, 'data');
@@ -191,6 +191,20 @@ describe('transcript / subagents & cursors', () => {
       );
 
       const now = Date.parse('2026-11-19T09:00:30.000Z');
+      const runningOut = await renderStdin(
+        {
+          model: { id: 'gemini-3-pro', display_name: 'Gemini 3 Pro' },
+          context_window: { context_window_size: 200_000, used_percentage: 20 },
+          subagents: [{ name: 'coder', role: 'fix bug', status: 'running' }],
+        },
+        emptyPaths(dataDir, transcriptPath),
+        async () => ({ 'agy.unicode': true }),
+        now,
+      );
+
+      const runningJoined = runningOut.lines.join('\n').replace(/\x1b\[[0-9;]*m/g, '').replace(/\u00A0/g, ' ');
+      assert.match(runningJoined, /◐ coder \(fix bug\) 30s/, `expected running subagent line in ${runningJoined}`);
+
       const out = await renderStdin(
         {
           model: { id: 'gemini-3-pro', display_name: 'Gemini 3 Pro' },
@@ -202,9 +216,10 @@ describe('transcript / subagents & cursors', () => {
         now,
       );
 
-      const joined = out.lines.join('\n').replace(/\x1b\[[0-9;]*m/g, '');
-      assert.ok(joined.includes('✓'), `expected completed icon ✓ in ${joined}`);
+      const joined = out.lines.join('\n').replace(/\x1b\[[0-9;]*m/g, '').replace(/\u00A0/g, ' ');
       assert.equal(joined.includes('◐'), false, `should not render running icon ◐ in ${joined}`);
+      assert.equal(joined.includes('✓'), false, `should not render completed icon ✓ in ${joined}`);
+      assert.doesNotMatch(joined, /coder|fix bug/, `should hide reconciled completed subagent in ${joined}`);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -771,6 +786,104 @@ describe('transcript / subagents & cursors', () => {
       assert.equal(rolledBack.tools[0].status, 'error');
       assert.equal(rolledBack.agents[0].status, 'completed', 'ERROR response must roll back reopened agent to completed');
       assert.equal(rolledBack.agents[0].endTime?.toISOString(), prevEndIso, 'rollback must restore previous endTime');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('Parser.addAgent never evicts running subagents past AGENTS_KEPT=10, evicts only oldest completed entries, and renderStdin only reads efforts for running subagents', async () => {
+    const tmp = makeTmpDir('agy-hud-tx-keep-running-');
+    try {
+      const dataDir = path.join(tmp, 'data');
+      const transcriptPath = path.join(tmp, 'transcript.jsonl');
+
+      // Spawn 12 concurrent running subagents (> AGENTS_KEPT = 10)
+      const lines = [];
+      for (let i = 0; i < 12; i++) {
+        lines.push(
+          JSON.stringify({
+            type: 'PLANNER_RESPONSE',
+            timestamp: `2026-11-19T09:00:${String(i * 2).padStart(2, '0')}.000Z`,
+            tool_calls: [{ name: 'invoke_subagent', args: { TypeName: 'scout', Role: `scan-${i}` } }],
+          }),
+          JSON.stringify({
+            type: 'GENERIC',
+            timestamp: `2026-11-19T09:00:${String(i * 2 + 1).padStart(2, '0')}.000Z`,
+            content: `{"conversationId":"sub-run-${String(i).padStart(2, '0')}-123456"}`,
+          }),
+        );
+      }
+      fs.writeFileSync(transcriptPath, `${lines.join('\n')}\n`);
+
+      const allRunning = await parseTranscript(transcriptPath, dataDir);
+      assert.equal(allRunning.agents.length, 12, 'must retain all 12 running subagents past AGENTS_KEPT=10');
+      assert.equal(allRunning.agents.every((a) => a.status === 'running'), true);
+
+      // Complete sub-run-02 and sub-run-05, then spawn a 13th running subagent -> only completed sub-run-02 and sub-run-05 are evicted first
+      fs.appendFileSync(
+        transcriptPath,
+        [
+          JSON.stringify({
+            type: 'SYSTEM_MESSAGE',
+            timestamp: '2026-11-19T09:01:00.000Z',
+            content: 'Subagent sub-run-02-123456 has gone idle.\nSubagent sub-run-05-123456 has gone idle.',
+          }),
+          JSON.stringify({
+            type: 'PLANNER_RESPONSE',
+            timestamp: '2026-11-19T09:01:05.000Z',
+            tool_calls: [{ name: 'invoke_subagent', args: { TypeName: 'coder', Role: 'task-12' } }],
+          }),
+          JSON.stringify({
+            type: 'GENERIC',
+            timestamp: '2026-11-19T09:01:06.000Z',
+            content: '{"conversationId":"sub-run-12-123456"}',
+          }),
+        ].join('\n') + '\n',
+      );
+
+      const after13 = await parseTranscript(transcriptPath, dataDir);
+      assert.equal(after13.agents.length, 11, '2 completed evicted, all 11 running preserved');
+      assert.equal(after13.agents.some((a) => a.agentId === 'sub-run-02-123456'), false);
+      assert.equal(after13.agents.some((a) => a.agentId === 'sub-run-05-123456'), false);
+      assert.equal(after13.agents[0].agentId, 'sub-run-00-123456', 'oldest running subagent must not be evicted');
+
+      // Completing sub-run-00 still works because its agentIdToToolUseId mapping was never evicted
+      fs.appendFileSync(
+        transcriptPath,
+        `${JSON.stringify({
+          type: 'SYSTEM_MESSAGE',
+          timestamp: '2026-11-19T09:01:10.000Z',
+          content: 'Subagent sub-run-00-123456 has gone idle.',
+        })}\n`,
+      );
+      const afterComplete00 = await parseTranscript(transcriptPath, dataDir);
+      assert.equal(afterComplete00.agents[0].status, 'completed');
+
+      // renderStdin skips reading subagent detail files for completed subagents
+      const poisonCompletedFile = path.join(tmp, 'completed-sub.jsonl');
+      fs.writeFileSync(poisonCompletedFile, `${JSON.stringify({ type: 'PLANNER_RESPONSE', model: 'claude-opus-4-6', effort: 'max' })}\n`);
+      const liveSubFile = path.join(tmp, 'live-sub.jsonl');
+      fs.writeFileSync(liveSubFile, `${JSON.stringify({ type: 'PLANNER_RESPONSE', model: 'gemini-3-flash', effort: 'low' })}\n`);
+
+      const paths = {
+        ...emptyPaths(dataDir, transcriptPath),
+        agySubagentTranscripts: {
+          'sub-run-00-123456': poisonCompletedFile,
+          'sub-run-01-123456': liveSubFile,
+        },
+      };
+      const out = await renderStdin(
+        {
+          model: { id: 'gemini-3-pro', display_name: 'Gemini 3 Pro' },
+          context_window: { context_window_size: 200_000, used_percentage: 20 },
+        },
+        paths,
+        async () => ({ 'agy.unicode': true }),
+        Date.parse('2026-11-19T09:01:15.000Z'),
+      );
+      const plain = out.lines.join('\n').replace(/\x1b\[[0-9;]*m/g, '').replace(/\u00a0/g, ' ');
+      assert.match(plain, /◐ scout \[Gemini 3 Flash:low\] \(scan-1\)/);
+      assert.doesNotMatch(plain, /Opus|scan-0/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

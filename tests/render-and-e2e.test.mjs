@@ -222,6 +222,48 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
 
     const compactBars = stripAnsi(renderPlain(baseCtx({ config: mergeConfig({ display: { quotaStyle: 'compact' } }) }), 140, NOW));
     assert.match(compactBars, /Google:/);
+
+    // Expired model quota window recovers to 100.00% instead of falling back to expired top-level 0%
+    const expiredPast = new Date(NOW - 10_000).toISOString();
+    const expiredModelsOut = stripAnsi(renderPlain(baseCtx({
+      config: mergeConfig({ display: { quotaStyle: 'models' } }),
+      agyQuota: {
+        ...baseCtx().agyQuota,
+        models: [
+          {
+            id: 'gemini-3-pro',
+            displayName: 'Gemini 3 Pro (High)',
+            remainingFraction: 0,
+            resetTime: expiredPast,
+            modelProvider: 'MODEL_PROVIDER_GOOGLE',
+            windows: {
+              fiveHour: { remainingFraction: 0, resetTime: expiredPast },
+            },
+          },
+        ],
+      },
+    }), 140, NOW));
+    assert.match(expiredModelsOut, /Gemini 3 Pro\(High\)\s+██████\s+100\.00%/);
+
+    // imageQuotaLine renders dynamic countdown while active and clears Exhausted once resetTime <= f.now
+    const activeExhaustedOut = stripAnsi(renderPlain(baseCtx({
+      config: mergeConfig({ language: 'en', display: { showImageQuota: true } }),
+      transcript: {
+        ...baseCtx().transcript,
+        imageExhausted: { exhausted: true, resetTime: new Date(NOW + 4 * 60_000).toISOString() },
+      },
+    }), 140, NOW));
+    assert.match(activeExhaustedOut, /Image Quota: Image Quota Exhausted \(4m\)/);
+
+    const expiredExhaustedOut = stripAnsi(renderPlain(baseCtx({
+      config: mergeConfig({ language: 'en', display: { showImageQuota: true } }),
+      transcript: {
+        ...baseCtx().transcript,
+        imageExhausted: { exhausted: true, resetTime: expiredPast },
+      },
+    }), 140, NOW));
+    assert.doesNotMatch(expiredExhaustedOut, /Exhausted/);
+    assert.match(expiredExhaustedOut, /Image Quota: Gemini 3 Image .* 90%/);
   });
 
   test('renders custom colors (256-color & #hex), activity lines, rightAlign, and wraps wide lines cleanly', () => {
@@ -283,7 +325,37 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
     }), 160, NOW));
     assert.match(completedAgent, /2 GEMINI\.md/);
     assert.match(completedAgent, /2 Agents/);
-    assert.match(completedAgent, /✓ worker \[Gemini 4 Hydrogen:high\] \(清查配置\) 34s/);
+    assert.doesNotMatch(completedAgent, /✓ worker|清查配置/);
+
+    const mixedAgents = stripAnsi(renderPlain(baseCtx({
+      config: mergeConfig({ language: 'zh-Hans', display: { showAgentEffort: true } }),
+      transcript: {
+        ...baseCtx().transcript,
+        agents: [
+          {
+            id: 'a2-done',
+            type: 'worker',
+            model: 'gemini-4-hydrogen',
+            effort: 'high',
+            description: '清查配置',
+            status: 'completed',
+            startTime: new Date(NOW - 34_000),
+            endTime: new Date(NOW),
+          },
+          {
+            id: 'a2-live',
+            type: 'coder',
+            model: 'gemini-4-hydrogen',
+            effort: 'high',
+            description: '修复逻辑',
+            status: 'running',
+            startTime: new Date(NOW - 12_000),
+          },
+        ],
+      },
+    }), 160, NOW));
+    assert.match(mixedAgents, /◐ coder \[Gemini 4 Hydrogen:high\] \(修复逻辑\) 12s/);
+    assert.doesNotMatch(mixedAgents, /✓ worker|清查配置/);
 
     const inheritAgent = stripAnsi(renderPlain(baseCtx({
       config: mergeConfig({ language: 'zh-Hans', display: { showAgentEffort: true } }),
@@ -328,30 +400,26 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
       for (const row of rows) assert.ok(!row.includes('│ ◐'), `${lineLayout}: subagents must not share a row: ${row}`);
     }
 
-    const overflow = Array.from({ length: 5 }, (_, i) => ({
+    const manyRunning = Array.from({ length: 6 }, (_, i) => ({
       id: `o${i}`, type: 'coder', description: `task ${i}`, status: 'running', startTime: new Date(NOW - 5_000),
     }));
     for (const lineLayout of ['expanded', 'compact']) {
-      const overflowRows = stripAnsi(renderPlain(baseCtx({
+      const rendered = stripAnsi(renderPlain(baseCtx({
         config: mergeConfig({ lineLayout, display: { showAgents: true } }),
-        transcript: { ...baseCtx().transcript, agents: overflow },
-      }), 160, NOW)).split('\n');
-      const coderRows = overflowRows.filter((row) => row.includes('◐ coder'));
-      assert.equal(coderRows.length, 3, `${lineLayout}: expected 3 running coder rows`);
-      for (const row of coderRows) {
-        assert.match(row, /^◐ coder \(task [234]\) 5s$/);
-        assert.ok(!row.includes('│'), `${lineLayout}: running subagent row must not contain separator: ${row}`);
+        transcript: { ...baseCtx().transcript, agents: manyRunning },
+      }), 160, NOW));
+      const rows = rendered.split('\n');
+      const coderRows = rows.filter((row) => row.includes('◐ coder'));
+      assert.equal(coderRows.length, manyRunning.length, `${lineLayout}: expected all ${manyRunning.length} running coder rows`);
+      for (let i = 0; i < manyRunning.length; i += 1) {
+        assert.equal(coderRows[i], `◐ coder (task ${i}) 5s`, `${lineLayout}: missing or misordered running coder row ${i}`);
+        assert.ok(!coderRows[i].includes('│'), `${lineLayout}: running subagent row must not contain separator: ${coderRows[i]}`);
       }
-      const markerRows = overflowRows.filter((row) => row.trim() === '+2 running');
-      assert.equal(markerRows.length, 1, `${lineLayout}: overflow marker must be its own row`);
-      assert.equal(markerRows[0], '+2 running');
-      for (const row of overflowRows) {
-        assert.ok(!row.includes('│ +2 running'), `${lineLayout}: overflow marker must not share a row: ${row}`);
-      }
+      assert.doesNotMatch(rendered, /\+\d+\s+running/, `${lineLayout}: must not render any +N running truncation line`);
     }
   });
 
-  test('renders completed subagents on separate lines and keeps agents/project out of mergeGroups', () => {
+  test('hides completed subagents and keeps running subagents and project out of mergeGroups', () => {
     const completed = [
       { id: 'c1', type: 'scout', description: 'old scan', status: 'completed', startTime: new Date(NOW - 30_000), endTime: new Date(NOW - 20_000) },
       { id: 'c2', type: 'coder', description: 'write fix', status: 'completed', startTime: new Date(NOW - 18_000), endTime: new Date(NOW - 10_000) },
@@ -363,24 +431,20 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
         transcript: { ...baseCtx().transcript, agents: completed },
       }), 160, NOW));
       const rows = plain.split('\n');
-      const completedAgentRows = rows.filter((row) => /^✓ (scout|coder|reviewer)\b/.test(row));
-      assert.equal(completedAgentRows.length, 2, `${lineLayout}: expected latest 2 completed subagents on separate rows in ${plain}`);
-      assert.ok(rows.includes('✓ coder (write fix) 8s'), `${lineLayout}: missing c2 completed row`);
-      assert.ok(rows.includes('✓ reviewer (audit fix) 8s'), `${lineLayout}: missing c3 completed row`);
-      assert.ok(!plain.includes('old scan'), `${lineLayout}: oldest completed subagent should be truncated`);
-      for (const row of completedAgentRows) {
-        assert.ok(!row.includes('│'), `${lineLayout}: completed subagent row must not contain separator: ${row}`);
-      }
-      for (const row of rows) {
-        assert.ok(!row.includes('│ ✓ coder') && !row.includes('│ ✓ reviewer'), `${lineLayout}: completed subagent must not be merged: ${row}`);
-      }
+      const agentRows = rows.filter((row) => /^[✓◐] (scout|coder|reviewer)\b/.test(row));
+      assert.equal(agentRows.length, 0, `${lineLayout}: completed subagents must produce 0 agent rows in ${plain}`);
+      assert.doesNotMatch(plain, /\b(scout|coder|reviewer)\b|old scan|write fix|audit fix/);
     }
 
     const agents = [
+      { id: 'm0', type: 'worker', description: 'finished setup', status: 'completed', startTime: new Date(NOW - 30_000), endTime: new Date(NOW - 20_000) },
       { id: 'm1', type: 'scout', description: 'scan repo', status: 'running', startTime: new Date(NOW - 10_000) },
       { id: 'm2', type: 'scout', description: 'scan docs', status: 'running', startTime: new Date(NOW - 8_000) },
-      { id: 'm3', type: 'reviewer', description: 'check diff', status: 'running', startTime: new Date(NOW - 5_000) },
+      { id: 'm3', type: 'coder', description: 'write fix', status: 'completed', startTime: new Date(NOW - 15_000), endTime: new Date(NOW - 6_000) },
+      { id: 'm4', type: 'reviewer', description: 'check diff', status: 'running', startTime: new Date(NOW - 5_000) },
+      { id: 'm5', type: 'planner', description: 'plan next', status: 'running', startTime: new Date(NOW - 3_000) },
     ];
+    const runningCount = agents.filter((a) => a.status === 'running').length;
     const mergedCfg = mergeConfig({
       display: { showAgents: true, mergeGroups: [['agents', 'todos'], ['tools', 'agents']] },
     });
@@ -395,8 +459,9 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
         transcript: { ...baseCtx().transcript, agents },
       }), 160, NOW));
       const rows = plain.split('\n');
-      const agentRows = rows.filter((row) => /◐ (scout|reviewer)/.test(row));
-      assert.equal(agentRows.length, agents.length, `${labelName}: expected one row per subagent in ${plain}`);
+      const agentRows = rows.filter((row) => /^◐ (scout|reviewer|planner)\b/.test(row));
+      assert.equal(agentRows.length, runningCount, `${labelName}: expected one row per running subagent in ${plain}`);
+      assert.doesNotMatch(plain, /✓\s*(?:worker|coder|scout|reviewer|planner)|worker|finished setup|coder|write fix|\+\d+\s+running/);
       for (const row of agentRows) {
         assert.ok(!row.includes('│'), `${labelName}: subagent row must not contain separator: ${row}`);
         assert.ok(
@@ -409,8 +474,8 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
       assert.ok(toolsRow, `${labelName}: expected tools row`);
       assert.ok(todosRow, `${labelName}: expected todos row`);
       assert.notEqual(toolsRow, todosRow, `${labelName}: tools and todos should remain separate`);
-      assert.ok(!toolsRow.includes('scout') && !toolsRow.includes('reviewer'), `${labelName}: tools row must not include subagents`);
-      assert.ok(!todosRow.includes('scout') && !todosRow.includes('reviewer'), `${labelName}: todos row must not include subagents`);
+      assert.ok(!/\b(worker|scout|coder|reviewer|planner)\b/.test(toolsRow), `${labelName}: tools row must not include subagents`);
+      assert.ok(!/\b(worker|scout|coder|reviewer|planner)\b/.test(todosRow), `${labelName}: todos row must not include subagents`);
     }
 
     const mixedGroupCfg = mergeConfig({
@@ -420,17 +485,19 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
     const mixedRawCfg = mergeConfig({ display: { showAgents: true } });
     mixedRawCfg.display.mergeGroups = [['agents', 'tools', 'todos']];
     for (const [labelName, cfg] of [['mixed-normalized', mixedGroupCfg], ['mixed-unnormalized', mixedRawCfg]]) {
-      const rows = stripAnsi(renderPlain(baseCtx({
+      const plain = stripAnsi(renderPlain(baseCtx({
         config: cfg,
         transcript: { ...baseCtx().transcript, agents },
-      }), 160, NOW)).split('\n');
-      const agentRows = rows.filter((row) => /◐ (scout|reviewer)/.test(row));
-      assert.equal(agentRows.length, agents.length, `${labelName}: expected each subagent on its own row`);
+      }), 160, NOW));
+      const rows = plain.split('\n');
+      const agentRows = rows.filter((row) => /^◐ (scout|reviewer|planner)\b/.test(row));
+      assert.equal(agentRows.length, runningCount, `${labelName}: expected each running subagent on its own row`);
+      assert.doesNotMatch(plain, /✓\s*(?:worker|coder|scout|reviewer|planner)|worker|finished setup|coder|write fix|\+\d+\s+running/);
       for (const row of agentRows) {
         assert.ok(!row.includes('│'), `${labelName}: subagent row must not contain separator: ${row}`);
       }
       assert.ok(
-        rows.some((row) => row.includes('Read') && row.includes('Finish tests') && !row.includes('scout') && !row.includes('reviewer')),
+        rows.some((row) => row.includes('Read') && row.includes('Finish tests') && !/\b(worker|scout|coder|reviewer|planner)\b/.test(row)),
         `${labelName}: mergeable members tools and todos should still merge without agents`,
       );
     }
@@ -501,8 +568,9 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
         path.join(agyCli, 'brain', subConv, '.system_generated', 'logs', 'transcript.jsonl'),
         `${JSON.stringify({ type: 'PLANNER_RESPONSE', model: 'gemini-4-hydrogen-tiered-high' })}\n`,
       );
+      const mainTranscript = path.join(agyCli, 'brain', mainConv, '.system_generated', 'logs', 'transcript.jsonl');
       fs.writeFileSync(
-        path.join(agyCli, 'brain', mainConv, '.system_generated', 'logs', 'transcript.jsonl'),
+        mainTranscript,
         [
           JSON.stringify({
             type: 'PLANNER_RESPONSE',
@@ -514,11 +582,6 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
             created_at: '2026-11-18T10:00:01Z',
             content: `Created the following subagent:\n{\n  "conversationId": "${subConv}"\n}`,
           }),
-          JSON.stringify({
-            type: 'SYSTEM_MESSAGE',
-            created_at: '2026-11-18T10:00:10Z',
-            content: `[Message] sender=${subConv} content=ok`,
-          }),
         ].join('\n') + '\n',
       );
       const subPayload = JSON.stringify({
@@ -527,17 +590,38 @@ describe('render / expanded, compact, i18n, colors, quota styles, wrapping', () 
         conversation_id: mainConv,
         context_window: { context_window_size: 200_000, used_percentage: 20 },
       });
+      const subEnv = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, AGY_HUD_DATA_DIR: agyCli, LANG: 'zh_CN.UTF-8' };
       const subRes = spawnSync(process.execPath, ['hud.mjs'], {
         cwd: projectRoot,
         input: `${subPayload}\n`,
-        env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, AGY_HUD_DATA_DIR: agyCli, LANG: 'zh_CN.UTF-8' },
+        env: subEnv,
         encoding: 'utf8',
       });
       assert.equal(subRes.status, 0, subRes.stderr);
       const subPlain = stripAnsi(subRes.stdout).replace(/\u00A0/g, ' ');
       assert.match(subPlain, /1 GEMINI\.md/);
       assert.match(subPlain, /1 Agents/);
-      assert.match(subPlain, /✓ worker \[Gemini 4 Hydrogen:high\] \(Scan\) 10s/);
+      assert.match(subPlain, /◐ worker \[Gemini 4 Hydrogen:high\] \(Scan\) \d+[hms]/);
+
+      fs.appendFileSync(
+        mainTranscript,
+        `${JSON.stringify({
+          type: 'SYSTEM_MESSAGE',
+          created_at: '2026-11-18T10:00:10Z',
+          content: `[Message] sender=${subConv} content=ok`,
+        })}\n`,
+      );
+      const subDoneRes = spawnSync(process.execPath, ['hud.mjs'], {
+        cwd: projectRoot,
+        input: `${subPayload}\n`,
+        env: subEnv,
+        encoding: 'utf8',
+      });
+      assert.equal(subDoneRes.status, 0, subDoneRes.stderr);
+      const subDonePlain = stripAnsi(subDoneRes.stdout).replace(/\u00A0/g, ' ');
+      assert.match(subDonePlain, /1 GEMINI\.md/);
+      assert.match(subDonePlain, /1 Agents/);
+      assert.doesNotMatch(subDonePlain, /[✓◐]\s*worker|worker\s+\[Gemini 4 Hydrogen|\(Scan\)/);
     } finally {
       fs.rmSync(fakeHome, { recursive: true, force: true });
     }
