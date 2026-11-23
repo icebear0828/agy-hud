@@ -1,0 +1,21 @@
+{
+  "note": "Initial zero-frame startup should render 0% context cleanly without NaN or crashes",
+  "columns": 100,
+  "now": "2026-11-18T10:00:00Z",
+  "stdin": {
+    "model": { "id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6" },
+    "cwd": "/tmp/fresh-proj"
+  },
+  "facts": {
+    "agy.unicode": true
+  },
+  "expect": [
+    "exit 0",
+    "finishes within 4000ms",
+    "no line wider than columns",
+    "only safe escapes",
+    "contains [Claude Sonnet 4.6]",
+    "contains 0%",
+    "lacks NaN"
+  ]
+}

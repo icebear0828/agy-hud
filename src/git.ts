@@ -1,0 +1,205 @@
+import { createDebug } from './debug.ts';
+import type { Ask, Probe } from './channel.ts';
+
+const debug = createDebug('git');
+
+export interface LineDiff {
+  added: number;
+  deleted: number;
+}
+
+export interface TrackedFile {
+  basename: string;
+  fullPath: string;
+  type: 'modified' | 'added' | 'deleted';
+  lineDiff?: LineDiff;
+}
+
+export interface FileStats {
+  modified: number;
+  added: number;
+  deleted: number;
+  untracked: number;
+  trackedFiles: TrackedFile[];
+}
+
+export interface GitStatus {
+  branch: string;
+  isDirty: boolean;
+  ahead: number;
+  behind: number;
+  fileStats?: FileStats;
+  lineDiff?: LineDiff;
+  branchUrl?: string;
+  vcs?: 'git' | 'jj';
+  conflict?: boolean;
+}
+
+export interface GitRepoIdentity {
+  host?: string;
+  owner?: string;
+  name?: string;
+}
+
+export interface GitStatusOptions {
+  lineDiffs?: boolean;
+  repo?: GitRepoIdentity | null;
+}
+
+type GitAnswer = { stdout: string } | { error: 'timeout' | 'failed' } | null | undefined;
+
+const run = async (ask: Ask, probe: Probe): Promise<GitAnswer> => (await ask([probe]))[probe] as GitAnswer;
+const stdoutOf = (answer: GitAnswer): string | null => (answer && 'stdout' in answer ? answer.stdout : null);
+
+export async function getGitStatus(ask: Ask, options: GitStatusOptions = {}): Promise<GitStatus | null> {
+  const answer = await run(ask, 'git.status');
+  const output = stdoutOf(answer);
+  if (output === null) {
+    const error = answer && 'error' in answer ? answer.error : null;
+    debug('git status failed:', error ?? 'no cwd');
+    return error === 'timeout' ? getBranchOnly(ask, options.repo) : null;
+  }
+
+  const parsed = parseStatus(output);
+  const branch = parsed.head ?? await describeDetachedHead(ask, parsed.oid);
+  if (!branch) return null;
+
+  const repo = options.repo ?? ((await ask(['git.repo']))['git.repo'] as GitRepoIdentity | null | undefined);
+  const status: GitStatus = {
+    branch,
+    isDirty: parsed.dirty,
+    ahead: parsed.ahead,
+    behind: parsed.behind,
+    branchUrl: githubRefUrl(repo, branch),
+  };
+  if (!parsed.dirty) return status;
+
+  status.fileStats = parsed.fileStats;
+  if (options.lineDiffs) {
+    const numstat = stdoutOf(await run(ask, 'git.numstat'));
+    if (numstat === null) {
+      debug('git diff-index --numstat failed');
+      return status;
+    }
+    const diffs = parseNumstat(numstat);
+    status.lineDiff = { added: 0, deleted: 0 };
+    for (const diff of diffs.values()) {
+      status.lineDiff.added += diff.added;
+      status.lineDiff.deleted += diff.deleted;
+    }
+    for (const file of parsed.fileStats.trackedFiles) {
+      const diff = diffs.get(file.fullPath);
+      if (diff) file.lineDiff = diff;
+    }
+  }
+  return status;
+}
+
+async function getBranchOnly(ask: Ask, repo: GitRepoIdentity | null | undefined): Promise<GitStatus | null> {
+  const branch = stdoutOf(await run(ask, 'git.branch'))?.trim();
+  if (!branch || branch === 'HEAD') return null;
+  return { branch, isDirty: false, ahead: 0, behind: 0, branchUrl: githubRefUrl(repo, branch) };
+}
+
+async function describeDetachedHead(ask: Ask, oid: string | null): Promise<string | null> {
+  const tag = stdoutOf(await run(ask, 'git.describe'))?.trim();
+  if (tag) return tag;
+  return oid && /^[0-9a-f]{7,}$/.test(oid) ? `detached:${oid.slice(0, 7)}` : null;
+}
+
+const GITHUB_NAME = /^[A-Za-z0-9_.-]+$/;
+
+function githubRefUrl(repo: GitRepoIdentity | null | undefined, ref: string): string | undefined {
+  if (repo?.host !== 'github.com' || !GITHUB_NAME.test(repo.owner ?? '') || !GITHUB_NAME.test(repo.name ?? '')) {
+    return undefined;
+  }
+  const base = `https://github.com/${repo.owner}/${repo.name}`;
+  const sha = /^detached:([0-9a-f]+)$/.exec(ref)?.[1];
+  return sha ? `${base}/commit/${sha}` : `${base}/tree/${ref.split('/').map(encodeURIComponent).join('/')}`;
+}
+
+interface ParsedStatus {
+  oid: string | null;
+  head: string | null;
+  ahead: number;
+  behind: number;
+  dirty: boolean;
+  fileStats: FileStats;
+}
+
+const PATH_FIELD: Record<string, number> = { '1': 8, '2': 9, u: 10 };
+
+export function parseStatus(output: string): ParsedStatus {
+  const parsed: ParsedStatus = {
+    oid: null,
+    head: null,
+    ahead: 0,
+    behind: 0,
+    dirty: false,
+    fileStats: { modified: 0, added: 0, deleted: 0, untracked: 0, trackedFiles: [] },
+  };
+  const stats = parsed.fileStats;
+  const records = output.split('\0');
+
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    if (record.startsWith('# branch.oid ')) {
+      parsed.oid = record.slice('# branch.oid '.length);
+    } else if (record.startsWith('# branch.head ')) {
+      const head = record.slice('# branch.head '.length);
+      parsed.head = head === '(detached)' ? null : head;
+    } else if (record.startsWith('# branch.ab ')) {
+      const match = /^\+(\d+) -(\d+)$/.exec(record.slice('# branch.ab '.length));
+      if (match) {
+        parsed.ahead = Number(match[1]);
+        parsed.behind = Number(match[2]);
+      }
+    } else if (record.startsWith('? ')) {
+      parsed.dirty = true;
+      stats.untracked++;
+    } else if (record[1] === ' ' && record[0] in PATH_FIELD) {
+      parsed.dirty = true;
+      const fullPath = pathAfterFields(record, PATH_FIELD[record[0]]);
+      if (record[0] === '2') i++;
+      const type = classify(record[2], record[3]);
+      if (!type) continue;
+      stats[type]++;
+      stats.trackedFiles.push({ basename: fullPath.split('/').pop() ?? fullPath, fullPath, type });
+    }
+  }
+  return parsed;
+}
+
+function pathAfterFields(record: string, fields: number): string {
+  let index = 0;
+  for (let field = 0; field < fields; field++) index = record.indexOf(' ', index) + 1;
+  return record.slice(index);
+}
+
+function classify(x: string, y: string): TrackedFile['type'] | null {
+  if (x === 'A' || (x === 'U' && y === 'A')) return 'added';
+  if (x === 'D' || y === 'D') return 'deleted';
+  if (x === 'M' || y === 'M' || x === 'R' || x === 'C' || x === 'U') return 'modified';
+  return null;
+}
+
+export function parseNumstat(output: string): Map<string, LineDiff> {
+  const diffs = new Map<string, LineDiff>();
+  const records = output.split('\0');
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    const first = record.indexOf('\t');
+    const second = record.indexOf('\t', first + 1);
+    if (first === -1 || second === -1) continue;
+    let filePath = record.slice(second + 1);
+    if (filePath === '') {
+      filePath = records[i + 2] ?? '';
+      i += 2;
+    }
+    const added = Number.parseInt(record.slice(0, first), 10);
+    const deleted = Number.parseInt(record.slice(first + 1, second), 10);
+    if (Number.isNaN(added) || Number.isNaN(deleted)) continue;
+    diffs.set(filePath, { added, deleted });
+  }
+  return diffs;
+}

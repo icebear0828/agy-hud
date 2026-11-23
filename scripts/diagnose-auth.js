@@ -1,22 +1,21 @@
 #!/usr/bin/env node
-'use strict';
-
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const { getAntigravityRoots, resolveSafeExecutable } = require('../runtime/paths.js');
-const {
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { getAntigravityRoots, resolveSafeExecutable } from '../runtime/paths.mjs';
+import {
   getTokenCandidates,
   parseTokenPayload,
   readToken,
   probeLinuxKeyringAvailability,
   probeMacosKeychainAvailability,
-} = require('../runtime/quota.js');
+} from '../runtime/quota.mjs';
 
 function compactObject(value) {
   return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined)
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
   );
 }
 
@@ -34,7 +33,7 @@ function listJsonKeys(value) {
   return Object.keys(value).sort();
 }
 
-function summarizeTokenCandidate(candidatePath) {
+export function summarizeTokenCandidate(candidatePath) {
   const summary = {
     path: candidatePath,
     exists: false,
@@ -77,28 +76,23 @@ function summarizeTokenCandidate(candidatePath) {
   return summary;
 }
 
-function getAgyCandidates() {
+export function getAgyCandidates() {
   const candidates = [process.env.AGY_BIN].filter(Boolean);
 
   const resolved = resolveSafeExecutable('agy');
   if (resolved) candidates.push(resolved);
 
   if (process.platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA ||
-      path.join(os.homedir(), 'AppData', 'Local');
+    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
     candidates.push(path.join(localAppData, 'agy', 'bin', 'agy.exe'));
   } else {
-    candidates.push(
-      '/opt/homebrew/bin/agy',
-      '/usr/local/bin/agy',
-      '/usr/bin/agy'
-    );
+    candidates.push('/opt/homebrew/bin/agy', '/usr/local/bin/agy', '/usr/bin/agy');
   }
 
   return [...new Set(candidates)];
 }
 
-function summarizeAgyCandidates(candidates) {
+export function summarizeAgyCandidates(candidates) {
   const existingCandidates = candidates.filter(pathExists);
   return compactObject({
     candidateCount: candidates.length,
@@ -106,7 +100,7 @@ function summarizeAgyCandidates(candidates) {
   });
 }
 
-function resolveAgyInfo() {
+export function resolveAgyInfo() {
   const candidates = getAgyCandidates();
   let lastError;
 
@@ -156,8 +150,8 @@ function sanitizeReadTokenResult(token) {
   });
 }
 
-function buildAuthDiagnostic(options = {}) {
-  const roots = getAntigravityRoots();
+export function buildAuthDiagnostic(options = {}) {
+  const roots = options.roots || getAntigravityRoots();
   const resolveAgy = options.resolveAgyInfo || resolveAgyInfo;
   const platform = options.platform || process.platform;
   const keyringProbe = options.keyringProbe || probeLinuxKeyringAvailability;
@@ -171,12 +165,13 @@ function buildAuthDiagnostic(options = {}) {
     home: os.homedir(),
     cwd: process.cwd(),
     agy: resolveAgy(),
-    antigravityRoots: roots.map(root => ({
+    antigravityRoots: roots.map((root) => ({
       path: root,
       exists: pathExists(root),
     })),
     tokenCandidates: getTokenCandidates(roots).map(summarizeTokenCandidate),
     readToken: sanitizeReadTokenResult(readToken({
+      roots,
       platform,
       keyringReader: options.keyringReader,
       keychainReader: options.keychainReader,
@@ -186,7 +181,7 @@ function buildAuthDiagnostic(options = {}) {
   };
 }
 
-function main() {
+export function main() {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
     process.stdout.write('Usage: node scripts/diagnose-auth.js\n');
     process.stdout.write('Prints a JSON auth diagnostic without token values.\n');
@@ -196,11 +191,6 @@ function main() {
   process.stdout.write(`${JSON.stringify(buildAuthDiagnostic(), null, 2)}\n`);
 }
 
-if (require.main === module) main();
-
-module.exports = {
-  buildAuthDiagnostic,
-  resolveAgyInfo,
-  summarizeTokenCandidate,
-  sanitizeReadTokenResult,
-};
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main();
+}

@@ -6,19 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    # Nightly canary catches agy CLI/plugin contract drift even when this repo
-    # has not changed.
     - cron: '23 10 * * *'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
-# E2E gate: install agy CLI, install agy-hud, bootstrap, assert the HUD command
-# renders the current status-line structure. Cross-platform (macOS / Windows /
-# Linux). No OAuth required — we verify install/bootstrap plumbing plus the
-# standalone HUD command. The auth-required "HUD visible inside live agy
-# session" check stays in dev / release.sh on a machine with a real signed-in
-# token.
 
 jobs:
   unit-tests:
@@ -27,9 +18,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test
+      - run: npm run verify
 
   e2e:
     name: e2e (${{ matrix.os }})
@@ -43,9 +36,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
 
-      # Install agy CLI per official docs.
       - name: Install agy CLI (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -57,8 +49,6 @@ jobs:
         shell: pwsh
         run: |
           irm https://antigravity.google/cli/install.ps1 | iex
-          # agy install.ps1 doesn't always update GITHUB_PATH. Discover where
-          # it actually landed and add that dir.
           $candidates = @(
             "$env:USERPROFILE\.local\bin",
             "$env:LOCALAPPDATA\agy\bin",
@@ -68,14 +58,11 @@ jobs:
           foreach ($c in $candidates) {
             if (Test-Path "$c\agy.exe") {
               Add-Content -Path $env:GITHUB_PATH -Value $c
-              Write-Host "agy.exe at: $c"
               $found = $true
             }
           }
           if (-not $found) {
-            Write-Host "candidates empty; searching..."
             Get-ChildItem -Path $env:USERPROFILE,$env:LOCALAPPDATA -Filter agy.exe -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-              Write-Host "agy.exe at: $($_.DirectoryName)"
               Add-Content -Path $env:GITHUB_PATH -Value $_.DirectoryName
             }
           }
@@ -113,28 +100,18 @@ jobs:
             throw "expected exactly one UTF-8 profile marker, got $markerCount"
           }
 
-          if ((git config --global --get core.quotepath) -ne 'false') {
-            throw 'core.quotepath was not configured'
-          }
-          if ((git config --global --get gui.encoding) -ne 'utf-8') {
-            throw 'gui.encoding was not configured'
-          }
-          if ((git config --global --get i18n.commitencoding) -ne 'utf-8') {
-            throw 'i18n.commitencoding was not configured'
-          }
-          if ((git config --global --get i18n.logoutputencoding) -ne 'utf-8') {
-            throw 'i18n.logoutputencoding was not configured'
-          }
+          if ((git config --global --get core.quotepath) -ne 'false') { throw 'core.quotepath was not configured' }
+          if ((git config --global --get gui.encoding) -ne 'utf-8') { throw 'gui.encoding was not configured' }
+          if ((git config --global --get i18n.commitencoding) -ne 'utf-8') { throw 'i18n.commitencoding was not configured' }
+          if ((git config --global --get i18n.logoutputencoding) -ne 'utf-8') { throw 'i18n.logoutputencoding was not configured' }
 
-      # Build the zip per-OS. Git Bash on Windows has no `zip`; use Compress-Archive.
       - name: Build zip (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p release_tmp
-          cp plugin.json gemini-extension.json package.json README.md README_zh.md release_tmp/
-          cp -r runtime release_tmp/
-          cp -r scripts release_tmp/
+          cp plugin.json gemini-extension.json package.json ARCHITECTURE.md hud.mjs collector.mjs fence.mjs install.mjs README.md README_zh.md release_tmp/
+          cp -r dist runtime scripts skills src release_tmp/
           (cd release_tmp && zip -qr ../agy-hud.zip .)
           rm -rf release_tmp
 
@@ -143,15 +120,12 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release_tmp | Out-Null
-          Copy-Item plugin.json,gemini-extension.json,package.json,README.md,README_zh.md release_tmp\
-          Copy-Item -Recurse runtime,scripts release_tmp\
+          Copy-Item plugin.json,gemini-extension.json,package.json,ARCHITECTURE.md,hud.mjs,collector.mjs,fence.mjs,install.mjs,README.md,README_zh.md release_tmp\
+          Copy-Item -Recurse dist,runtime,scripts,skills,src release_tmp\
           if (Test-Path agy-hud.zip) { Remove-Item agy-hud.zip -Force }
           Compress-Archive -Path release_tmp\* -DestinationPath agy-hud.zip
           Remove-Item -Recurse -Force release_tmp
 
-      # Run verify-display in no-auth mode (CI doesn't have OAuth).
-      # Use a repo-relative path for the report file: ${{ runner.temp }}
-      # contains backslashes on Windows that get eaten by bash heredoc → node -e.
       - name: Run E2E (no-auth)
         env:
           AGY_HUD_E2E_NO_AUTH_OBSERVE: '1'
@@ -164,25 +138,20 @@ jobs:
           E2E_RC=$?
           set -e
           cat e2e-report.json
-          OK=$(node -e "try { console.log(require('./e2e-report.json').ok || false) } catch (e) { console.log('parse_error: ' + e.message) }")
+          OK=$(node -e "import fs from 'node:fs'; try { console.log(JSON.parse(fs.readFileSync('./e2e-report.json','utf8')).ok || false) } catch (e) { console.log('parse_error: ' + e.message) }")
           echo "report.ok = $OK"
           if [ "$E2E_RC" != "0" ] || [ "$OK" != "true" ]; then
             echo "::error::E2E failed on ${{ matrix.os }} (exit=$E2E_RC ok=$OK)"
             exit 1
           fi
 
-      # Verify the CMD install path works on Windows. The main E2E above uses
-      # bash (Git Bash). This step tests that `powershell -ExecutionPolicy Bypass
-      # -File install.ps1` works from CMD — the pattern documented in README for
-      # Windows CMD users. Uses local file (not irm) since the branch isn't
-      # published to main yet.
       - name: Test CMD install path (Windows)
         if: runner.os == 'Windows'
         shell: cmd
         run: |
           agy plugin uninstall agy-hud 2>nul
           powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-          echo "" | "%USERPROFILE%\.gemini\antigravity-cli\agy-hud-runtime\runtime\bin\agy-hud.cmd"
+          echo "" | "%USERPROFILE%\.gemini\antigravity-cli\agy-hud\statusline.cmd"
           if %ERRORLEVEL% neq 0 (
             echo ::error::CMD install path failed
             exit /b 1
@@ -199,12 +168,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # Render PNG screenshots of the HUD using charm.sh `freeze`. Purpose-built
-      # for ANSI → PNG; no PTY / ttyd / tape machinery like vhs. Two variants:
-      #   - hud-ascii: AGY_HUD_FORCE_ASCII=1 → every glyph is plain ASCII,
-      #     guaranteed to render even without Nerd Fonts (universal evidence)
-      #   - hud-unicode: default → pretty box-drawing chars when font cooperates
-      # freeze hangs on stdin in non-TTY contexts — always redirect `</dev/null`.
       - name: Install freeze (macOS)
         if: runner.os == 'macOS'
         continue-on-error: true
@@ -224,7 +187,6 @@ jobs:
             echo "could not find freeze Linux asset; skipping screenshot render"
             exit 0
           fi
-          echo "freeze asset: $ASSET_URL"
           curl -fsSL "$ASSET_URL" -o /tmp/freeze.tar.gz
           mkdir -p /tmp/freeze-extract
           tar -xzf /tmp/freeze.tar.gz -C /tmp/freeze-extract
@@ -232,16 +194,6 @@ jobs:
           sudo mv "$FREEZE_BIN" /usr/local/bin/freeze
           freeze --version
 
-      # NOTE: skipping freeze install on Windows. v0.2.2 errors 'No input' for
-      # every invocation form we tried (positional file, --execute, UTF-8 file
-      # written via .NET WriteAllText). Likely an upstream Windows-only bug.
-      # Windows still gets the e2e-report.json + agy-hud-pty-*.log artifacts
-      # (raw ANSI bytes that reviewers can `cat` for visual evidence) — only
-      # the rendered PNG is missing on this OS.
-
-      # Render from the repo's runtime/ directly — don't depend on a HOME-installed
-      # runtime (verify-display.js installs into an isolated tmp HOME then cleans up,
-      # so $HOME/.gemini/... is empty at this point).
       - name: Render HUD screenshots (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -251,24 +203,11 @@ jobs:
             echo "freeze not installed, skipping screenshot"
             exit 0
           fi
-
-          # ASCII variant — every glyph guaranteed readable on every font
-          AGY_HUD_FORCE_ASCII=1 node runtime/bin/agy-hud.js < /dev/null > /tmp/hud-ascii.ansi
-          freeze < /dev/null \
-            --output "hud-ascii-${{ matrix.os }}.png" \
-            --language ansi \
-            --font.family "JetBrains Mono" \
-            /tmp/hud-ascii.ansi || echo "(ascii render failed)"
-
-          # Unicode variant — pretty box-drawing when the font has glyphs
-          node runtime/bin/agy-hud.js < /dev/null > /tmp/hud-unicode.ansi
-          freeze < /dev/null \
-            --output "hud-unicode-${{ matrix.os }}.png" \
-            --language ansi \
-            --font.family "JetBrains Mono" \
-            /tmp/hud-unicode.ansi || echo "(unicode render failed)"
-
-          ls -la hud-*-${{ matrix.os }}.png 2>/dev/null || echo "no PNGs produced"
+          SAMPLE='{"model":{"id":"gemini-3-pro","display_name":"Gemini 3 Pro (High)"},"cwd":"'"$PWD"'","context_window":{"context_window_size":200000,"used_percentage":35}}'
+          printf '%s\n' "$SAMPLE" | AGY_HUD_FORCE_ASCII=1 node dist/index.js > /tmp/hud-ascii.ansi
+          freeze < /dev/null --output "hud-ascii-${{ matrix.os }}.png" --language ansi --font.family "JetBrains Mono" /tmp/hud-ascii.ansi || echo "(ascii render failed)"
+          printf '%s\n' "$SAMPLE" | node dist/index.js > /tmp/hud-unicode.ansi
+          freeze < /dev/null --output "hud-unicode-${{ matrix.os }}.png" --language ansi --font.family "JetBrains Mono" /tmp/hud-unicode.ansi || echo "(unicode render failed)"
 
       - name: Upload HUD screenshots
         if: runner.os != 'Windows'
