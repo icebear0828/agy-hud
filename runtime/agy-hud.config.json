@@ -11,13 +11,13 @@
     "showGitBranch": true,
     "showCurrentDir": true,
     "breadcrumbCount": 3,
-    "unicode": true,
     "useNerdFonts": false,
     "showUsername": true,
     "showSpeed": false,
     "showCost": false,
     "showDailyCost": false,
-    "showWeeklyCost": false
+    "showWeeklyCost": false,
+    "showQuotaCapacity": true
   },
   "thresholds": {
     "warning": 0.7,

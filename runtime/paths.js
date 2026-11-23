@@ -14,23 +14,28 @@ const path = require('path');
  *
  * Unset env vars are filtered out so the list only contains usable paths.
  *
+ * @param {NodeJS.ProcessEnv} [env=process.env]
+ * @param {string} [homeDir=os.homedir()]
  * @returns {string[]}
  */
-function getAntigravityRoots() {
-  if (process.env.AGY_HUD_DATA_DIR) {
-    return [process.env.AGY_HUD_DATA_DIR];
+function getAntigravityRoots(env = process.env, homeDir = os.homedir()) {
+  const effectiveEnv = env || process.env;
+  const effectiveHome = homeDir || os.homedir();
+
+  if (effectiveEnv.AGY_HUD_DATA_DIR) {
+    return [effectiveEnv.AGY_HUD_DATA_DIR];
   }
 
   const candidates = [
-    path.join(os.homedir(), '.gemini', 'antigravity-cli'),
-    process.env.XDG_DATA_HOME
-      ? path.join(process.env.XDG_DATA_HOME, 'antigravity-cli')
+    path.join(effectiveHome, '.gemini', 'antigravity-cli'),
+    effectiveEnv.XDG_DATA_HOME
+      ? path.join(effectiveEnv.XDG_DATA_HOME, 'antigravity-cli')
       : null,
-    process.env.APPDATA
-      ? path.join(process.env.APPDATA, 'antigravity-cli')
+    effectiveEnv.APPDATA
+      ? path.join(effectiveEnv.APPDATA, 'antigravity-cli')
       : null,
-    process.env.LOCALAPPDATA
-      ? path.join(process.env.LOCALAPPDATA, 'antigravity-cli')
+    effectiveEnv.LOCALAPPDATA
+      ? path.join(effectiveEnv.LOCALAPPDATA, 'antigravity-cli')
       : null,
   ].filter(Boolean);
 
@@ -44,10 +49,12 @@ function getAntigravityRoots() {
  * callers can still use it as a write target.
  *
  * @param {string} relativePath
+ * @param {NodeJS.ProcessEnv} [env=process.env]
+ * @param {string} [homeDir=os.homedir()]
  * @returns {string}
  */
-function resolveAntigravityPath(relativePath) {
-  const roots = getAntigravityRoots();
+function resolveAntigravityPath(relativePath, env = process.env, homeDir = os.homedir()) {
+  const roots = getAntigravityRoots(env, homeDir);
   for (const root of roots) {
     const candidate = path.join(root, relativePath);
     if (fs.existsSync(candidate)) return candidate;

@@ -7,24 +7,34 @@ import { fileURLToPath } from 'node:url';
 import statuslineModule from '../../runtime/statusline-installer.js';
 
 const {
+  SH_SHIM_MARKER,
   createStatusLineCommand,
   buildCmdShimContents,
   buildShShimContents,
+  isOurShShim,
   writeCmdShim,
   ensureWindowsShShim,
   getWindowsAgyBinDirs,
+  configureStatusLine,
 } = statuslineModule;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..', '..');
 
-test('bootstrap.sh invokes bootstrap.js via curl + node', () => {
+test('bootstrap.sh invokes bootstrap.js via mktemp + curl + node without process substitution', () => {
   const bootstrap = fs.readFileSync(path.join(projectRoot, 'scripts', 'bootstrap.sh'), 'utf8');
+  const codeLines = bootstrap
+    .split(/\r?\n/)
+    .filter(line => !/^\s*#/.test(line))
+    .join('\n');
 
-  assert.match(bootstrap, /bootstrap\.js/);
-  assert.match(bootstrap, /curl/);
-  assert.match(bootstrap, /exec node/);
+  assert.match(codeLines, /bootstrap\.js/);
+  assert.match(codeLines, /mktemp/);
+  assert.match(codeLines, /trap\s+'rm -f "\$TMP_BOOTSTRAP"'\s+EXIT/);
+  assert.match(codeLines, /curl -fsSL .* -o "\$TMP_BOOTSTRAP"/);
+  assert.match(codeLines, /node "\$TMP_BOOTSTRAP"/);
+  assert.doesNotMatch(codeLines, /<\(curl/);
 });
 
 test('bootstrap.js downloads runtime/* files and invokes configureStatusLine', () => {
@@ -73,19 +83,24 @@ test('Unix statusLine command uses absolute process.execPath', () => {
   assert.equal(command, '"/usr/local/bin/node" "/Users/me/.gemini/antigravity-cli/agy-hud-runtime/runtime/bin/agy-hud.js"');
 });
 
-test('buildCmdShimContents includes node-on-PATH first then Program Files fallback', () => {
+test('buildCmdShimContents falls back to Program Files only on ERRORLEVEL 9009 without swallowing stderr', () => {
   const body = buildCmdShimContents('C:\\runtime\\bin\\agy-hud.js');
   assert.match(body, /^@echo off/);
-  assert.match(body, /node "%~dp0agy-hud\.js"/);
+  assert.match(body, /node "%~dp0agy-hud\.js" %\*/);
+  assert.doesNotMatch(body, /2>nul/);
+  assert.match(body, /if not %ERRORLEVEL%==9009 exit \/b %ERRORLEVEL%/);
   assert.match(body, /%ProgramFiles%\\nodejs\\node\.exe/);
   // CRLF line endings for Windows .cmd files
   assert.match(body, /\r\n/);
 });
 
-test('buildShShimContents forwards agy sh -c calls to cmd.exe without broken quote manipulation', () => {
+test('buildShShimContents includes agy-hud marker and forwards agy sh -c calls to cmd.exe', () => {
   const body = buildShShimContents();
 
   assert.match(body, /^@echo off/);
+  assert.ok(body.includes(SH_SHIM_MARKER));
+  assert.equal(isOurShShim(body), true);
+  assert.equal(isOurShShim('@echo off\r\necho third party\r\n'), false);
   assert.match(body, /"%~1"=="-c"/);
   assert.match(body, /set "CMDLINE=%~2"/);
   assert.doesNotMatch(body, /%CMDLINE:\\"="%/);
@@ -215,4 +230,46 @@ test('ensureWindowsShShim skips writes when on-disk content already matches', ()
 test('writeCmdShim is a no-op on non-Windows', () => {
   const result = writeCmdShim('/tmp/whatever/agy-hud.js', 'linux');
   assert.equal(result, null);
+});
+
+test('ensureWindowsShShim upgrades older agy-hud-marked sh.cmd in place', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-sh-upgrade-'));
+  try {
+    const localAppData = path.join(tmp, 'local');
+    const agyBin = path.join(localAppData, 'agy', 'bin');
+    fs.mkdirSync(agyBin, { recursive: true });
+    const oldShim = `@echo off\r\n${SH_SHIM_MARKER}\r\nold-body\r\n`;
+    fs.writeFileSync(path.join(agyBin, 'sh.cmd'), oldShim);
+
+    const written = ensureWindowsShShim('win32', { LOCALAPPDATA: localAppData, PATH: '' });
+    assert.ok(written.includes(path.join(agyBin, 'sh.cmd')));
+    assert.equal(fs.readFileSync(path.join(agyBin, 'sh.cmd'), 'utf8'), buildShShimContents());
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('configureStatusLine backs up corrupt settings.json and throws instead of wiping it', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-corrupt-settings-'));
+  try {
+    const settingsPath = path.join(tmp, 'settings.json');
+    const corruptContent = '{ "theme": "dark", broken json';
+    fs.writeFileSync(settingsPath, corruptContent, 'utf8');
+
+    let caught = null;
+    try {
+      configureStatusLine(path.join(projectRoot, 'runtime'), { settingsPath });
+    } catch (err) {
+      caught = err;
+    }
+
+    assert.ok(caught, 'expected configureStatusLine to throw on corrupt settings.json');
+    assert.equal(caught.code, 'CORRUPT_SETTINGS_JSON');
+    assert.ok(caught.backupPath && fs.existsSync(caught.backupPath));
+    assert.match(path.basename(caught.backupPath), /^settings\.json\.bak\.\d+$/);
+    assert.equal(fs.readFileSync(caught.backupPath, 'utf8'), corruptContent);
+    assert.equal(fs.readFileSync(settingsPath, 'utf8'), corruptContent);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });

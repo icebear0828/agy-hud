@@ -98,22 +98,24 @@ function getAgyCandidates() {
   return [...new Set(candidates)];
 }
 
-function summarizeAgyCandidates(candidates) {
-  const existingCandidates = candidates.filter(pathExists);
+function summarizeAgyCandidates(candidates, exists = pathExists) {
+  const existingCandidates = candidates.filter(exists);
   return compactObject({
     candidateCount: candidates.length,
     existingCandidates: existingCandidates.length > 0 ? existingCandidates.slice(0, 10) : undefined,
   });
 }
 
-function resolveAgyInfo() {
-  const candidates = getAgyCandidates();
+function resolveAgyInfo(options = {}) {
+  const candidates = options.candidates || getAgyCandidates();
+  const exists = options.pathExists || pathExists;
+  const execFile = options.execFileSync || execFileSync;
   let lastError;
 
   for (const candidate of candidates) {
-    if (!pathExists(candidate)) continue;
+    if (!exists(candidate)) continue;
     try {
-      const version = execFileSync(candidate, ['--version'], {
+      const version = execFile(candidate, ['--version'], {
         encoding: 'utf8',
         timeout: 3000,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -126,19 +128,12 @@ function resolveAgyInfo() {
       };
     } catch (error) {
       lastError = error && error.code ? error.code : 'version_check_failed';
-      return compactObject({
-        found: true,
-        path: candidate,
-        version: null,
-        versionError: lastError,
-        candidateCount: candidates.length,
-      });
     }
   }
 
   return compactObject({
     found: false,
-    ...summarizeAgyCandidates(candidates),
+    ...summarizeAgyCandidates(candidates, exists),
     lastError,
   });
 }
@@ -157,7 +152,7 @@ function sanitizeReadTokenResult(token) {
 }
 
 function buildAuthDiagnostic(options = {}) {
-  const roots = getAntigravityRoots();
+  const roots = options.roots || getAntigravityRoots(options.env, options.homeDir);
   const resolveAgy = options.resolveAgyInfo || resolveAgyInfo;
   const platform = options.platform || process.platform;
   const keyringProbe = options.keyringProbe || probeLinuxKeyringAvailability;
@@ -168,7 +163,7 @@ function buildAuthDiagnostic(options = {}) {
     platform,
     arch: process.arch,
     node: process.version,
-    home: os.homedir(),
+    home: options.homeDir || os.homedir(),
     cwd: process.cwd(),
     agy: resolveAgy(),
     antigravityRoots: roots.map(root => ({
@@ -177,6 +172,7 @@ function buildAuthDiagnostic(options = {}) {
     })),
     tokenCandidates: getTokenCandidates(roots).map(summarizeTokenCandidate),
     readToken: sanitizeReadTokenResult(readToken({
+      roots,
       platform,
       keyringReader: options.keyringReader,
       keychainReader: options.keychainReader,

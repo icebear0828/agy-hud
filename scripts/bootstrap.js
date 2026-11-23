@@ -8,17 +8,20 @@ const os = require('os');
 const path = require('path');
 
 const DEFAULT_SOURCE_BASE = 'https://raw.githubusercontent.com/icebear0828/agy-hud/main';
+const DOWNLOAD_CONCURRENCY = 6;
 
 const RUNTIME_FILES = [
   'package.json',
   'runtime/agy-hud.config.json',
   'runtime/bin/agy-hud.js',
+  'runtime/config-wizard.js',
   'runtime/config.js',
   'runtime/cost.js',
   'runtime/daily-cost.js',
   'runtime/encoding.js',
   'runtime/parser.js',
   'runtime/paths.js',
+  'runtime/quota-capacity.js',
   'runtime/quota.js',
   'runtime/quota/cache.js',
   'runtime/quota/cloud.js',
@@ -117,8 +120,52 @@ async function readRuntimeFile(relativePath, options) {
   if (options.sourceDir) {
     return fs.readFileSync(path.join(options.sourceDir, ...relativePath.split('/')));
   }
-  return requestBufferWithRetry(sourceUrl(options.sourceBase, relativePath));
+  return requestBufferWithRetry(
+    sourceUrl(options.sourceBase, relativePath),
+    options.maxAttempts !== undefined ? options.maxAttempts : 3
+  );
+}
 
+async function runWithConcurrency(items, concurrency, worker) {
+  const limit = Math.max(1, Math.min(concurrency || DOWNLOAD_CONCURRENCY, items.length || 1));
+  let nextIndex = 0;
+  let firstError = null;
+
+  async function runner() {
+    while (!firstError) {
+      const currentIndex = nextIndex++;
+      if (currentIndex >= items.length) break;
+      try {
+        await worker(items[currentIndex], currentIndex);
+      } catch (err) {
+        if (!firstError) firstError = err;
+        break;
+      }
+    }
+  }
+
+  const workers = Array.from({ length: limit }, () => runner());
+  await Promise.all(workers);
+  if (firstError) throw firstError;
+}
+
+function migrateLegacyGlobalConfig(antigravityRoot, runtimeDir) {
+  const persistentConfigPath = path.join(antigravityRoot, 'agy-hud.config.json');
+  if (fs.existsSync(persistentConfigPath)) return null;
+
+  const legacyConfigPath = path.join(runtimeDir, 'runtime', 'agy-hud.config.json');
+  if (!fs.existsSync(legacyConfigPath)) return null;
+
+  try {
+    const raw = fs.readFileSync(legacyConfigPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    fs.mkdirSync(path.dirname(persistentConfigPath), { recursive: true });
+    fs.writeFileSync(persistentConfigPath, raw, 'utf8');
+    return persistentConfigPath;
+  } catch {
+    return null;
+  }
 }
 
 // Files staged by older agy-hud versions that the current spec-compliant
@@ -202,11 +249,14 @@ async function installRuntime(options = {}) {
   const homeDir = options.homeDir || os.homedir();
   const repoCandidate = path.resolve(__dirname, '..');
   const hasLocalRuntime = fs.existsSync(path.join(repoCandidate, 'runtime', 'bin', 'agy-hud.js'));
-  const sourceDir = options.sourceDir || env.AGY_HUD_SETUP_SOURCE_DIR || (hasLocalRuntime ? repoCandidate : '');
+  const explicitRemote = Boolean(options.sourceBase || env.AGY_HUD_REPO_RAW || env.AGY_HUD_SETUP_SOURCE_BASE);
+  const sourceDir = options.sourceDir || env.AGY_HUD_SETUP_SOURCE_DIR || (!explicitRemote && hasLocalRuntime ? repoCandidate : '');
   const sourceBase = options.sourceBase || env.AGY_HUD_REPO_RAW || env.AGY_HUD_SETUP_SOURCE_BASE || DEFAULT_SOURCE_BASE;
   const antigravityRoot = options.antigravityRoot || pickAntigravityRoot(env, homeDir);
   const runtimeDir = path.join(antigravityRoot, 'agy-hud-runtime');
   const tempRuntimeDir = `${runtimeDir}.tmp-${process.pid}-${Date.now()}`;
+  const concurrency = options.concurrency || DOWNLOAD_CONCURRENCY;
+  const maxAttempts = options.maxAttempts !== undefined ? options.maxAttempts : 3;
 
   const stalePluginFiles = cleanStalePluginFiles(antigravityRoot, { env, homeDir });
   fs.rmSync(tempRuntimeDir, { recursive: true, force: true });
@@ -219,17 +269,26 @@ async function installRuntime(options = {}) {
     }
   }
 
+  let migratedConfig = null;
   try {
-    for (const relativePath of RUNTIME_FILES) {
-      const body = await readRuntimeFile(relativePath, { sourceDir, sourceBase });
+    await runWithConcurrency(RUNTIME_FILES, concurrency, async relativePath => {
+      const body = await readRuntimeFile(relativePath, { sourceDir, sourceBase, maxAttempts });
       const target = path.join(tempRuntimeDir, ...relativePath.split('/'));
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, body);
-    }
+    });
+    migratedConfig = migrateLegacyGlobalConfig(antigravityRoot, runtimeDir);
     replaceRuntimeDirAtomically(runtimeDir, tempRuntimeDir);
   } catch (error) {
     fs.rmSync(tempRuntimeDir, { recursive: true, force: true });
     throw error;
+  }
+
+  // Clear stale update-check status after a successful install/upgrade so
+  // users don't keep seeing an outdated update banner.
+  const updateStatusPath = path.join(antigravityRoot, 'agy-hud-update-status.json');
+  if (fs.existsSync(updateStatusPath)) {
+    try { fs.rmSync(updateStatusPath, { force: true }); } catch {}
   }
 
   const installerPath = path.join(runtimeDir, 'runtime', 'statusline-installer.js');
@@ -247,6 +306,7 @@ async function installRuntime(options = {}) {
     command: result.command,
     files: RUNTIME_FILES,
     stalePluginFiles,
+    migratedConfig,
     quotaRefresh,
   };
 }
@@ -312,6 +372,7 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_SOURCE_BASE,
+  DOWNLOAD_CONCURRENCY,
   RUNTIME_FILES,
   STALE_PLUGIN_FILES,
   STALE_PLUGIN_DIRS,
@@ -319,6 +380,8 @@ module.exports = {
   getAntigravityRoots,
   pickAntigravityRoot,
   cleanStalePluginFiles,
+  migrateLegacyGlobalConfig,
+  runWithConcurrency,
   replaceRuntimeDirAtomically,
   installRuntime,
   refreshQuotaCache,

@@ -31,11 +31,17 @@ if [ "$SKIP_E2E" != "1" ]; then
   cd release_tmp; rm -f ../agy-hud.zip; zip -qr ../agy-hud.zip .; cd ..
   rm -rf release_tmp
 
-  AGY_HUD_SKIP_BUILD=1 node scripts/verify-display.js --observe-timeout-ms=30000 > /tmp/release-e2e.json 2>&1
+  set +e
+  AGY_HUD_SKIP_BUILD=1 node scripts/verify-display.js --observe-timeout-ms=30000 > /tmp/release-e2e.json 2> /tmp/release-e2e.stderr
   E2E_RC=$?
+  set -e
   if [ $E2E_RC -ne 0 ]; then
-    echo "❌ E2E failed (exit $E2E_RC). Full report at /tmp/release-e2e.json"
+    echo "❌ E2E failed (exit $E2E_RC). Full report at /tmp/release-e2e.json (stderr at /tmp/release-e2e.stderr)"
     tail -40 /tmp/release-e2e.json
+    if [ -s /tmp/release-e2e.stderr ]; then
+      echo "--- stderr ---"
+      tail -40 /tmp/release-e2e.stderr
+    fi
     exit 1
   fi
   E2E_OK=$(node -e "console.log(require('/tmp/release-e2e.json').ok)")

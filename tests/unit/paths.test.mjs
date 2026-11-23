@@ -116,3 +116,49 @@ test('resolveSafeExecutable resolves absolute path and skips relative directorie
     assert.equal(resolved, nodePath);
   });
 });
+
+test('getAntigravityRoots honors explicit env and homeDir arguments without reading process.env', () => {
+  withEnv({
+    AGY_HUD_DATA_DIR: '/should/not/be/used',
+    XDG_DATA_HOME: '/global/xdg',
+    APPDATA: undefined,
+    LOCALAPPDATA: undefined,
+  }, () => {
+    const roots = getAntigravityRoots(
+      { XDG_DATA_HOME: '/custom/xdg', APPDATA: '/custom/appdata' },
+      '/custom/home'
+    );
+    assert.deepEqual(roots, [
+      path.join('/custom/home', '.gemini', 'antigravity-cli'),
+      path.join('/custom/xdg', 'antigravity-cli'),
+      path.join('/custom/appdata', 'antigravity-cli'),
+    ]);
+
+    const dataDirRoots = getAntigravityRoots(
+      { AGY_HUD_DATA_DIR: '/isolated/data' },
+      '/custom/home'
+    );
+    assert.deepEqual(dataDirRoots, ['/isolated/data']);
+  });
+});
+
+test('resolveAntigravityPath honors explicit env and homeDir arguments', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'paths-isolated-test-'));
+  try {
+    const fakeHome = path.join(tmp, 'home');
+    const fakeXdg = path.join(tmp, 'xdg');
+    const xdgRoot = path.join(fakeXdg, 'antigravity-cli');
+    fs.mkdirSync(xdgRoot, { recursive: true });
+    fs.writeFileSync(path.join(xdgRoot, 'settings.json'), '{}');
+
+    withEnv({ AGY_HUD_DATA_DIR: '/should/not/be/used' }, () => {
+      const existing = resolveAntigravityPath('settings.json', { XDG_DATA_HOME: fakeXdg }, fakeHome);
+      assert.equal(existing, path.join(xdgRoot, 'settings.json'));
+
+      const missing = resolveAntigravityPath('new-file.json', {}, fakeHome);
+      assert.equal(missing, path.join(fakeHome, '.gemini', 'antigravity-cli', 'new-file.json'));
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

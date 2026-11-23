@@ -19,6 +19,8 @@ function getSettingsPath() {
  *
  * @param {string} hudScriptPath  absolute path to agy-hud.js
  */
+const SH_SHIM_MARKER = ':: agy-hud-shim';
+
 function buildCmdShimContents(hudScriptPath) {
   // Use win32 basename so the shim works correctly even when generated on a
   // non-Windows host (e.g. tests on macOS pass Windows-style paths).
@@ -26,9 +28,10 @@ function buildCmdShimContents(hudScriptPath) {
   return [
     '@echo off',
     'setlocal',
-    `node "%~dp0${scriptName}" %* 2>nul`,
-    'if %ERRORLEVEL%==0 exit /b 0',
+    `node "%~dp0${scriptName}" %*`,
+    'if not %ERRORLEVEL%==9009 exit /b %ERRORLEVEL%',
     `if exist "%ProgramFiles%\\nodejs\\node.exe" "%ProgramFiles%\\nodejs\\node.exe" "%~dp0${scriptName}" %*`,
+    'exit /b %ERRORLEVEL%',
     '',
   ].join('\r\n');
 }
@@ -36,6 +39,7 @@ function buildCmdShimContents(hudScriptPath) {
 function buildShShimContents() {
   return [
     '@echo off',
+    SH_SHIM_MARKER,
     'setlocal EnableExtensions',
     'if /I "%~1"=="-c" (',
     '  set "CMDLINE=%~2"',
@@ -46,6 +50,11 @@ function buildShShimContents() {
     'exit /b %ERRORLEVEL%',
     '',
   ].join('\r\n');
+}
+
+function isOurShShim(contents) {
+  if (typeof contents !== 'string') return false;
+  return contents === buildShShimContents() || contents.includes(SH_SHIM_MARKER);
 }
 
 // Discover directories where agy's `sh -c` lookup is likely to land. We
@@ -93,12 +102,12 @@ function ensureWindowsShShim(platform = process.platform, env = process.env) {
 
       for (const name of ['sh.cmd', 'sh.bat']) {
         const target = path.join(dir, name);
-        // Only overwrite when the file is missing or identical to our shim.
+        // Only overwrite when the file is missing or already belongs to agy-hud.
         // Anything else is third-party and gets left alone.
         let existing = null;
         try { existing = fs.readFileSync(target, 'utf8'); } catch { /* missing */ }
         if (existing === body) continue;
-        if (existing !== null) continue;
+        if (existing !== null && !isOurShShim(existing)) continue;
 
         fs.writeFileSync(target, body, 'utf8');
         written.push(target);
@@ -160,9 +169,20 @@ function configureStatusLine(baseDir = __dirname, options = {}) {
   let settings = {};
   if (fs.existsSync(settingsPath)) {
     try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    } catch {
-      settings = {};
+      const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('settings.json root must be a JSON object');
+      }
+      settings = parsed;
+    } catch (parseErr) {
+      const backupPath = `${settingsPath}.bak.${Date.now()}`;
+      fs.copyFileSync(settingsPath, backupPath);
+      const err = new Error(
+        `Refusing to overwrite corrupt settings.json at ${settingsPath} (backed up to ${backupPath}): ${parseErr.message}`
+      );
+      err.code = 'CORRUPT_SETTINGS_JSON';
+      err.backupPath = backupPath;
+      throw err;
     }
   }
 
@@ -179,8 +199,10 @@ function configureStatusLine(baseDir = __dirname, options = {}) {
 }
 
 module.exports = {
+  SH_SHIM_MARKER,
   buildCmdShimContents,
   buildShShimContents,
+  isOurShShim,
   writeCmdShim,
   ensureWindowsShShim,
   getWindowsAgyBinDirs,

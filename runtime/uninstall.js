@@ -6,11 +6,18 @@ const os = require('os');
 const path = require('path');
 const { resolveAntigravityPath, getAntigravityRoots } = require('./paths.js');
 
+function normalizeForMatch(value) {
+  return String(value).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
 function isOurStatusLineCommand(command, runtimeDir) {
-  if (!command) return false;
-  // Match either the unix node-prefixed form or the windows .cmd shim form,
-  // and only when the command points into our runtime tree.
-  return command.includes(runtimeDir);
+  if (!command || !runtimeDir) return false;
+  // Normalize slashes & case so Windows backslash/drive-letter casing mismatches
+  // still recognize our statusLine entry while leaving foreign commands alone.
+  const normalizedCommand = normalizeForMatch(command);
+  const normalizedRuntime = normalizeForMatch(runtimeDir);
+  if (!normalizedRuntime) return false;
+  return normalizedCommand.includes(normalizedRuntime);
 }
 
 function clearStatusLine(settingsPath, runtimeDir) {
@@ -40,11 +47,11 @@ function removeRuntimeDir(runtimeDir) {
   return { removed: true };
 }
 
-function removeTokenMirrors() {
+function removeTokenMirrors(tmpDir = os.tmpdir()) {
   const removed = [];
   const candidates = [
-    path.join(os.tmpdir(), 'agy-hud-token.json'),
-    path.join(os.tmpdir(), 'agy-hud-quota-cache.json'),
+    path.join(tmpDir, 'agy-hud-token.json'),
+    path.join(tmpDir, 'agy-hud-quota-cache.json'),
   ];
   for (const file of candidates) {
     if (fs.existsSync(file)) {
@@ -61,22 +68,31 @@ function removeTokenMirrors() {
 
 /**
  * Remove extra files written by the bootstrap/runtime that uninstall.js
- * previously missed: agy-hud-payload.json and the hud/ directory.
+ * previously missed: agy-hud-payload.json, update status, quota capacity,
+ * refresh lock, persistent global config (unless preserveConfig is true),
+ * and the hud/ directory.
  *
  * @param {string} root  antigravity-cli data root
+ * @param {{ preserveConfig?: boolean }} [options]
  * @returns {string[]}   list of paths actually removed
  */
-function removeExtraFiles(root) {
+function removeExtraFiles(root, options = {}) {
   const removed = [];
   const targets = [
     path.join(root, 'agy-hud-payload.json'),
     path.join(root, 'agy-hud-token.json'),
     path.join(root, 'agy-hud-quota-cache.json'),
+    path.join(root, 'agy-hud-update-status.json'),
+    path.join(root, 'quota-capacity.json'),
+    path.join(root, 'agy-hud-refresh.lock'),
     path.join(root, 'agy-hud-error.log'),
     path.join(root, 'daily-cost.json'),
     path.join(root, 'speed-cache'),
     path.join(root, 'hud'),
   ];
+  if (!options.preserveConfig) {
+    targets.push(path.join(root, 'agy-hud.config.json'));
+  }
   for (const target of targets) {
     if (fs.existsSync(target)) {
       try {
@@ -95,6 +111,9 @@ function removeWindowsShShims(platform = process.platform, env = process.env) {
   try {
     const installer = require('./statusline-installer.js');
     const body = installer.buildShShimContents();
+    const isOurs = typeof installer.isOurShShim === 'function'
+      ? installer.isOurShShim
+      : (contents => contents === body || contents.includes(':: agy-hud-shim'));
     const dirs = installer.getWindowsAgyBinDirs(env);
     const removed = [];
     for (const dir of dirs) {
@@ -103,7 +122,7 @@ function removeWindowsShShims(platform = process.platform, env = process.env) {
         try {
           if (fs.existsSync(target)) {
             const contents = fs.readFileSync(target, 'utf8');
-            if (contents === body) {
+            if (isOurs(contents)) {
               fs.unlinkSync(target);
               removed.push(target);
             }
@@ -120,10 +139,11 @@ function removeWindowsShShims(platform = process.platform, env = process.env) {
 function uninstall(options = {}) {
   const env = options.env || process.env;
   const homeDir = options.homeDir || os.homedir();
+  const platform = options.platform || process.platform;
   // Search all candidate roots — uninstall should clean any root we may have
   // touched, not just the first one we'd pick today.
   const roots = options.roots || getAntigravityRoots(env, homeDir);
-  const settingsPath = options.settingsPath || resolveAntigravityPath('settings.json');
+  const settingsPath = options.settingsPath || resolveAntigravityPath('settings.json', env, homeDir);
 
   const results = { settingsPath, statusLine: null, runtimes: [], tokenMirrors: [], extraFiles: [] };
 
@@ -137,14 +157,14 @@ function uninstall(options = {}) {
       results.runtimes.push({ runtimeDir: rootSettings, ...clearStatusLine(rootSettings, runtimeDir) });
     }
     // Remove extra files (payload cache, hud dir) that earlier versions left behind.
-    results.extraFiles.push(...removeExtraFiles(root));
+    results.extraFiles.push(...removeExtraFiles(root, { preserveConfig: options.preserveConfig }));
   }
 
   // Primary settings.json cleared against the active runtime path.
   const activeRuntimeDir = path.join(path.dirname(settingsPath), 'agy-hud-runtime');
   results.statusLine = clearStatusLine(settingsPath, activeRuntimeDir);
-  results.tokenMirrors = removeTokenMirrors();
-  results.shShims = removeWindowsShShims(process.platform, env);
+  results.tokenMirrors = removeTokenMirrors(options.tmpDir || os.tmpdir());
+  results.shShims = removeWindowsShShims(platform, env);
 
   return results;
 }
